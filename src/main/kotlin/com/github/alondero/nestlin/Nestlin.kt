@@ -7,16 +7,11 @@ import java.nio.file.Path
 class Nestlin {
 
     private var loadedGame: GamePak? = null
+    private val cpu: Cpu = Cpu()
 
     fun load(rom: Path) {
         loadedGame = GamePak(validate(SevenZFile(rom.toFile()).use {
-            val entry = it.nextEntry
-            val data = ByteArray(entry.size.toInt())
-            var readBytes = 0;
-
-            it.read(data)
-
-            data
+            ByteArray(it.nextEntry.size.toInt()).apply {it.read(this)}
         }))
     }
 
@@ -29,6 +24,10 @@ class Nestlin {
         }
 
         return data
+    }
+
+    fun powerReset() {
+        cpu.reset()
     }
 }
 
