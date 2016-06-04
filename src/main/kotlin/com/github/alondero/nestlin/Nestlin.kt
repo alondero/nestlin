@@ -13,6 +13,7 @@ class Nestlin {
         loadedGame = GamePak(validate(SevenZFile(rom.toFile()).use {
             ByteArray(it.nextEntry.size.toInt()).apply {it.read(this)}
         }))
+        cpu.currentGame = loadedGame
     }
 
     private fun validate(data: ByteArray): ByteArray {
@@ -28,6 +29,12 @@ class Nestlin {
 
     fun powerReset() {
         cpu.reset()
+    }
+
+    fun start() {
+//        while (true) {
+            cpu.tick()
+//        }
     }
 }
 

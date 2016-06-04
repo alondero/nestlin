@@ -12,4 +12,5 @@ fun main(args : Array<String>) {
     val application = Nestlin()
     application.load(Paths.get(args[0]))
     application.powerReset()
+    application.start()
 }
