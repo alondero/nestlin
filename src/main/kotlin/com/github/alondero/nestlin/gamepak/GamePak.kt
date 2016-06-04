@@ -18,10 +18,12 @@ class Header(headerData: ByteArray) {
     val programRomSize: Byte
     val programRamSize: Byte
     val chrRomSize: Byte
+    val mapper: Int
 
     init {
         programRomSize = headerData[4]
         chrRomSize = headerData[5]
         programRamSize = headerData[8]
+        mapper = headerData[6].toInt() shr(4) or (headerData[7].toInt() and 0xF0)
     }
 }
