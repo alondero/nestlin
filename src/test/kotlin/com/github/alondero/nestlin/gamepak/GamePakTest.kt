@@ -14,9 +14,12 @@ class GamePakTest {
             else -> 0
         }}))
 
-        var b: Byte = 0xBFE0.toByte()
+        var b: Byte = 0xFE0.toByte()
 
         println(b)
+
+        val s: Short = 0x8000.toShort()
+        println(s)
 
         assertThat(header.mapper, equalTo(65)) // 01000001 = 0100 from byte 7 and 0001 from byte 6
     }
