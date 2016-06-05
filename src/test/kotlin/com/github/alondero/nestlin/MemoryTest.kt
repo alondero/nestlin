@@ -1,4 +1,5 @@
-import com.github.alondero.nestlin.Memory
+package com.github.alondero.nestlin
+
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.Test
