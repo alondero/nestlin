@@ -11,6 +11,12 @@ class GamePak(data: ByteArray) {
         programRom = data.copyOfRange(16, 16 + 16384 * header.programRomSize)
         chrRom = data.copyOfRange(16 + programRom.size, 16 + programRom.size + 8192 * header.chrRomSize)
     }
+
+    override fun toString(): String {
+        return """GamePak information:
+ROM Size: ${programRom.size}, VROM Size: ${chrRom.size}
+Mapper: ${header.mapper}"""
+    }
 }
 
 class Header(headerData: ByteArray) {
