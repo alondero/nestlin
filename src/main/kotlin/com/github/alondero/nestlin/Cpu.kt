@@ -3,14 +3,14 @@ package com.github.alondero.nestlin
 import com.github.alondero.nestlin.gamepak.GamePak
 import java.util.*
 
-class Cpu {
-    private var memory: Memory = Memory()
-    private var registers: Registers = Registers()
-    private var processorStatus: ProcessorStatus = ProcessorStatus()
-    private var interrupt: Interrupt = Interrupt.IRQ_BRK
-    private var addressingMode: AddressingMode = AddressingMode.IMPLICIT
-    private var opcodes: Opcodes = Opcodes()
-
+class Cpu(
+        var memory: Memory = Memory(),
+        var registers: Registers = Registers(),
+        var processorStatus: ProcessorStatus = ProcessorStatus(),
+        var interrupt: Interrupt? = null,
+        var addressingMode: AddressingMode? = null,
+        var opcodes: Opcodes = Opcodes()
+) {
     var currentGame: GamePak? = null
 
     fun reset() {
@@ -20,24 +20,29 @@ class Cpu {
         processorStatus.reset()
         registers.reset()
 
-        registers.programCounter = memory[0xFFFC, 0xFFFD]
+        registers.programCounter = resetVector()
+        println("Setting program counter to ${registers.programCounter}")
     }
+
+    private fun resetVector() = memory[0xFFFC, 0xFFFD]
 
     fun tick() {
-        val opcodeVal = memory[registers.programCounter + 128].toInt()
+        val opcodeVal = memory[registers.programCounter++.toUnsignedInt()].toUnsignedInt()
         val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
-        println("Opcode ${opcode}")
 
         opcode?.apply {
-            when (this.type) {
-                Opcode.OpcodeType.BRK -> {
-                    processorStatus.breakCommand = true
-                    registers.programCounter++
-                }
-            }
+            println("Opcode ${Integer.toHexString(opcodeVal)}, $this")
+            this.op(this@Cpu)
         }
     }
+
+    fun push(value: Byte) {
+        memory[(0x100 + (registers.stackPointer.toUnsignedInt() and 0xFF))] = value
+        --registers.stackPointer
+    }
 }
+
+
 
 class UnhandledOpcodeException(opcodeVal: Int) : Throwable("Opcode ${Integer.toHexString(opcodeVal)} not implemented")
 
@@ -45,16 +50,49 @@ class Opcodes {
     val map = HashMap<Int, Opcode>()
 
     init {
-        map[0x00] = Opcode(Opcode.OpcodeType.BRK)
+        map[0x00] = Opcode(Opcode.OpcodeType.BRK) {
+            it.processorStatus.breakCommand = true
+            it.registers.programCounter++
+            it.registers.programCounter.toUnsignedInt().apply {
+                it.push((this shr 8).toSignedByte())
+                it.push((this and 0xFF).toSignedByte())
+            }
+            it.push(it.processorStatus.asByte()) // TODO: Correctly set this
+            it.registers.programCounter = it.memory[0xFFFE, 0xFFFF]
+            it.processorStatus.interruptDisable = true
+
+            //  Takes 7 cycles
+        }
+        map[0x20] = Opcode(Opcode.OpcodeType.JSR) {
+            val next = it.memory[it.registers.programCounter++.toUnsignedInt(), it.registers.programCounter++.toUnsignedInt()]
+
+            it.registers.programCounter--.toUnsignedInt().apply {
+                it.memory[this] // TODO: Do we need this?
+                it.push((this shr 8).toSignedByte())
+                it.push((this and 0xFF).toSignedByte())
+                it.registers.programCounter = next
+            }
+            //  TODO: Takes 6 cycles
+        }
+        map[0x78] = Opcode(Opcode.OpcodeType.SEI) {
+            it.processorStatus.interruptDisable = true
+            //  TODO: Takes 2 cycles
+        }
+        map[0xd8] = Opcode(Opcode.OpcodeType.SEI) {
+            it.processorStatus.decimalMode = false
+            //  TODO: Takes 2 cycles
+        }
     }
 
     operator fun get(code: Int): Opcode? = map[code]
 }
 
-class Opcode(val type: OpcodeType) {
+class Opcode(val type: OpcodeType, val op: (Cpu) -> Unit) {
 
     enum class OpcodeType {
-        BRK
+        BRK,
+        JSR,
+        SEI
     }
 
     override fun toString(): String = type.toString()
@@ -93,7 +131,7 @@ data class Registers(
         var indexY: Byte = 0
 ) {
     fun reset() {
-        stackPointer = 125 // unsigned 0xFD
+        stackPointer = 0xFD.toSignedByte()
         accumulator = 0
         indexX = 0
         indexY = 0
@@ -117,6 +155,11 @@ data class ProcessorStatus(
         breakCommand = false
         overflow = false
         negative = false
+    }
+
+    fun asByte(): Byte {
+        // TODO: Honour processor status correctly - currently just returns interruptsDisabled + 4 and 5 set (for break interrupt)
+        return 0b00110100
     }
 }
 
@@ -156,10 +199,15 @@ class Memory {
         }
     }
 
-    operator fun get(address1: Int, address2: Int): Short = ((get(address2).toInt() or get(address1).toInt() shl(8)) - 32767).toShort()
+    operator fun get(address1: Int, address2: Int): Short {
+        val addr1 = this[address1]
+        val addr2 = this[address2] * 256
+
+        return (addr2 + addr1).toShort()
+    }
 
     fun clear() {
-        internalRam.fill(Byte.MIN_VALUE)
+        internalRam.fill(0xFF.toSignedByte())
         apuIoRegisters.fill(0) // TODO: Do something better with APU Registers (when implementing audio and input)
         ppuRegisters.reset()
     }
