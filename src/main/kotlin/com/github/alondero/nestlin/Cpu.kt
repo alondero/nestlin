@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.gamepak.GamePak
+import java.util.*
 
 class Cpu {
     private var memory: Memory = Memory()
@@ -8,6 +9,7 @@ class Cpu {
     private var processorStatus: ProcessorStatus = ProcessorStatus()
     private var interrupt: Interrupt = Interrupt.IRQ_BRK
     private var addressingMode: AddressingMode = AddressingMode.IMPLICIT
+    private var opcodes: Opcodes = Opcodes()
 
     var currentGame: GamePak? = null
 
@@ -22,8 +24,40 @@ class Cpu {
     }
 
     fun tick() {
-        println("Opcode ${memory[registers.programCounter + 128]}")
+        val opcodeVal = memory[registers.programCounter + 128].toInt()
+        val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
+        println("Opcode ${opcode}")
+
+        opcode?.apply {
+            when (this.type) {
+                Opcode.OpcodeType.BRK -> {
+                    processorStatus.breakCommand = true
+                    registers.programCounter++
+                }
+            }
+        }
     }
+}
+
+class UnhandledOpcodeException(opcodeVal: Int) : Throwable("Opcode ${Integer.toHexString(opcodeVal)} not implemented")
+
+class Opcodes {
+    val map = HashMap<Int, Opcode>()
+
+    init {
+        map[0x00] = Opcode(Opcode.OpcodeType.BRK)
+    }
+
+    operator fun get(code: Int): Opcode? = map[code]
+}
+
+class Opcode(val type: OpcodeType) {
+
+    enum class OpcodeType {
+        BRK
+    }
+
+    override fun toString(): String = type.toString()
 }
 
 enum class AddressingMode {
@@ -93,13 +127,12 @@ class Memory {
     private var cartridgeSpace: ByteArray = ByteArray(0xBFE0)
 
     fun readCartridge(data: GamePak) {
-        // Mapper 0 defaults
         for ((idx, value) in data.programRom.copyOfRange(0, 16384).withIndex()) {
-            this[0x8000+idx] = value
+            cartridgeSpace[0x8000+idx - 0x4020] = value
         }
 
         for ((idx, value) in data.programRom.copyOfRange(data.programRom.size - 16384, data.programRom.size).withIndex()) {
-            this[0xC000+idx] = value
+            cartridgeSpace[0xC000+idx - 0x4020] = value
         }
     }
 
@@ -113,7 +146,7 @@ class Memory {
     }
 
     operator fun get(address: Int): Byte {
-        println("Looking up $address")
+        println("Looking up ${Integer.toHexString(address)}")
 
         when (address) {
             in 0x0000..0x1FFF -> return internalRam[address%0x800]
@@ -126,7 +159,8 @@ class Memory {
     operator fun get(address1: Int, address2: Int): Short = ((get(address2).toInt() or get(address1).toInt() shl(8)) - 32767).toShort()
 
     fun clear() {
-        internalRam.fill(Byte.MAX_VALUE)
+        internalRam.fill(Byte.MIN_VALUE)
+        apuIoRegisters.fill(0) // TODO: Do something better with APU Registers (when implementing audio and input)
         ppuRegisters.reset()
     }
 }

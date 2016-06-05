@@ -6,14 +6,17 @@ import java.nio.file.Path
 
 class Nestlin {
 
-    private var loadedGame: GamePak? = null
     private val cpu: Cpu = Cpu()
+    private val ppu: Ppu = Ppu()
+    private val apu: Apu = Apu()
 
     fun load(rom: Path) {
-        loadedGame = GamePak(validate(SevenZFile(rom.toFile()).use {
+        GamePak(validate(SevenZFile(rom.toFile()).use {
             ByteArray(it.nextEntry.size.toInt()).apply {it.read(this)}
-        }))
-        cpu.currentGame = loadedGame
+        }))?.apply {
+            println(this.toString())
+            cpu.currentGame = this
+        }
     }
 
     private fun validate(data: ByteArray): ByteArray {
@@ -32,9 +35,9 @@ class Nestlin {
     }
 
     fun start() {
-//        while (true) {
+        while (true) {
             cpu.tick()
-//        }
+        }
     }
 }
 
