@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.gamepak
 
+import com.github.alondero.nestlin.toUnsignedInt
 import java.util.zip.CRC32
 
 class GamePak(data: ByteArray) {
@@ -17,10 +18,7 @@ class GamePak(data: ByteArray) {
     }
 
     override fun toString(): String {
-        return """GamePak information:
-ROM Size: ${programRom.size}, VROM Size: ${chrRom.size}
-Mapper: ${header.mapper}
-CRC32: ${crc.value}"""
+        return "ROM Size: ${programRom.size}, VROM Size: ${chrRom.size}\nMapper: ${header.mapper}\nCRC32: ${crc.value}"
     }
 }
 
@@ -35,6 +33,6 @@ class Header(headerData: ByteArray) {
         programRomSize = headerData[4]
         chrRomSize = headerData[5]
         programRamSize = headerData[8]
-        mapper = headerData[6].toInt() shr(4) or (headerData[7].toInt() and 0xF0)
+        mapper = headerData[6].toUnsignedInt() shr(4) or (headerData[7].toUnsignedInt() and 0xF0)
     }
 }

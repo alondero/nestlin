@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin
 
+import com.github.alondero.nestlin.file.RomLoader
 import com.github.alondero.nestlin.gamepak.GamePak
-import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import java.nio.file.Path
 
 class Nestlin {
@@ -11,18 +11,14 @@ class Nestlin {
     private val apu: Apu = Apu()
 
     fun load(rom: Path) {
-        GamePak(validate(SevenZFile(rom.toFile()).use {
-            ByteArray(it.nextEntry.size.toInt()).apply {it.read(this)}
-        }))?.apply {
-            println(this.toString())
+        GamePak(validate(RomLoader().load(rom)))?.apply {
+            println("GamePak information:\n${this.toString()}\n")
             cpu.currentGame = this
         }
     }
 
     private fun validate(data: ByteArray): ByteArray {
-        val nesToken = String(data.copyOfRange(0, 4))
-
-        if (nesToken.equals("NES\n")) {
+        if (String(data.copyOfRange(0, 4)).equals("NES\n")) {
             throw BadHeaderException("Missing NES Token")
         }
 
