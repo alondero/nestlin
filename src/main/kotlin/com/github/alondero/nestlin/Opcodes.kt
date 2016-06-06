@@ -6,7 +6,7 @@ class Opcodes {
     val map = HashMap<Int, Opcode>()
 
     init {
-        map[0x00] = Opcode(Opcode.OpcodeType.BRK) {
+        map[0x00] = Opcode() {
             it.processorStatus.breakCommand = true
             it.registers.programCounter++
             it.registers.programCounter.toUnsignedInt().apply {
@@ -19,7 +19,7 @@ class Opcodes {
 
             //  Takes 7 cycles
         }
-        map[0x20] = Opcode(Opcode.OpcodeType.JSR) {
+        map[0x20] = Opcode() {
             val next = it.memory[it.registers.programCounter++.toUnsignedInt(), it.registers.programCounter++.toUnsignedInt()]
 
             it.registers.programCounter--.toUnsignedInt().apply {
@@ -29,15 +29,15 @@ class Opcodes {
             }
             //  TODO: Takes 6 cycles
         }
-        map[0x78] = Opcode(Opcode.OpcodeType.SEI) {
+        map[0x78] = Opcode() {
             it.processorStatus.interruptDisable = true
             //  TODO: Takes 2 cycles
         }
-        map[0xd8] = Opcode(Opcode.OpcodeType.SEI) {
+        map[0xd8] = Opcode() {
             it.processorStatus.decimalMode = false
             //  TODO: Takes 2 cycles
         }
-        map[0x4c] = Opcode(Opcode.OpcodeType.JMP) {
+        map[0x4c] = Opcode() {
             val temp = it.registers.programCounter
             it.registers.programCounter = it.memory[it.registers.programCounter++.toUnsignedInt(), it.registers.programCounter++.toUnsignedInt()]
 
@@ -46,34 +46,26 @@ class Opcodes {
             }
             //  TODO: Takes 3 cycles
         }
-        map[0xa2] = Opcode(Opcode.OpcodeType.LDX) {
+        map[0xa2] = Opcode() {
             it.registers.indexX = it.memory[it.registers.programCounter++.toUnsignedInt()].apply {
                 it.processorStatus.setFlags(this)
             }
 
             //  TODO: Takes 2 cycles
         }
-        map[0x86] = Opcode(Opcode.OpcodeType.STX) {
+        map[0x86] = Opcode() {
             it.memory[it.memory[it.registers.programCounter++.toUnsignedInt()].toUnsignedInt()] = it.registers.indexX
             // TODO: Takes 3 cycles
+        }
+
+        map[0xea] = Opcode() {
+            // TODO: Takes 2 cycles
         }
     }
 
     operator fun get(code: Int): Opcode? = map[code]
 }
 
-class Opcode(val type: OpcodeType, val op: (Cpu) -> Unit) {
-
-    enum class OpcodeType {
-        BRK,
-        JSR,
-        SEI,
-        JMP,
-        LDX,
-        STX
-    }
-
-    override fun toString(): String = type.toString()
-}
+class Opcode(val op: (Cpu) -> Unit)
 
 class UnhandledOpcodeException(opcodeVal: Int) : Throwable("Opcode ${Integer.toHexString(opcodeVal)} not implemented")
