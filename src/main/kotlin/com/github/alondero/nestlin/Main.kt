@@ -9,8 +9,9 @@ fun main(args : Array<String>) {
         return
     }
 
-    val application = Nestlin()
-    application.load(Paths.get(args[0]))
-    application.powerReset()
-    application.start()
+    Nestlin().apply {
+        this.load(Paths.get(args[0]))
+        this.powerReset()
+        this.start()
+    }
 }
