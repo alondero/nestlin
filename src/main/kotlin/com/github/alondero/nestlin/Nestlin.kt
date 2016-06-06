@@ -20,8 +20,7 @@ class Nestlin {
     }
 
     private fun validate(data: ByteArray): ByteArray {
-        val header = data.copyOfRange(0, 16)
-        val nesToken = String(header.copyOfRange(0, 4))
+        val nesToken = String(data.copyOfRange(0, 4))
 
         if (nesToken.equals("NES\n")) {
             throw BadHeaderException("Missing NES Token")
@@ -41,6 +40,4 @@ class Nestlin {
     }
 }
 
-class BadHeaderException(message: String) : RuntimeException(message) {
-
-}
+class BadHeaderException(message: String) : RuntimeException(message)

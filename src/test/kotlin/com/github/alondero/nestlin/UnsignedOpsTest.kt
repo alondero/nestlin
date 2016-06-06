@@ -2,6 +2,7 @@ package com.github.alondero.nestlin
 
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
+import org.junit.Assert
 import org.junit.Test
 
 class UnsignedOpsTest {
@@ -25,5 +26,13 @@ class UnsignedOpsTest {
     fun convertsToByteAndBackPreservingValue() {
         assertThat(0xFF.toSignedByte().toUnsignedInt(), equalTo(0xFF))
     }
+
+    @Test
+    fun correctlyIdentifiesSetBit() {
+        Assert.assertFalse(0b00110011.toSignedByte().isBitSet(3))
+        Assert.assertTrue(0b00110011.toSignedByte().isBitSet(0))
+    }
 }
+
+
 

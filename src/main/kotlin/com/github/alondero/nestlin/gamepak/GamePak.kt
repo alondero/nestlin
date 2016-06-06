@@ -1,21 +1,26 @@
 package com.github.alondero.nestlin.gamepak
 
+import java.util.zip.CRC32
+
 class GamePak(data: ByteArray) {
 
     val header: Header
     val programRom: ByteArray
     val chrRom: ByteArray
+    val crc: CRC32
 
     init {
         header = Header(data.copyOfRange(0, 16))
         programRom = data.copyOfRange(16, 16 + 16384 * header.programRomSize)
         chrRom = data.copyOfRange(16 + programRom.size, 16 + programRom.size + 8192 * header.chrRomSize)
+        crc = CRC32().apply { this.update(data)}
     }
 
     override fun toString(): String {
         return """GamePak information:
 ROM Size: ${programRom.size}, VROM Size: ${chrRom.size}
-Mapper: ${header.mapper}"""
+Mapper: ${header.mapper}
+CRC32: ${crc.value}"""
     }
 }
 

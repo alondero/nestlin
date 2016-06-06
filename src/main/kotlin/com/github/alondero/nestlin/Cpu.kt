@@ -12,26 +12,38 @@ class Cpu(
         var opcodes: Opcodes = Opcodes()
 ) {
     var currentGame: GamePak? = null
+    private val testRomCrc = 0x9e179d92
 
     fun reset() {
         memory.clear()
-        currentGame?.let {memory.readCartridge(it)}
+        var isTestRom = false
+        currentGame?.let {
+            memory.readCartridge(it)
+            isTestRom = it.crc.value == testRomCrc
+        }
 
         processorStatus.reset()
         registers.reset()
 
-        registers.programCounter = resetVector()
-        println("Setting program counter to ${registers.programCounter}")
+        if (isTestRom) {
+            // Starts test rom in automation mode
+            registers.programCounter = 0xc000.toSignedShort()
+        } else {
+            registers.programCounter = resetVector()
+        }
+        println("Initialised program counter as ${registers.programCounter.toHexString()}")
     }
 
     private fun resetVector() = memory[0xFFFC, 0xFFFD]
 
     fun tick() {
+        println("\ntick!")
         val opcodeVal = memory[registers.programCounter++.toUnsignedInt()].toUnsignedInt()
         val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
 
         opcode?.apply {
-            println("Opcode ${Integer.toHexString(opcodeVal)}, $this")
+            println("""Opcode ${Integer.toHexString(opcodeVal)}, $this.
+Registers: $registers""")
             this.op(this@Cpu)
         }
     }
@@ -82,6 +94,26 @@ class Opcodes {
             it.processorStatus.decimalMode = false
             //  TODO: Takes 2 cycles
         }
+        map[0x4c] = Opcode(Opcode.OpcodeType.JMP) {
+            val temp = it.registers.programCounter
+            it.registers.programCounter = it.memory[it.registers.programCounter++.toUnsignedInt(), it.registers.programCounter++.toUnsignedInt()]
+
+            if (it.registers.programCounter == (temp-1).toSignedShort()) {
+                //  TODO: Set idle
+            }
+            //  TODO: Takes 3 cycles
+        }
+        map[0xa2] = Opcode(Opcode.OpcodeType.LDX) {
+            it.registers.indexX = it.memory[it.registers.programCounter++.toUnsignedInt()].apply {
+                it.processorStatus.setFlags(this)
+            }
+
+            //  TODO: Takes 2 cycles
+        }
+        map[0x86] = Opcode(Opcode.OpcodeType.STX) {
+            it.memory[it.memory[it.registers.programCounter++.toUnsignedInt()].toUnsignedInt()] = it.registers.indexX
+            // TODO: Takes 3 cycles
+        }
     }
 
     operator fun get(code: Int): Opcode? = map[code]
@@ -92,7 +124,10 @@ class Opcode(val type: OpcodeType, val op: (Cpu) -> Unit) {
     enum class OpcodeType {
         BRK,
         JSR,
-        SEI
+        SEI,
+        JMP,
+        LDX,
+        STX
     }
 
     override fun toString(): String = type.toString()
@@ -124,18 +159,25 @@ enum class Interrupt {
 }
 
 data class Registers(
-        var programCounter: Short = 0,
         var stackPointer: Byte = 0,
         var accumulator: Byte = 0,
         var indexX: Byte = 0,
         var indexY: Byte = 0
 ) {
+    var programCounter: Short = 0
+        set(value) {
+            println("Setting program counter to ${value.toHexString()}")
+            field = value
+        }
+
     fun reset() {
-        stackPointer = 0xFD.toSignedByte()
+        stackPointer = -3 // Skips decrementing three times from init
         accumulator = 0
         indexX = 0
         indexY = 0
     }
+
+    override fun toString() = "PC: ${programCounter.toHexString()}, SP: ${stackPointer.toHexString()}, A: ${accumulator.toHexString()}, X: ${indexX.toHexString()}, Y: ${indexY.toHexString()}"
 }
 
 data class ProcessorStatus(
@@ -160,6 +202,11 @@ data class ProcessorStatus(
     fun asByte(): Byte {
         // TODO: Honour processor status correctly - currently just returns interruptsDisabled + 4 and 5 set (for break interrupt)
         return 0b00110100
+    }
+
+    fun setFlags(result: Byte) {
+        zero = (result.toUnsignedInt() == 0)
+        negative = result.isBitSet(7)
     }
 }
 
@@ -189,21 +236,24 @@ class Memory {
     }
 
     operator fun get(address: Int): Byte {
-        println("Looking up ${Integer.toHexString(address)}")
+        var foundByte: Byte
 
         when (address) {
-            in 0x0000..0x1FFF -> return internalRam[address%0x800]
-            in 0x2000..0x3FFF -> return ppuRegisters[address%8]
-            in 0x4000..0x401F -> return apuIoRegisters[address - 0x4000]
-            else /* in 0x4020..0xFFFF */ -> return cartridgeSpace[address - 0x4020]
+            in 0x0000..0x1FFF -> foundByte = internalRam[address%0x800]
+            in 0x2000..0x3FFF -> foundByte = ppuRegisters[address%8]
+            in 0x4000..0x401F -> foundByte = apuIoRegisters[address - 0x4000]
+            else /* in 0x4020..0xFFFF */ -> foundByte = cartridgeSpace[address - 0x4020]
         }
+
+        println("Found: ${foundByte.toHexString()} at ${address.toHexString()}")
+        return foundByte
     }
 
     operator fun get(address1: Int, address2: Int): Short {
-        val addr1 = this[address1]
-        val addr2 = this[address2] * 256
+        val addr1 = this[address1].toUnsignedInt()
+        val addr2 = this[address2].toUnsignedInt() shl 8
 
-        return (addr2 + addr1).toShort()
+        return (addr2 + addr1).toSignedShort()
     }
 
     fun clear() {
