@@ -23,9 +23,9 @@ fun Short.toUnsignedInt(): Int {
     else return this.toInt()
 }
 
-fun Short.toHexString(): String = Integer.toHexString(this.toUnsignedInt())
-fun Byte.toHexString(): String = Integer.toHexString(this.toUnsignedInt())
-fun Int.toHexString(): String = Integer.toHexString(this)
+fun Short.toHexString(): String = Integer.toHexString(this.toUnsignedInt()).toUpperCase()
+fun Byte.toHexString(): String = Integer.toHexString(this.toUnsignedInt()).toUpperCase()
+fun Int.toHexString(): String = Integer.toHexString(this).toUpperCase()
 
 fun Byte.isBitSet(i: Int): Boolean = (this.toUnsignedInt() shr i and 1) == 1
 

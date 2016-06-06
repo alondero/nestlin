@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.gamepak.GamePak
+import com.github.alondero.nestlin.log.Logger
 
 private const val TEST_ROM_CRC = 0x9e179d92
 
@@ -13,6 +14,7 @@ class Cpu(
         var opcodes: Opcodes = Opcodes()
 ) {
     var currentGame: GamePak? = null
+    private val logger: Logger? = Logger() // TODO: Only log when DEBUG param passed
 
     fun reset() {
         memory.clear()
@@ -35,14 +37,16 @@ class Cpu(
 
     private fun resetVector() = memory[0xFFFC, 0xFFFD]
 
+
+
     fun tick() {
-        println("\ntick!")
+        val initialPC = registers.programCounter
         val opcodeVal = memory[registers.programCounter++.toUnsignedInt()].toUnsignedInt()
         val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
 
         opcode?.apply {
-            println("Opcode ${Integer.toHexString(opcodeVal)}, $this\nRegisters: $registers")
-            this.op(this@Cpu)
+            op(this@Cpu)
+            logger?.cpuTick(initialPC, opcodeVal, this@Cpu)
         }
     }
 
@@ -81,22 +85,15 @@ data class Registers(
         var stackPointer: Byte = 0,
         var accumulator: Byte = 0,
         var indexX: Byte = 0,
-        var indexY: Byte = 0
+        var indexY: Byte = 0,
+        var programCounter: Short = 0
 ) {
-    var programCounter: Short = 0
-        set(value) {
-            println("Setting program counter to ${value.toHexString()}")
-            field = value
-        }
-
     fun reset() {
         stackPointer = -3 // Skips decrementing three times from init
         accumulator = 0
         indexX = 0
         indexY = 0
     }
-
-    override fun toString() = "PC: ${programCounter.toHexString()}, SP: ${stackPointer.toHexString()}, A: ${accumulator.toHexString()}, X: ${indexX.toHexString()}, Y: ${indexY.toHexString()}"
 }
 
 data class ProcessorStatus(
@@ -119,8 +116,14 @@ data class ProcessorStatus(
     }
 
     fun asByte(): Byte {
-        // TODO: Honour processor status correctly - currently just returns interruptsDisabled + 4 and 5 set (for break interrupt)
-        return 0b00110100
+        return ((if (negative) (1 shl 7) else 0) or
+                (if (overflow) (1 shl 6) else 0) or
+                1 shl 5 or // Special logic needed for the B flag...
+                1 shl 4 or
+                (if (decimalMode) (1 shl 3) else 0) or
+                (if (interruptDisable) (1 shl 2) else 0) or
+                (if (zero) (1 shl 1) else 0) or
+                (if (carry) 1 else 0)).toSignedByte()
     }
 
     fun setFlags(result: Byte) {
@@ -164,7 +167,6 @@ class Memory {
             else /* in 0x4020..0xFFFF */ -> foundByte = cartridgeSpace[address - 0x4020]
         }
 
-        println("Found: ${foundByte.toHexString()} at ${address.toHexString()}")
         return foundByte
     }
 
