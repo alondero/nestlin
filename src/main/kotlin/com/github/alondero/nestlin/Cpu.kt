@@ -10,11 +10,12 @@ class Cpu(
         var registers: Registers = Registers(),
         var processorStatus: ProcessorStatus = ProcessorStatus(),
         var interrupt: Interrupt? = null,
-        var addressingMode: AddressingMode? = null,
         var cycles: Int = 0,
         var opcodes: Opcodes = Opcodes()
 ) {
     var currentGame: GamePak? = null
+    var pageBoundaryFlag: Boolean = false
+    var idle = false
     private val logger: Logger? = Logger() // TODO: Only log when DEBUG param passed
 
     fun reset() {
@@ -41,7 +42,7 @@ class Cpu(
 
     fun tick() {
         val initialPC = registers.programCounter
-        val opcodeVal = memory[registers.programCounter++.toUnsignedInt()].toUnsignedInt()
+        val opcodeVal = readByteAtPC().toUnsignedInt()
         val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
 
         opcode?.apply {
@@ -50,30 +51,38 @@ class Cpu(
         }
     }
 
+    fun branch(flag: Boolean) {
+        if (flag) {
+            val previousCounter: Short = registers.programCounter.inc()
+
+            //  Relative addressing
+            registers.programCounter = (readByteAtPC() + registers.programCounter).toSignedShort()
+
+            //  TODO: Add cycle
+            if (hasCrossedPageBoundary(previousCounter, registers.programCounter)) pageBoundaryFlag = true
+            if ((previousCounter - 2).toSignedShort() == registers.programCounter) idle = true
+        } else {
+            (readByteAtPC() + registers.programCounter).toSignedShort() // Unsure whether we need to do this?
+        }
+    }
+
     fun push(value: Byte) {
         memory[(0x100 + (registers.stackPointer.toUnsignedInt() and 0xFF))] = value
-        --registers.stackPointer
+        registers.stackPointer--
     }
+
+    fun pop(): Byte {
+        registers.stackPointer++
+        registers.stackPointer = (registers.stackPointer.toUnsignedInt() and 0xff).toSignedByte()
+        return memory[(0x100 + registers.stackPointer.toUnsignedInt())]
+    }
+
+    fun readByteAtPC() = memory[registers.programCounter++.toUnsignedInt()]
+    fun readShortAtPC() = memory[registers.programCounter++.toUnsignedInt(), registers.programCounter++.toUnsignedInt()]
+
+    private fun hasCrossedPageBoundary(previousCounter: Short, programCounter: Short) = (previousCounter.toUnsignedInt() and 0xFF00) != (programCounter.toUnsignedInt() and 0xFF00)
 }
 
-enum class AddressingMode {
-    //  Standard 6502 addressing modes
-    ZERO_PAGE_INDEXED_X,
-    ZERO_PAGE_INDEXED_Y,
-    ABSOLUTE_INDEXED_X,
-    ABSOLUTE_INDEXED_Y,
-    INDEXED_INDIRECT_X,
-    INDIRECT_INDEXED_Y,
-
-    // Other addressing
-    IMPLICIT,
-    ACCUMULATOR,
-    IMMEDIATE,
-    ZERO_PAGE,
-    ABSOLUTE,
-    RELATIVE,
-    INDIRECT
-}
 
 enum class Interrupt {
     IRQ_BRK,
