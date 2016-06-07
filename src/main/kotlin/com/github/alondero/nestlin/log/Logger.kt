@@ -18,6 +18,7 @@ class Logger {
         opcodeLog[0xa2] = {"${it.byte1} ${nValue()}  LDX #$${it.byte1}"}
         opcodeLog[0x86] = {"${it.byte1} ${nValue()}  STX $${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0xea] = {"${nValue()} ${nValue()}  NOP"}
+        opcodeLog[0x38] = {"${nValue()} ${nValue()}  SEC"}
     }
 
     fun cpuTick(initialPC: Short, opcodeVal: Int, cpu: Cpu) {
@@ -32,7 +33,7 @@ class Logger {
                 "Y:${format(cpu.registers.indexY)} " +
                 "P:${format(cpu.processorStatus.asByte())} " +
                 "SP:${format(cpu.registers.stackPointer)} " +
-                "CYC:999")
+                "CYC:${"%1$3s".format(cpu.cycles.toString())}")
     }
 
     private fun format(byte: Byte): String = "%02X".format(byte.toUnsignedInt())

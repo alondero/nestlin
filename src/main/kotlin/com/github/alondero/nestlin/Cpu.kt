@@ -11,6 +11,7 @@ class Cpu(
         var processorStatus: ProcessorStatus = ProcessorStatus(),
         var interrupt: Interrupt? = null,
         var addressingMode: AddressingMode? = null,
+        var cycles: Int = 0,
         var opcodes: Opcodes = Opcodes()
 ) {
     var currentGame: GamePak? = null
@@ -26,6 +27,7 @@ class Cpu(
 
         processorStatus.reset()
         registers.reset()
+        cycles = 0
 
         if (isTestRom) {
             // Starts test rom in automation mode
@@ -37,16 +39,14 @@ class Cpu(
 
     private fun resetVector() = memory[0xFFFC, 0xFFFD]
 
-
-
     fun tick() {
         val initialPC = registers.programCounter
         val opcodeVal = memory[registers.programCounter++.toUnsignedInt()].toUnsignedInt()
         val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
 
         opcode?.apply {
-            op(this@Cpu)
             logger?.cpuTick(initialPC, opcodeVal, this@Cpu)
+            op(this@Cpu)
         }
     }
 
@@ -118,8 +118,8 @@ data class ProcessorStatus(
     fun asByte(): Byte {
         return ((if (negative) (1 shl 7) else 0) or
                 (if (overflow) (1 shl 6) else 0) or
-                1 shl 5 or // Special logic needed for the B flag...
-                1 shl 4 or
+                (1 shl 5) or // Special logic needed for the B flag...
+                (0 shl 4) or
                 (if (decimalMode) (1 shl 3) else 0) or
                 (if (interruptDisable) (1 shl 2) else 0) or
                 (if (zero) (1 shl 1) else 0) or
