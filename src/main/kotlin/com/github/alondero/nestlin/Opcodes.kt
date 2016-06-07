@@ -6,59 +6,76 @@ class Opcodes {
     val map = HashMap<Int, Opcode>()
 
     init {
-        map[0x00] = Opcode() {
-            it.processorStatus.breakCommand = true
-            it.registers.programCounter++
-            it.registers.programCounter.toUnsignedInt().apply {
-                it.push((this shr 8).toSignedByte())
-                it.push((this and 0xFF).toSignedByte())
-            }
-            it.push(it.processorStatus.asByte()) // TODO: Correctly set this
-            it.registers.programCounter = it.memory[0xFFFE, 0xFFFF]
-            it.processorStatus.interruptDisable = true
+        map[0x00] = Opcode {
+            it.apply {
+                processorStatus.breakCommand = true
+                registers.programCounter++
+                registers.programCounter.toUnsignedInt().apply {
+                    push((this shr 8).toSignedByte())
+                    push((this and 0xFF).toSignedByte())
+                }
+                push(processorStatus.asByte())
+                registers.programCounter = memory[0xFFFE, 0xFFFF]
+                processorStatus.interruptDisable = true
 
-            //  Takes 7 cycles
-        }
-        map[0x20] = Opcode() {
-            val next = it.memory[it.registers.programCounter++.toUnsignedInt(), it.registers.programCounter++.toUnsignedInt()]
-
-            it.registers.programCounter--.toUnsignedInt().apply {
-                it.push((this shr 8).toSignedByte())
-                it.push((this and 0xFF).toSignedByte())
-                it.registers.programCounter = next
+                //  TODO: Takes 7 cycles
             }
-            //  TODO: Takes 6 cycles
         }
-        map[0x78] = Opcode() {
+        map[0x20] = Opcode {
+            it.apply {
+                val next = memory[registers.programCounter++.toUnsignedInt(), registers.programCounter++.toUnsignedInt()]
+
+                registers.programCounter--.toUnsignedInt().apply {
+                    push((this shr 8).toSignedByte())
+                    push((this and 0xFF).toSignedByte())
+                    registers.programCounter = next
+                }
+
+                //  TODO: Takes 6 cycles
+            }
+        }
+        map[0x78] = Opcode {
             it.processorStatus.interruptDisable = true
             //  TODO: Takes 2 cycles
         }
-        map[0xd8] = Opcode() {
+        map[0xd8] = Opcode {
             it.processorStatus.decimalMode = false
             //  TODO: Takes 2 cycles
         }
-        map[0x4c] = Opcode() {
-            val temp = it.registers.programCounter
-            it.registers.programCounter = it.memory[it.registers.programCounter++.toUnsignedInt(), it.registers.programCounter++.toUnsignedInt()]
+        map[0x4c] = Opcode {
+            it.apply {
+                val temp = registers.programCounter
+                registers.programCounter = memory[registers.programCounter++.toUnsignedInt(), it.registers.programCounter++.toUnsignedInt()]
 
-            if (it.registers.programCounter == (temp-1).toSignedShort()) {
-                //  TODO: Set idle
+                if (registers.programCounter == (temp-1).toSignedShort()) {
+                    // TODO: Set idle
+                }
+
+                //  TODO: Takes 3 cycles
             }
-            //  TODO: Takes 3 cycles
         }
-        map[0xa2] = Opcode() {
-            it.registers.indexX = it.memory[it.registers.programCounter++.toUnsignedInt()].apply {
-                it.processorStatus.setFlags(this)
+        map[0xa2] = Opcode {
+            it.apply {
+                registers.indexX = memory[registers.programCounter++.toUnsignedInt()].apply {
+                    processorStatus.setFlags(this)
+                }
+
+                //  TODO: Takes 2 cycles
             }
-
-            //  TODO: Takes 2 cycles
         }
-        map[0x86] = Opcode() {
-            it.memory[it.memory[it.registers.programCounter++.toUnsignedInt()].toUnsignedInt()] = it.registers.indexX
-            // TODO: Takes 3 cycles
+        map[0x86] = Opcode {
+            it.apply {
+                memory[memory[registers.programCounter++.toUnsignedInt()].toUnsignedInt()] = registers.indexX
+                // TODO: Takes 3 cycles
+            }
         }
 
-        map[0xea] = Opcode() {
+        map[0xea] = Opcode {
+            // TODO: Takes 2 cycles
+        }
+
+        map[0x38] = Opcode {
+            it.processorStatus.carry = true
             // TODO: Takes 2 cycles
         }
     }
