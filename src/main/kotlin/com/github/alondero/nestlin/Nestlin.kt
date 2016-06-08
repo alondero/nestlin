@@ -31,6 +31,10 @@ class Nestlin {
 
     fun start() {
         while (true) {
+            for (i in 1..3) {
+                ppu.tick()
+            }
+            apu.tick()
             cpu.tick()
         }
     }

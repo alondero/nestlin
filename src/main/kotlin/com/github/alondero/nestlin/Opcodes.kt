@@ -52,7 +52,7 @@ class Opcodes {
         map[0xa2] = Opcode {
             it.apply {
                 registers.indexX = readByteAtPC().apply {
-                    processorStatus.setFlags(this)
+                    processorStatus.resolveZeroAndNegativeFlags(this)
                 }
 
                 //  TODO: Takes 2 cycles
@@ -68,7 +68,7 @@ class Opcodes {
         map[0xa9] = Opcode {
             it.apply {
                 registers.accumulator = readByteAtPC().apply {
-                    processorStatus.setFlags(this)
+                    processorStatus.resolveZeroAndNegativeFlags(this)
                 }
 
                 //  TODO: Takes 2 cycles
@@ -98,8 +98,62 @@ class Opcodes {
             //  TODO: Takes 6 cycles
         }
 
+        //  PLA - Pull A from Stack
+        map[0x68] = Opcode {
+            it.apply {
+                registers.accumulator = pop()
+                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+                //  TODO: Takes 4 cycles
+            }
+        }
+
+        //  ADC - Add M to A with Carry
+        //  TODO: Possible bug in this code - ADC seems to incorrectly set the flags
+        map[0x69] = Opcode {
+            it.apply {
+                //  No need to test for decimal mode on NES CPU!
+                val next = readByteAtPC()
+                val currentAccumulator = registers.accumulator
+
+                var result = currentAccumulator + next
+                if (processorStatus.carry) result++
+
+                registers.accumulator = result.toSignedByte()
+                processorStatus.carry = result > 0xFF
+                processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor next.toUnsignedInt()) and 0x80 == 0x00) &&
+                        ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
+                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+
+                // TODO: Takes 2 cycles
+            }
+        }
+
+        //  PLP - Pull ProcessorStatus from Stack
+        map[0x28] = Opcode {
+            it.apply {
+                //  TODO: Handle some interrupt?
+                processorStatus.toFlags(pop())
+                //  TODO: Takes 4 cycles
+            }
+        }
+
+        //  CMP - Compare M and A
+        map[0xc9] = Opcode {
+            it.apply {
+                val comparison = registers.accumulator - readByteAtPC()
+                processorStatus.apply {
+                    negative = (comparison and 0x80) == 0x80
+                    carry = comparison >= 0
+                    zero = comparison == 0
+                }
+
+                //  TODO: Takes 2 cycles
+            }
+        }
+
         //  Branch Operations
         map[0x10] = branchOp { !it.processorStatus.negative } // BPL - Branch on Result Plus
+        map[0x30] = branchOp { it.processorStatus.negative } // BMI - Branch on Result Minus
         map[0x50] = branchOp { !it.processorStatus.overflow } // BVC - Branch on Overflow Clear
         map[0x70] = branchOp { it.processorStatus.overflow } // BVS - Branch on Overflow Set
         map[0x90] = branchOp { !it.processorStatus.carry } // BCC - Branch on Carry Clear
@@ -117,25 +171,61 @@ class Opcodes {
         map[0x78] = setOp { it.processorStatus.interruptDisable = true } // SEI - Set Interrupt Disable Status
         map[0xd8] = setOp { it.processorStatus.decimalMode = false } // CLD - Clear Decimal mode
         map[0xf8] = setOp { it.processorStatus.decimalMode = true } // SED - Set Decimal mode
+
+        //  Push operations
+        map[0x08] = pushOp { it.processorStatus.asByte() } //  PHP - Push Processor Status on Stack
+        map[0x48] = pushOp { it.registers.accumulator } // PHA - Push A on Stack
+
+        //  Clear flag operations
+        map[0xb8] = clearOp { it.processorStatus.overflow = false } // CLV - Clear Overflow Flag
+
+        //  Operations over Accumulator
+        map[0x09] = opWithA { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
+        map[0x29] = opWithA { a, m -> (a and m) } // AND - "AND" M with A
+        map[0x49] = opWithA { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
     }
 
-    fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
+    private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
         it.apply {
             branch(flag(it))
             //  TODO: Takes 2 cycles
         }
     }
 
-    fun storeOp(value: (Cpu) -> Byte) = Opcode {
+    private fun storeOp(value: (Cpu) -> Byte) = Opcode {
         it.apply {
             memory[readByteAtPC().toUnsignedInt()] = value(it)
             // TODO: Takes 3 cycles
         }
     }
 
-    fun setOp(op: (Cpu) -> Unit) = Opcode {
+    private fun setOp(op: (Cpu) -> Unit) = Opcode {
         it.apply {
             op(it)
+            //  TODO: Takes 2 cycles
+        }
+    }
+
+    private fun pushOp(value: (Cpu) -> Byte) = Opcode {
+        it.apply {
+            push(value(it))
+            //  TODO: Takes 3 cycles
+        }
+    }
+
+    private fun clearOp(op: (Cpu) -> Unit) = Opcode {
+        it.apply {
+            op(it)
+            //  TODO: Takes 2 cycles
+        }
+    }
+
+    private fun opWithA(op: (Int, Int) -> Int) = Opcode {
+        it.apply {
+            registers.accumulator = op(registers.accumulator.toUnsignedInt(), readByteAtPC().toUnsignedInt()).toSignedByte().apply {
+                processorStatus.resolveZeroAndNegativeFlags(this)
+            }
+
             //  TODO: Takes 2 cycles
         }
     }
