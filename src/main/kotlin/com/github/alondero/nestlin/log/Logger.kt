@@ -31,7 +31,18 @@ class Logger {
         opcodeLog[0x70] = {"${it.byte1} ${nValue()}  BVS $${it.progc}"}
         opcodeLog[0x50] = {"${it.byte1} ${nValue()}  BVC $${it.progc}"}
         opcodeLog[0x10] = {"${it.byte1} ${nValue()}  BPL $${it.progc}"}
+        opcodeLog[0x30] = {"${it.byte1} ${nValue()}  BMI $${it.progc}"}
         opcodeLog[0x60] = {"${nValue()} ${nValue()}  RTS"}
+        opcodeLog[0x08] = {"${nValue()} ${nValue()}  PHP"}
+        opcodeLog[0x48] = {"${nValue()} ${nValue()}  PHA"}
+        opcodeLog[0x68] = {"${nValue()} ${nValue()}  PLA"}
+        opcodeLog[0x28] = {"${nValue()} ${nValue()}  PLP"}
+        opcodeLog[0x29] = {"${it.byte1} ${nValue()}  AND #$${it.byte1}"}
+        opcodeLog[0x09] = {"${it.byte1} ${nValue()}  ORA #$${it.byte1}"}
+        opcodeLog[0x49] = {"${it.byte1} ${nValue()}  EOR #$${it.byte1}"}
+        opcodeLog[0xc9] = {"${it.byte1} ${nValue()}  CMP #$${it.byte1}"}
+        opcodeLog[0xb8] = {"${nValue()} ${nValue()}  CLV"}
+        opcodeLog[0x69] = {"${it.byte1} ${nValue()}  ADC #$${it.byte1}"}
     }
 
     fun cpuTick(initialPC: Short, opcodeVal: Int, cpu: Cpu) {

@@ -135,7 +135,16 @@ data class ProcessorStatus(
                 (if (carry) 1 else 0)).toSignedByte()
     }
 
-    fun setFlags(result: Byte) {
+    fun toFlags(status: Byte) {
+        carry = status.isBitSet(0)
+        zero = status.isBitSet(1)
+        interruptDisable = status.isBitSet(2)
+        decimalMode = status.isBitSet(3)
+        overflow = status.isBitSet(6)
+        negative = status.isBitSet(7)
+    }
+
+    fun resolveZeroAndNegativeFlags(result: Byte) {
         zero = (result.toUnsignedInt() == 0)
         negative = result.isBitSet(7)
     }
