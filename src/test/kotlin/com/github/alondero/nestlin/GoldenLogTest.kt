@@ -40,7 +40,7 @@ class GoldenLogTest {
                 for (token in 0..logTokens.size - 1) {
                     if (!logTokens[token].equals(goldenTokens[token])) {
                         if (!(token == 5 && logTokens[token].contains("=")) && !(token == 6 && logTokens[1].equals("29"))) {
-                            throw AssertionError("Token mismatch on line ${line - 1}, with address ${logTokens[0]}. Expected token:${token.tokenName()} to be ${goldenTokens[token]} but was ${logTokens[token]}.\nExpected line:\n${golden[line - 1]}\nActual line:\n${log[line]}")
+                            throw AssertionError("Token mismatch on line ${line - 1}, with address ${logTokens[0]}. Expected token:${token.tokenName()} to be ${goldenTokens[token]} but was ${logTokens[token]}.\nExpected lines:\n${golden[line - 2]}\n${golden[line - 1]}\nActual lines:\n${log[line-1]}\n${log[line]}")
                         }
                     }
                 }

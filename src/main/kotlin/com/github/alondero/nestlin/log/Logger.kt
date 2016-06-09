@@ -24,6 +24,7 @@ class Logger {
         opcodeLog[0x18] = {"${nValue()} ${nValue()}  CLC"}
         opcodeLog[0x90] = {"${it.byte1} ${nValue()}  BCC $${it.progc}"}
         opcodeLog[0xa9] = {"${it.byte1} ${nValue()}  LDA #$${it.byte1}"}
+        opcodeLog[0xa0] = {"${it.byte1} ${nValue()}  LDY #$${it.byte1}"}
         opcodeLog[0xf0] = {"${it.byte1} ${nValue()}  BEQ $${it.progc}"}
         opcodeLog[0xd0] = {"${it.byte1} ${nValue()}  BNE $${it.progc}"}
         opcodeLog[0x85] = {"${it.byte1} ${nValue()}  STA $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -41,8 +42,20 @@ class Logger {
         opcodeLog[0x09] = {"${it.byte1} ${nValue()}  ORA #$${it.byte1}"}
         opcodeLog[0x49] = {"${it.byte1} ${nValue()}  EOR #$${it.byte1}"}
         opcodeLog[0xc9] = {"${it.byte1} ${nValue()}  CMP #$${it.byte1}"}
+        opcodeLog[0xc0] = {"${it.byte1} ${nValue()}  CPY #$${it.byte1}"}
+        opcodeLog[0xe0] = {"${it.byte1} ${nValue()}  CPX #$${it.byte1}"}
         opcodeLog[0xb8] = {"${nValue()} ${nValue()}  CLV"}
+        opcodeLog[0xc8] = {"${nValue()} ${nValue()}  INY"}
+        opcodeLog[0x88] = {"${nValue()} ${nValue()}  DEY"}
+        opcodeLog[0xe8] = {"${nValue()} ${nValue()}  INX"}
+        opcodeLog[0xca] = {"${nValue()} ${nValue()}  DEX"}
+        opcodeLog[0xa8] = {"${nValue()} ${nValue()}  TAY"}
+        opcodeLog[0xaa] = {"${nValue()} ${nValue()}  TAX"}
+        opcodeLog[0x98] = {"${nValue()} ${nValue()}  TYA"}
+        opcodeLog[0x8a] = {"${nValue()} ${nValue()}  TXA"}
+        opcodeLog[0xba] = {"${nValue()} ${nValue()}  TSX"}
         opcodeLog[0x69] = {"${it.byte1} ${nValue()}  ADC #$${it.byte1}"}
+        opcodeLog[0xe9] = {"${it.byte1} ${nValue()}  SBC #$${it.byte1}"}
     }
 
     fun cpuTick(initialPC: Short, opcodeVal: Int, cpu: Cpu) {
