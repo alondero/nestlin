@@ -62,7 +62,7 @@ class Cpu(
             if (hasCrossedPageBoundary(previousCounter, registers.programCounter)) pageBoundaryFlag = true
             if ((previousCounter - 2).toSignedShort() == registers.programCounter) idle = true
         } else {
-            (readByteAtPC() + registers.programCounter).toSignedShort() // Unsure whether we need to do this?
+            registers.programCounter++ // Increment the program counter
         }
     }
 

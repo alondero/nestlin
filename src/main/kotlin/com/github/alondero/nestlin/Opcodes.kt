@@ -108,14 +108,13 @@ class Opcodes {
         }
 
         //  ADC - Add M to A with Carry
-        //  TODO: Possible bug in this code - ADC seems to incorrectly set the flags
         map[0x69] = Opcode {
             it.apply {
                 //  No need to test for decimal mode on NES CPU!
                 val next = readByteAtPC()
                 val currentAccumulator = registers.accumulator
 
-                var result = currentAccumulator + next
+                var result = currentAccumulator.toUnsignedInt() + next.toUnsignedInt()
                 if (processorStatus.carry) result++
 
                 registers.accumulator = result.toSignedByte()
@@ -140,11 +139,13 @@ class Opcodes {
         //  CMP - Compare M and A
         map[0xc9] = Opcode {
             it.apply {
-                val comparison = registers.accumulator - readByteAtPC()
+                val accumulator = registers.accumulator
+                val mem = readByteAtPC()
+                val comparison: Int = accumulator - mem
                 processorStatus.apply {
-                    negative = (comparison and 0x80) == 0x80
-                    carry = comparison >= 0
+                    negative = comparison.toSignedByte().isBitSet(7)
                     zero = comparison == 0
+                    carry = accumulator.toUnsignedInt() >= mem.toUnsignedInt()
                 }
 
                 //  TODO: Takes 2 cycles
