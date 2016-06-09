@@ -52,7 +52,7 @@ class Logger {
                 format((initialPC.inc() + cpu.memory[initialPC.inc().toUnsignedInt()].inc()).toShort()),
                 cpu)
 
-        println("${initialPC.toHexString()}  ${opcodeVal.toHexString()} ${"%-39s".format(opcodeLog[opcodeVal]!!(arguments))} " +
+        println("${initialPC.toHexString()}  ${opcodeVal.toHexString()} ${"%-38s".format(opcodeLog[opcodeVal]!!(arguments))} " +
                 "A:${format(cpu.registers.accumulator)} " +
                 "X:${format(cpu.registers.indexX)} " +
                 "Y:${format(cpu.registers.indexY)} " +
