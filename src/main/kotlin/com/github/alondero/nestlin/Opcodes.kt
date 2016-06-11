@@ -245,6 +245,15 @@ class Opcodes {
             }
         }
 
+        //  LSR - Shift Right One Bit (M or A)
+        map[0x4a] = Opcode {
+            it.apply {
+                processorStatus.carry = registers.accumulator.isBitSet(0)
+                registers.accumulator = (registers.accumulator.toUnsignedInt() shr 1).toSignedByte()
+                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            }
+        }
+
     }
 
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {

@@ -61,6 +61,7 @@ class Logger {
         opcodeLog[0x69] = {"${it.byte1} ${nValue()}  ADC #$${it.byte1}"}
         opcodeLog[0xe9] = {"${it.byte1} ${nValue()}  SBC #$${it.byte1}"}
         opcodeLog[0x40] = {"${nValue()} ${nValue()}  RTI"}
+        opcodeLog[0x4a] = {"${nValue()} ${nValue()}  LSR A"}
     }
 
     fun cpuTick(initialPC: Short, opcodeVal: Int, cpu: Cpu) {
