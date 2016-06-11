@@ -254,6 +254,15 @@ class Opcodes {
             }
         }
 
+        //  ASL - Shift Left One Bit (M or A)
+        map[0x0a] = Opcode {
+            it.apply {
+                processorStatus.carry = registers.accumulator.isBitSet(7)
+                registers.accumulator = (registers.accumulator.toUnsignedInt() shl 1).toSignedByte()
+                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            }
+        }
+
     }
 
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
@@ -349,4 +358,4 @@ class Opcodes {
 
 class Opcode(val op: (Cpu) -> Unit)
 
-class UnhandledOpcodeException(opcodeVal: Int) : Throwable("Opcode ${Integer.toHexString(opcodeVal)} not implemented")
+class UnhandledOpcodeException(opcodeVal: Int) : Throwable("Opcode ${"%02X".format(opcodeVal)} not implemented")
