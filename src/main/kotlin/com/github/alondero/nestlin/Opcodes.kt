@@ -263,6 +263,16 @@ class Opcodes {
             }
         }
 
+        //  ROR - Rotate One Bit Right (M or A)
+        map[0x6a] = Opcode {
+            it.apply {
+                val oldCarry = processorStatus.carry
+                processorStatus.carry = registers.accumulator.isBitSet(0)
+                registers.accumulator = ((registers.accumulator.toUnsignedInt() shr 1) or (if (oldCarry) 0x80 else 0)).toSignedByte()
+                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            }
+        }
+
     }
 
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
