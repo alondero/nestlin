@@ -146,7 +146,7 @@ data class ProcessorStatus(
 
     fun resolveZeroAndNegativeFlags(result: Byte) {
         zero = (result.toUnsignedInt() == 0)
-        negative = result.isBitSet(7)
+        negative = (result.toUnsignedInt() and 0xFF).toSignedByte().isBitSet(7)
     }
 }
 

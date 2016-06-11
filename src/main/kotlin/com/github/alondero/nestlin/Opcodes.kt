@@ -17,8 +17,9 @@ class Opcodes {
         map[0xf0] = branchOp { it.processorStatus.zero } // BEQ - Branch on Result Zero
 
         //  Store operations
-        map[0x85] = storeOp { it.registers.accumulator } // STA - Store A in M
-        map[0x86] = storeOp { it.registers.indexX } // STX - Store X in M
+        map[0x85] = storeZeroPagedOp { it.registers.accumulator } // STA - Store A in M (Zero Paged)
+        map[0x86] = storeZeroPagedOp { it.registers.indexX } // STX - Store X in M (Zero Paged)
+        map[0x8e] = storeOp { it.registers.indexX } // STX - Store X in M
 
         //  Set and Clear operations
         map[0x18] = setOp { it.processorStatus.carry = false } // CLC - Clear Carry Flag
@@ -42,6 +43,7 @@ class Opcodes {
         //  Load operations
         map[0xa9] = load { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xa2] = load { registers, mem -> registers.indexX = mem } // LDX - Load X with M
+        map[0xae] = load ({it.memory[it.readShortAtPC().toUnsignedInt()]}) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
         map[0xa0] = load { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
 
         //  Compare operations
@@ -55,7 +57,12 @@ class Opcodes {
         map[0x98] = transfer ({it.indexY}) { r, y -> r.accumulator = y } // TYA - Transfer Y to A
         map[0x8a] = transfer ({it.indexX}) { r, x -> r.accumulator = x } // TXA - Transfer X to A
         map[0xba] = transfer ({it.stackPointer}) { r, sp -> r.indexX = sp } // TSX - Transfer Stack Pointer to X
-
+        map[0x9a] = Opcode {
+            it.apply {
+                it.registers.stackPointer = it.registers.indexX
+                //  TODO: 2 cycles
+            }
+        } // TXS - Transfer X to Stack Pointer (doesn't set program counter)
 
         map[0x00] = Opcode {
             it.apply {
@@ -231,10 +238,17 @@ class Opcodes {
         }
     }
 
-    private fun storeOp(value: (Cpu) -> Byte) = Opcode {
+    private fun storeZeroPagedOp(value: (Cpu) -> Byte) = Opcode {
         it.apply {
             memory[readByteAtPC().toUnsignedInt()] = value(it)
             // TODO: Takes 3 cycles
+        }
+    }
+
+    private fun storeOp(value: (Cpu) -> Byte) = Opcode {
+        it.apply {
+            memory[readShortAtPC().toUnsignedInt()] = value(it)
+            // TODO: Takes 4 cycles
         }
     }
 
@@ -269,9 +283,9 @@ class Opcodes {
         }
     }
 
-    private fun load(op: (Registers, Byte) -> Unit) = Opcode {
+    private fun load(mem: (Cpu) -> Byte = {it.readByteAtPC()}, op: (Registers, Byte) -> Unit) = Opcode {
         it.apply {
-            readByteAtPC().apply {
+            mem(it).apply {
                 op(it.registers, this)
                 processorStatus.resolveZeroAndNegativeFlags(this)
             }
