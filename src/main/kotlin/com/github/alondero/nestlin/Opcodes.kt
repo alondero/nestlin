@@ -251,6 +251,7 @@ class Opcodes {
                 processorStatus.carry = registers.accumulator.isBitSet(0)
                 registers.accumulator = (registers.accumulator.toUnsignedInt() shr 1).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+                //  TODO: Takes 2 cycles
             }
         }
 
@@ -260,6 +261,7 @@ class Opcodes {
                 processorStatus.carry = registers.accumulator.isBitSet(7)
                 registers.accumulator = (registers.accumulator.toUnsignedInt() shl 1).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+                //  TODO: Takes 2 cycles
             }
         }
 
@@ -270,6 +272,18 @@ class Opcodes {
                 processorStatus.carry = registers.accumulator.isBitSet(0)
                 registers.accumulator = ((registers.accumulator.toUnsignedInt() shr 1) or (if (oldCarry) 0x80 else 0)).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+                //  TODO: Takes 2 cycles
+            }
+        }
+
+        //  ROL - Rotate One Bit Left (M or A)
+        map[0x2a] = Opcode {
+            it.apply {
+                val newAccumulator = (registers.accumulator.toUnsignedInt() shl 1) or (if (processorStatus.carry) 1 else 0)
+                processorStatus.carry = (newAccumulator and 0xFF00) > 0
+                registers.accumulator = (newAccumulator and 0xFF).toSignedByte()
+                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+                //  TODO: Takes 2 cycles
             }
         }
 
