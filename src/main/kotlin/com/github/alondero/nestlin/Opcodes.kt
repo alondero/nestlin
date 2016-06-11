@@ -236,6 +236,15 @@ class Opcodes {
             }
         }
 
+        //  RTI - Return from Interrupt
+        map[0x40] = Opcode {
+            it.apply {
+                processorStatus.toFlags(pop())
+                registers.programCounter = (pop().toUnsignedInt() or (pop().toUnsignedInt() shl 8)).toSignedShort()
+                //  TODO: Takes 6 cycles
+            }
+        }
+
     }
 
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
