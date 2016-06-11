@@ -18,6 +18,7 @@ class Opcodes {
 
         //  Store operations
         map[0x85] = storeZeroPagedOp { it.registers.accumulator } // STA - Store A in M (Zero Paged)
+        map[0x8d] = storeOp { it.registers.accumulator } // STA - Store A in M
         map[0x86] = storeZeroPagedOp { it.registers.indexX } // STX - Store X in M (Zero Paged)
         map[0x8e] = storeOp { it.registers.indexX } // STX - Store X in M
 
@@ -41,11 +42,12 @@ class Opcodes {
         map[0x49] = opWithA { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
 
         //  Load operations
-        map[0xa9] = load { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
-        map[0xa2] = load { registers, mem -> registers.indexX = mem } // LDX - Load X with M
-        map[0xa0] = load { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
-        map[0xae] = load ({it.memory[it.readShortAtPC().toUnsignedInt()]}) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
-        map[0xad] = load ({it.memory[it.readShortAtPC().toUnsignedInt()]}) { registers, mem -> registers.accumulator = mem }// LDA - Load A with M
+        map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xa5] = load (zeroPaged()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xa2] = load (immediate()) { registers, mem -> registers.indexX = mem } // LDX - Load X with M
+        map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
+        map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
+        map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem }// LDA - Load A with M
 
         //  Compare operations
         map[0xc9] = compareOp { it.accumulator } //  CMP - Compare M and A
@@ -289,6 +291,10 @@ class Opcodes {
 
     }
 
+    private fun immediate(): (Cpu) -> Byte = { it.readByteAtPC() }
+    private fun absolute(): (Cpu) -> Byte = { it.memory[it.readShortAtPC().toUnsignedInt()] }
+    private fun zeroPaged(): (Cpu) -> Byte = { it.memory[it.readByteAtPC().toUnsignedInt()] }
+
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
         it.apply {
             branch(flag(it))
@@ -341,7 +347,7 @@ class Opcodes {
         }
     }
 
-    private fun load(mem: (Cpu) -> Byte = {it.readByteAtPC()}, op: (Registers, Byte) -> Unit) = Opcode {
+    private fun load(mem: (Cpu) -> Byte, op: (Registers, Byte) -> Unit) = Opcode {
         it.apply {
             mem(it).apply {
                 op(it.registers, this)
