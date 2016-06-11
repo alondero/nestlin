@@ -10,7 +10,7 @@ class Logger {
     private var opcodeLog = HashMap<Int, (Arguments) -> String>()
 
     init {
-        opcodeLog[0x00] = {"BRK"}
+        opcodeLog[0x00] = {"${nValue()} ${nValue()}  BRK"}
         opcodeLog[0x20] = {"${it.byte1} ${it.byte2}  JSR $${it.byte2}${it.byte1}"}
         opcodeLog[0x78] = {"${nValue()} ${nValue()}  SEI"}
         opcodeLog[0xd8] = {"${nValue()} ${nValue()}  CLD"}
@@ -24,6 +24,7 @@ class Logger {
         opcodeLog[0x18] = {"${nValue()} ${nValue()}  CLC"}
         opcodeLog[0x90] = {"${it.byte1} ${nValue()}  BCC $${it.progc}"}
         opcodeLog[0xa9] = {"${it.byte1} ${nValue()}  LDA #$${it.byte1}"}
+        opcodeLog[0xad] = {"${it.byte1} ${it.byte2}  LDA $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0xa2] = {"${it.byte1} ${nValue()}  LDX #$${it.byte1}"}
         opcodeLog[0xae] = {"${it.byte1} ${it.byte2}  LDX $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0xa0] = {"${it.byte1} ${nValue()}  LDY #$${it.byte1}"}

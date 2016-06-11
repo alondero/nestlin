@@ -43,8 +43,9 @@ class Opcodes {
         //  Load operations
         map[0xa9] = load { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xa2] = load { registers, mem -> registers.indexX = mem } // LDX - Load X with M
-        map[0xae] = load ({it.memory[it.readShortAtPC().toUnsignedInt()]}) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
         map[0xa0] = load { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
+        map[0xae] = load ({it.memory[it.readShortAtPC().toUnsignedInt()]}) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
+        map[0xad] = load ({it.memory[it.readShortAtPC().toUnsignedInt()]}) { registers, mem -> registers.accumulator = mem }// LDA - Load A with M
 
         //  Compare operations
         map[0xc9] = compareOp { it.accumulator } //  CMP - Compare M and A
@@ -64,6 +65,7 @@ class Opcodes {
             }
         } // TXS - Transfer X to Stack Pointer (doesn't set program counter)
 
+        //  BRK - Force Break
         map[0x00] = Opcode {
             it.apply {
                 processorStatus.breakCommand = true
@@ -79,13 +81,16 @@ class Opcodes {
                 //  TODO: Takes 7 cycles
             }
         }
+
+        //  JSR - Jump to Location Save Return Address
         map[0x20] = Opcode {
             it.apply {
                 val next = readShortAtPC()
-                registers.programCounter--.toUnsignedInt().apply {
+                registers.programCounter.dec().toUnsignedInt().apply {
                     push((this shr 8).toSignedByte())
                     push((this and 0xFF).toSignedByte())
                     registers.programCounter = next
+                    registers.programCounter
                 }
 
                 //  TODO: Takes 6 cycles
@@ -130,6 +135,8 @@ class Opcodes {
                 val lowByte = pop().toUnsignedInt()
                 val highByte = pop().toUnsignedInt()
                 it.registers.programCounter = ((lowByte and 0xff) or (highByte shl 8)).toSignedShort()
+                it.registers.programCounter++
+//                println("Returning to Program Counter ${it.registers.programCounter.toHexString()}")
             }
             //  TODO: Takes 6 cycles
         }

@@ -67,13 +67,12 @@ class Cpu(
     }
 
     fun push(value: Byte) {
-        memory[(0x100 + (registers.stackPointer.toUnsignedInt() and 0xFF))] = value
+        memory[0x100 + (registers.stackPointer.toUnsignedInt())] = value
         registers.stackPointer--
     }
 
     fun pop(): Byte {
         registers.stackPointer++
-        registers.stackPointer = (registers.stackPointer.toUnsignedInt() and 0xff).toSignedByte()
         return memory[(0x100 + registers.stackPointer.toUnsignedInt())]
     }
 
