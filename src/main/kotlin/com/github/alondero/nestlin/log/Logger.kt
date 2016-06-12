@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.log
 
 import com.github.alondero.nestlin.Cpu
+import com.github.alondero.nestlin.UnhandledOpcodeException
 import com.github.alondero.nestlin.toHexString
 import com.github.alondero.nestlin.toUnsignedInt
 import java.util.*
@@ -19,10 +20,7 @@ class Logger {
         opcodeLog[0x86] = {"${it.byte1} ${nValue()}  STX $${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0x8e] = {"${it.byte1} ${it.byte2}  STX $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0x8d] = {"${it.byte1} ${it.byte2}  STA $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
-        opcodeLog[0x81] = {
-            val lookupAddr = it.cpu.memory[(it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF, ((it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF) + 1]
-            "${it.byte1} ${nValue()}  STA ($${it.byte1},X) @ ${it.byte1} = ${lookupAddr.toHexString()} = ${it.cpu.memory[lookupAddr.toUnsignedInt()].toHexString()}"
-        }
+        opcodeLog[0x81] = {indirectOp(it, "STA")}
         opcodeLog[0xea] = {"${nValue()} ${nValue()}  NOP"}
         opcodeLog[0x38] = {"${nValue()} ${nValue()}  SEC"}
         opcodeLog[0xb0] = {"${it.byte1} ${nValue()}  BCS $${it.progc}"}
@@ -31,10 +29,7 @@ class Logger {
         opcodeLog[0xa9] = {"${it.byte1} ${nValue()}  LDA #$${it.byte1}"}
         opcodeLog[0xa5] = {"${it.byte1} ${nValue()}  LDA $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xad] = {"${it.byte1} ${it.byte2}  LDA $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
-        opcodeLog[0xa1] = {
-            val lookupAddr = it.cpu.memory[(it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF, ((it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF) + 1]
-            "${it.byte1} ${nValue()}  LDA ($${it.byte1},X) @ ${it.byte1} = ${lookupAddr.toHexString()} = ${it.cpu.memory[lookupAddr.toUnsignedInt()].toHexString()}"
-        }
+        opcodeLog[0xa1] = {indirectOp(it, "LDA")}
         opcodeLog[0xa2] = {"${it.byte1} ${nValue()}  LDX #$${it.byte1}"}
         opcodeLog[0xae] = {"${it.byte1} ${it.byte2}  LDX $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0xa0] = {"${it.byte1} ${nValue()}  LDY #$${it.byte1}"}
@@ -53,10 +48,8 @@ class Logger {
         opcodeLog[0x28] = {"${nValue()} ${nValue()}  PLP"}
         opcodeLog[0x29] = {"${it.byte1} ${nValue()}  AND #$${it.byte1}"}
         opcodeLog[0x09] = {"${it.byte1} ${nValue()}  ORA #$${it.byte1}"}
-        opcodeLog[0x01] = {
-            val lookupAddr = it.cpu.memory[(it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF, ((it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF) + 1]
-            "${it.byte1} ${nValue()}  ORA ($${it.byte1},X) @ ${it.byte1} = ${lookupAddr.toHexString()} = ${it.cpu.memory[lookupAddr.toUnsignedInt()].toHexString()}"
-        }
+        opcodeLog[0x01] = {indirectOp(it, "ORA")}
+        opcodeLog[0x21] = {indirectOp(it, "AND")}
         opcodeLog[0x49] = {"${it.byte1} ${nValue()}  EOR #$${it.byte1}"}
         opcodeLog[0xc9] = {"${it.byte1} ${nValue()}  CMP #$${it.byte1}"}
         opcodeLog[0xc0] = {"${it.byte1} ${nValue()}  CPY #$${it.byte1}"}
@@ -81,12 +74,23 @@ class Logger {
         opcodeLog[0x2a] = {"${nValue()} ${nValue()}  ROL A"}
     }
 
+    private fun indirectOp(args: Arguments, op: String): String {
+        return args.let {
+            val lookupAddr = it.cpu.memory[(it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF, ((it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF) + 1]
+            "${it.byte1} ${nValue()}  $op (${it.byte1},X) @ ${it.byte1} = ${lookupAddr.toHexString()} = ${it.cpu.memory[lookupAddr.toUnsignedInt()].toHexString()}"
+        }
+    }
+
     fun cpuTick(initialPC: Short, opcodeVal: Int, cpu: Cpu) {
         val arguments = Arguments(
                 format(cpu.memory[initialPC.inc().toUnsignedInt()]),
                 format(cpu.memory[initialPC.inc().inc().toUnsignedInt()]),
                 format((initialPC.inc() + cpu.memory[initialPC.inc().toUnsignedInt()].inc()).toShort()),
                 cpu)
+
+        if (!opcodeLog.containsKey(opcodeVal)) {
+            throw UnhandledOpcodeException(opcodeVal)
+        }
 
         println("${initialPC.toHexString()}  ${opcodeVal.toHexString()} ${"%-38s".format(opcodeLog[opcodeVal]!!(arguments))} " +
                 "A:${format(cpu.registers.accumulator)} " +
