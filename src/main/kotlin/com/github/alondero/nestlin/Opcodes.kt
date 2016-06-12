@@ -44,10 +44,11 @@ class Opcodes {
         //  Load operations
         map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xa5] = load (zeroPaged()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xa1] = load (indirectX()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xa2] = load (immediate()) { registers, mem -> registers.indexX = mem } // LDX - Load X with M
         map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
         map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
-        map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem }// LDA - Load A with M
 
         //  Compare operations
         map[0xc9] = compareOp { it.accumulator } //  CMP - Compare M and A
@@ -294,6 +295,12 @@ class Opcodes {
     private fun immediate(): (Cpu) -> Byte = { it.readByteAtPC() }
     private fun absolute(): (Cpu) -> Byte = { it.memory[it.readShortAtPC().toUnsignedInt()] }
     private fun zeroPaged(): (Cpu) -> Byte = { it.memory[it.readByteAtPC().toUnsignedInt()] }
+    private fun indirectX(): (Cpu) -> Byte = {
+        it.memory[it.let {
+            val mem = it.readByteAtPC()
+            it.memory[(mem + it.registers.indexX) and 0xFF, (mem + it.registers.indexX + 1) and 0xFF]
+        }.toUnsignedInt()]
+    }
 
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
         it.apply {

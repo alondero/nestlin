@@ -27,6 +27,9 @@ class Logger {
         opcodeLog[0xa9] = {"${it.byte1} ${nValue()}  LDA #$${it.byte1}"}
         opcodeLog[0xa5] = {"${it.byte1} ${nValue()}  LDA $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xad] = {"${it.byte1} ${it.byte2}  LDA $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
+        opcodeLog[0xa1] = {
+            val lookupAddr = it.cpu.memory[(it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF, ((it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF) + 1]
+            "${it.byte1} ${nValue()}  LDA ($${it.byte1},X) @ ${it.byte1} = ${lookupAddr.toHexString()} = ${it.cpu.memory[lookupAddr.toUnsignedInt()].toHexString()}"}
         opcodeLog[0xa2] = {"${it.byte1} ${nValue()}  LDX #$${it.byte1}"}
         opcodeLog[0xae] = {"${it.byte1} ${it.byte2}  LDX $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0xa0] = {"${it.byte1} ${nValue()}  LDY #$${it.byte1}"}
