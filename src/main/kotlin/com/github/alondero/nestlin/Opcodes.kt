@@ -17,10 +17,11 @@ class Opcodes {
         map[0xf0] = branchOp { it.processorStatus.zero } // BEQ - Branch on Result Zero
 
         //  Store operations
-        map[0x85] = storeZeroPagedOp { it.registers.accumulator } // STA - Store A in M (Zero Paged)
-        map[0x8d] = storeOp { it.registers.accumulator } // STA - Store A in M
-        map[0x86] = storeZeroPagedOp { it.registers.indexX } // STX - Store X in M (Zero Paged)
-        map[0x8e] = storeOp { it.registers.indexX } // STX - Store X in M
+        map[0x85] = storeOp (zeroPagedAdr()) { it.registers.accumulator } // STA - Store A in M (Zero Paged)
+        map[0x8d] = storeOp (absoluteAdr()) { it.registers.accumulator } // STA - Store A in M
+        map[0x81] = storeOp (indirectXAdr()) { it.registers.accumulator } // STA - Store A in M (Relative to X)
+        map[0x86] = storeOp (zeroPagedAdr()) { it.registers.indexX } // STX - Store X in M (Zero Paged)
+        map[0x8e] = storeOp (absoluteAdr()) { it.registers.indexX } // STX - Store X in M
 
         //  Set and Clear operations
         map[0x18] = setOp { it.processorStatus.carry = false } // CLC - Clear Carry Flag
@@ -37,9 +38,10 @@ class Opcodes {
         map[0xb8] = clearOp { it.processorStatus.overflow = false } // CLV - Clear Overflow Flag
 
         //  Operations over Accumulator
-        map[0x09] = opWithA { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
-        map[0x29] = opWithA { a, m -> (a and m) } // AND - "AND" M with A
-        map[0x49] = opWithA { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
+        map[0x01] = opWithA (indirectX()) { a, m -> ((a or m) and 0xff) } // ORA - "OR" M with A
+        map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
+        map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
 
         //  Load operations
         map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
@@ -293,14 +295,18 @@ class Opcodes {
     }
 
     private fun immediate(): (Cpu) -> Byte = { it.readByteAtPC() }
-    private fun absolute(): (Cpu) -> Byte = { it.memory[it.readShortAtPC().toUnsignedInt()] }
-    private fun zeroPaged(): (Cpu) -> Byte = { it.memory[it.readByteAtPC().toUnsignedInt()] }
-    private fun indirectX(): (Cpu) -> Byte = {
-        it.memory[it.let {
+    private fun absolute(): (Cpu) -> Byte = { it.memory[absoluteAdr()(it)] }
+    private fun zeroPaged(): (Cpu) -> Byte = { it.memory[zeroPagedAdr()(it)] }
+    private fun indirectX(): (Cpu) -> Byte = { it.memory[indirectXAdr()(it)] }
+    private fun absoluteAdr(): (Cpu) -> Int = { it.readShortAtPC().toUnsignedInt() }
+    private fun zeroPagedAdr(): (Cpu) -> Int = { it.readByteAtPC().toUnsignedInt() }
+    private fun indirectXAdr(): (Cpu) -> Int = {
+        it.let {
             val mem = it.readByteAtPC()
             it.memory[(mem + it.registers.indexX) and 0xFF, (mem + it.registers.indexX + 1) and 0xFF]
-        }.toUnsignedInt()]
+        }.toUnsignedInt()
     }
+
 
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
         it.apply {
@@ -309,16 +315,9 @@ class Opcodes {
         }
     }
 
-    private fun storeZeroPagedOp(value: (Cpu) -> Byte) = Opcode {
+    private fun storeOp(adr: (Cpu) -> Int, value: (Cpu) -> Byte) = Opcode {
         it.apply {
-            memory[readByteAtPC().toUnsignedInt()] = value(it)
-            // TODO: Takes 3 cycles
-        }
-    }
-
-    private fun storeOp(value: (Cpu) -> Byte) = Opcode {
-        it.apply {
-            memory[readShortAtPC().toUnsignedInt()] = value(it)
+            memory[adr(it)] = value(it)
             // TODO: Takes 4 cycles
         }
     }
@@ -344,9 +343,9 @@ class Opcodes {
         }
     }
 
-    private fun opWithA(op: (Int, Int) -> Int) = Opcode {
+    private fun opWithA(mem: (Cpu) -> Byte, op: (Int, Int) -> Int) = Opcode {
         it.apply {
-            registers.accumulator = op(registers.accumulator.toUnsignedInt(), readByteAtPC().toUnsignedInt()).toSignedByte().apply {
+            registers.accumulator = op(registers.accumulator.toUnsignedInt(), mem(it).toUnsignedInt()).toSignedByte().apply {
                 processorStatus.resolveZeroAndNegativeFlags(this)
             }
 
