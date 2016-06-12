@@ -41,6 +41,7 @@ class Opcodes {
         map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x01] = opWithA (indirectX()) { a, m -> ((a or m) and 0xff) } // ORA - "OR" M with A
         map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
+        map[0x21] = opWithA (indirectX()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
 
         //  Load operations
