@@ -50,6 +50,7 @@ class Logger {
         opcodeLog[0x09] = {"${it.byte1} ${nValue()}  ORA #$${it.byte1}"}
         opcodeLog[0x01] = {indirectOp(it, "ORA")}
         opcodeLog[0x21] = {indirectOp(it, "AND")}
+        opcodeLog[0x41] = {indirectOp(it, "EOR")}
         opcodeLog[0x49] = {"${it.byte1} ${nValue()}  EOR #$${it.byte1}"}
         opcodeLog[0xc9] = {"${it.byte1} ${nValue()}  CMP #$${it.byte1}"}
         opcodeLog[0xc0] = {"${it.byte1} ${nValue()}  CPY #$${it.byte1}"}

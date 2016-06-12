@@ -43,6 +43,7 @@ class Opcodes {
         map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x21] = opWithA (indirectX()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        map[0x41] = opWithA (indirectX()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
 
         //  Load operations
         map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
