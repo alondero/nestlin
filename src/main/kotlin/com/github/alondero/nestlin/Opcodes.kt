@@ -22,6 +22,7 @@ class Opcodes {
         map[0x81] = storeOp (indirectXAdr()) { it.registers.accumulator } // STA - Store A in M (Relative to X)
         map[0x86] = storeOp (zeroPagedAdr()) { it.registers.indexX } // STX - Store X in M (Zero Paged)
         map[0x8e] = storeOp (absoluteAdr()) { it.registers.indexX } // STX - Store X in M
+        map[0x84] = storeOp (zeroPagedAdr()) { it.registers.indexY } // STY - Store Y in M (Zero Paged)
 
         //  Set and Clear operations
         map[0x18] = setOp { it.processorStatus.carry = false } // CLC - Clear Carry Flag
@@ -29,6 +30,14 @@ class Opcodes {
         map[0x78] = setOp { it.processorStatus.interruptDisable = true } // SEI - Set Interrupt Disable Status
         map[0xd8] = setOp { it.processorStatus.decimalMode = false } // CLD - Clear Decimal mode
         map[0xf8] = setOp { it.processorStatus.decimalMode = true } // SED - Set Decimal mode
+
+        //  Add M to A with Carry
+        map[0x69] = addToA (immediate()) // ADC - Add M to A
+        map[0x61] = addToA (indirectX()) // ADC - Add M to A
+
+        // SBC - Subtract M from A with Borrow
+        map[0xe9] = subtractFromA (immediate())
+        map[0xe1] = subtractFromA (indirectX())
 
         //  Push operations
         map[0x08] = pushOp { it.processorStatus.asByte() } //  PHP - Push Processor Status on Stack
@@ -38,6 +47,7 @@ class Opcodes {
         map[0xb8] = clearOp { it.processorStatus.overflow = false } // CLV - Clear Overflow Flag
 
         //  Operations over Accumulator
+        map[0x05] = opWithA (zeroPaged()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x01] = opWithA (indirectX()) { a, m -> ((a or m) and 0xff) } // ORA - "OR" M with A
         map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
@@ -52,12 +62,15 @@ class Opcodes {
         map[0xa1] = load (indirectX()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xa2] = load (immediate()) { registers, mem -> registers.indexX = mem } // LDX - Load X with M
         map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
+        map[0xa4] = load (zeroPaged()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
         map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
+        map[0xa6] = load (zeroPaged()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
 
         //  Compare operations
-        map[0xc9] = compareOp { it.accumulator } //  CMP - Compare M and A
-        map[0xc0] = compareOp { it.indexY } // CPY - Compare M and Y
-        map[0xe0] = compareOp { it.indexX } // CPX - Compare M and X
+        map[0xc9] = compareOp (immediate()) { it.accumulator } //  CMP - Compare M and A
+        map[0xc1] = compareOp (indirectX()) { it.accumulator } //  CMP - Compare M and A
+        map[0xc0] = compareOp (immediate()) { it.indexY } // CPY - Compare M and Y
+        map[0xe0] = compareOp (immediate()) { it.indexX } // CPX - Compare M and X
 
         //  Transfer operations
         map[0xa8] = transfer ({it.accumulator}) { r, acc -> r.indexY = acc } //  TAY - Transfer A to Y
@@ -154,46 +167,6 @@ class Opcodes {
                 registers.accumulator = pop()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
                 //  TODO: Takes 4 cycles
-            }
-        }
-
-        //  ADC - Add M to A with Carry
-        map[0x69] = Opcode {
-            it.apply {
-                //  No need to test for decimal mode on NES CPU!
-                val next = readByteAtPC()
-                val currentAccumulator = registers.accumulator
-
-                var result = currentAccumulator.toUnsignedInt() + next.toUnsignedInt()
-                if (processorStatus.carry) result++
-
-                registers.accumulator = result.toSignedByte()
-                processorStatus.carry = (result shr 8) != 0
-                processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor next.toUnsignedInt()) and 0x80 == 0x00) &&
-                        ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
-                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-
-                // TODO: Takes 2 cycles
-            }
-        }
-
-        // SBC - Subtract M from A with Borrow
-        map[0xe9] = Opcode {
-            it.apply {
-                //  No need to test for decimal mode on NES CPU!
-                val next = readByteAtPC()
-                val currentAccumulator = registers.accumulator
-
-                var result = currentAccumulator.toUnsignedInt() - next.toUnsignedInt()
-                if (!processorStatus.carry) result--
-
-                registers.accumulator = (result and 0xFF).toSignedByte()
-                processorStatus.carry = (result shr 8) == 0
-                processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor next.toUnsignedInt()) and 0x80 == 0x80) &&
-                        ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
-                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-
-                //  TODO: Takes 6 cycles
             }
         }
 
@@ -366,10 +339,10 @@ class Opcodes {
         }
     }
 
-    private fun compareOp(op: (Registers) -> Byte) = Opcode {
+    private fun compareOp(mem: (Cpu) -> Byte, op: (Registers) -> Byte) = Opcode {
         it.apply {
             val register = op(it.registers)
-            val mem = readByteAtPC()
+            val mem = mem(it)
             val comparison: Int = register - mem
             processorStatus.apply {
                 negative = comparison.toSignedByte().isBitSet(7)
@@ -388,6 +361,44 @@ class Opcodes {
                 transfer(registers, this)
             }
             // TODO: Takes 2 cycles
+        }
+    }
+
+    private fun addToA(mem: (Cpu) -> Byte) = Opcode {
+        it.apply {
+            //  No need to test for decimal mode on NES CPU!
+            val next = mem(it)
+            val currentAccumulator = registers.accumulator
+
+            var result = currentAccumulator.toUnsignedInt() + next.toUnsignedInt()
+            if (processorStatus.carry) result++
+
+            registers.accumulator = result.toSignedByte()
+            processorStatus.carry = (result shr 8) != 0
+            processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor next.toUnsignedInt()) and 0x80 == 0x00) &&
+                    ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+
+            // TODO: Takes 2 cycles
+        }
+    }
+
+    private fun subtractFromA(mem: (Cpu) -> Byte) = Opcode {
+        it.apply {
+            //  No need to test for decimal mode on NES CPU!
+            val next = mem(it)
+            val currentAccumulator = registers.accumulator
+
+            var result = currentAccumulator.toUnsignedInt() - next.toUnsignedInt()
+            if (!processorStatus.carry) result--
+
+            registers.accumulator = (result and 0xFF).toSignedByte()
+            processorStatus.carry = (result shr 8) == 0
+            processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor next.toUnsignedInt()) and 0x80 == 0x80) &&
+                    ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+
+            //  TODO: Takes 6 cycles
         }
     }
 
