@@ -21,6 +21,7 @@ class Opcodes {
         map[0x84] = storeOp (zeroPagedAdr()) { it.registers.indexY } // STY - Store Y in M (Zero Paged)
         map[0x85] = storeOp (zeroPagedAdr()) { it.registers.accumulator } // STA - Store A in M (Zero Paged)
         map[0x86] = storeOp (zeroPagedAdr()) { it.registers.indexX } // STX - Store X in M (Zero Paged)
+        map[0x8c] = storeOp (absoluteAdr()) { it.registers.indexY } // STY - Store Y in M
         map[0x8d] = storeOp (absoluteAdr()) { it.registers.accumulator } // STA - Store A in M
         map[0x8e] = storeOp (absoluteAdr()) { it.registers.indexX } // STX - Store X in M
 
@@ -35,11 +36,13 @@ class Opcodes {
         map[0x61] = addToA (indirectX()) // ADC - Add M to A
         map[0x65] = addToA (zeroPaged()) // ADC - Add M to A
         map[0x69] = addToA (immediate()) // ADC - Add M to A
+        map[0x6d] = addToA (absolute())  // ADC - Add M to A
 
         // SBC - Subtract M from A with Borrow
         map[0xe1] = subtractFromA (indirectX())
         map[0xe5] = subtractFromA (zeroPaged())
         map[0xe9] = subtractFromA (immediate())
+        map[0xed] = subtractFromA (absolute())
 
         //  Push operations
         map[0x08] = pushOp { it.processorStatus.asByte() } //  PHP - Push Processor Status on Stack
@@ -52,12 +55,15 @@ class Opcodes {
         map[0x01] = opWithA (indirectX()) { a, m -> ((a or m) and 0xff) } // ORA - "OR" M with A
         map[0x05] = opWithA (zeroPaged()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
+        map[0x0d] = opWithA (absolute())  { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x21] = opWithA (indirectX()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x25] = opWithA (zeroPaged()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
+        map[0x2d] = opWithA (absolute())  { a, m -> (a and m) } // AND - "AND" M with A
         map[0x41] = opWithA (indirectX()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x45] = opWithA (zeroPaged()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        map[0x4d] = opWithA (absolute())  { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
 
         //  Load operations
         map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
@@ -67,23 +73,41 @@ class Opcodes {
         map[0xa5] = load (zeroPaged()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xa6] = load (zeroPaged()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
         map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xac] = load (absolute()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
         map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
+
+        //  Bit operations
+        map[0x24] = bit (zeroPaged()) //  BIT - Test Bits in M with A
+        map[0x2c] = bit (absolute())
 
         //  Compare operations
         map[0xc0] = compareOp (immediate()) { it.indexY } // CPY - Compare M and Y
         map[0xc1] = compareOp (indirectX()) { it.accumulator } //  CMP - Compare M and A
         map[0xc4] = compareOp (zeroPaged()) { it.indexY } // CPY - Compare M and Y
+        map[0xcc] = compareOp (absolute())  { it.indexY } // CPY - Compare M and Y
         map[0xc5] = compareOp (zeroPaged()) { it.accumulator } //  CMP - Compare M and A
         map[0xc9] = compareOp (immediate()) { it.accumulator } //  CMP - Compare M and A
+        map[0xcd] = compareOp (absolute())  { it.accumulator } //  CMP - Compare M and A
         map[0xe0] = compareOp (immediate()) { it.indexX } // CPX - Compare M and X
         map[0xe4] = compareOp (zeroPaged()) { it.indexX } // CPX - Compare M and X
+        map[0xec] = compareOp (absolute())  { it.indexX } // CPX - Compare M and X
 
         //  Shift operations
-        map[0x06] = shiftLeft (zeroPagedAdr())  // ASL - Shift Left One Bit
-        map[0x26] = rotateLeft (zeroPagedAdr()) // ROL - Rotate Left One Bit
-        map[0x46] = shiftRight (zeroPagedAdr()) // LSR - Shift Right One Bit
+        map[0x06] = shiftLeft (zeroPagedAdr())   // ASL - Shift Left One Bit
+        map[0x0e] = shiftLeft (absoluteAdr())    // ASL - Shift Left One Bit
+        map[0x26] = rotateLeft (zeroPagedAdr())  // ROL - Rotate Left One Bit
+        map[0x2e] = rotateLeft (absoluteAdr())   // ROL - Rotate Left One Bit
+        map[0x46] = shiftRight (zeroPagedAdr())  // LSR - Shift Right One Bit
+        map[0x4e] = shiftRight (absoluteAdr())   // LSR - Shift Right One Bit
         map[0x66] = rotateRight (zeroPagedAdr()) // ROR - Rotate Right One Bit
+        map[0x6e] = rotateRight (absoluteAdr())  // ROR - Rotate Right One Bit
+
+        //  Increment operations
+        map[0xc6] = unary (zeroPagedAdr()) { dec() } // DEC - Decrement M by 1
+        map[0xce] = unary (absoluteAdr())  { dec() } // DEC - Decrement M by 1
+        map[0xe6] = unary (zeroPagedAdr()) { inc() } // INC - Increment M by 1
+        map[0xee] = unary (absoluteAdr())  { inc() } // INC - Increment M by 1
 
         //  Transfer operations
         map[0x8a] = transfer ({it.indexX}) { r, x -> r.accumulator = x } // TXA - Transfer X to A
@@ -147,19 +171,6 @@ class Opcodes {
         // NOP - No Operation
         map[0xea] = Opcode {
             // TODO: Takes 2 cycles
-        }
-
-        //  BIT - Test Bits in M with A
-        map[0x24] = Opcode {
-            it.apply {
-                memory[readByteAtPC().toUnsignedInt()].apply {
-                    val data = this.toUnsignedInt()
-                    processorStatus.zero = (data and registers.accumulator.toUnsignedInt()) == 0
-                    processorStatus.negative = (data and 0b10000000) != 0
-                    processorStatus.overflow = (data and 0b01000000) != 0
-                }
-            }
-            //  TODO: Takes 3 cycles
         }
 
         //  RTS - Return from Subroutine
@@ -463,6 +474,28 @@ class Opcodes {
             processorStatus.resolveZeroAndNegativeFlags((rotatedResult and 0xFF).toSignedByte())
             //  TODO: Takes 2 cycles
         }
+    }
+
+    private fun unary(addr: (Cpu) -> Int, op: Int.() -> Int) = Opcode {
+        it.apply {
+            val addr = addr(it)
+            val result = (op((memory[addr].toUnsignedInt())) and 0xFF).toSignedByte()
+
+            memory[addr] = result
+            processorStatus.resolveZeroAndNegativeFlags(result)
+            //  TODO: Takes 6 cycles
+        }
+    }
+
+    private fun bit(mem: (Cpu) -> Byte) = Opcode {
+        it.apply {
+            mem(it).toUnsignedInt().apply {
+                processorStatus.zero = (this and registers.accumulator.toUnsignedInt()) == 0
+                processorStatus.negative = (this and 0b10000000) != 0
+                processorStatus.overflow = (this and 0b01000000) != 0
+            }
+        }
+        //  TODO: Takes 3 cycles
     }
 
     operator fun get(code: Int): Opcode? = map[code]
