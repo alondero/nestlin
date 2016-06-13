@@ -14,6 +14,7 @@ class Logger {
         opcodeLog[0x00] = {"${nValue()} ${nValue()}  BRK"}
         opcodeLog[0x01] = {indirectOp(it, "ORA")}
         opcodeLog[0x05] = {"${it.byte1} ${nValue()}  ORA $${it.byte1} = ${format(it.cpu.registers.indexY)}"}
+        opcodeLog[0x06] = {"${it.byte1} ${nValue()}  ASL $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x08] = {"${nValue()} ${nValue()}  PHP"}
         opcodeLog[0x09] = {"${it.byte1} ${nValue()}  ORA #$${it.byte1}"}
         opcodeLog[0x0a] = {"${nValue()} ${nValue()}  ASL A"}
@@ -22,6 +23,8 @@ class Logger {
         opcodeLog[0x20] = {"${it.byte1} ${it.byte2}  JSR $${it.byte2}${it.byte1}"}
         opcodeLog[0x21] = {indirectOp(it, "AND")}
         opcodeLog[0x24] = {"${it.byte1} ${nValue()}  BIT $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
+        opcodeLog[0x25] = {"${it.byte1} ${nValue()}  AND $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
+        opcodeLog[0x26] = {"${it.byte1} ${nValue()}  ROL $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x28] = {"${nValue()} ${nValue()}  PLP"}
         opcodeLog[0x29] = {"${it.byte1} ${nValue()}  AND #$${it.byte1}"}
         opcodeLog[0x2a] = {"${nValue()} ${nValue()}  ROL A"}
@@ -29,6 +32,8 @@ class Logger {
         opcodeLog[0x38] = {"${nValue()} ${nValue()}  SEC"}
         opcodeLog[0x40] = {"${nValue()} ${nValue()}  RTI"}
         opcodeLog[0x41] = {indirectOp(it, "EOR")}
+        opcodeLog[0x45] = {"${it.byte1} ${nValue()}  EOR $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
+        opcodeLog[0x46] = {"${it.byte1} ${nValue()}  LSR $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x48] = {"${nValue()} ${nValue()}  PHA"}
         opcodeLog[0x49] = {"${it.byte1} ${nValue()}  EOR #$${it.byte1}"}
         opcodeLog[0x4a] = {"${nValue()} ${nValue()}  LSR A"}
@@ -36,6 +41,8 @@ class Logger {
         opcodeLog[0x50] = {"${it.byte1} ${nValue()}  BVC $${it.progc}"}
         opcodeLog[0x60] = {"${nValue()} ${nValue()}  RTS"}
         opcodeLog[0x61] = {indirectOp(it, "ADC")}
+        opcodeLog[0x65] = {"${it.byte1} ${nValue()}  ADC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
+        opcodeLog[0x66] = {"${it.byte1} ${nValue()}  ROR $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x6a] = {"${nValue()} ${nValue()}  ROR A"}
         opcodeLog[0x68] = {"${nValue()} ${nValue()}  PLA"}
         opcodeLog[0x69] = {"${it.byte1} ${nValue()}  ADC #$${it.byte1}"}
@@ -68,6 +75,8 @@ class Logger {
         opcodeLog[0xba] = {"${nValue()} ${nValue()}  TSX"}
         opcodeLog[0xc0] = {"${it.byte1} ${nValue()}  CPY #$${it.byte1}"}
         opcodeLog[0xc1] = {indirectOp(it, "CMP")}
+        opcodeLog[0xc4] = {"${it.byte1} ${nValue()}  CPY $${it.byte1} = ${format(it.cpu.registers.indexY)}"}
+        opcodeLog[0xc5] = {"${it.byte1} ${nValue()}  CMP $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xc8] = {"${nValue()} ${nValue()}  INY"}
         opcodeLog[0xc9] = {"${it.byte1} ${nValue()}  CMP #$${it.byte1}"}
         opcodeLog[0xca] = {"${nValue()} ${nValue()}  DEX"}
@@ -75,6 +84,8 @@ class Logger {
         opcodeLog[0xd8] = {"${nValue()} ${nValue()}  CLD"}
         opcodeLog[0xe0] = {"${it.byte1} ${nValue()}  CPX #$${it.byte1}"}
         opcodeLog[0xe1] = {indirectOp(it, "SBC")}
+        opcodeLog[0xe4] = {"${it.byte1} ${nValue()}  CPX $${it.byte1} = ${format(it.cpu.registers.indexX)}"}
+        opcodeLog[0xe5] = {"${it.byte1} ${nValue()}  SBC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xe8] = {"${nValue()} ${nValue()}  INX"}
         opcodeLog[0xe9] = {"${it.byte1} ${nValue()}  SBC #$${it.byte1}"}
         opcodeLog[0xea] = {"${nValue()} ${nValue()}  NOP"}

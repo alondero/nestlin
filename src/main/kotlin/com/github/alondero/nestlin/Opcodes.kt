@@ -17,12 +17,12 @@ class Opcodes {
         map[0xf0] = branchOp { it.processorStatus.zero } // BEQ - Branch on Result Zero
 
         //  Store operations
-        map[0x85] = storeOp (zeroPagedAdr()) { it.registers.accumulator } // STA - Store A in M (Zero Paged)
-        map[0x8d] = storeOp (absoluteAdr()) { it.registers.accumulator } // STA - Store A in M
         map[0x81] = storeOp (indirectXAdr()) { it.registers.accumulator } // STA - Store A in M (Relative to X)
-        map[0x86] = storeOp (zeroPagedAdr()) { it.registers.indexX } // STX - Store X in M (Zero Paged)
-        map[0x8e] = storeOp (absoluteAdr()) { it.registers.indexX } // STX - Store X in M
         map[0x84] = storeOp (zeroPagedAdr()) { it.registers.indexY } // STY - Store Y in M (Zero Paged)
+        map[0x85] = storeOp (zeroPagedAdr()) { it.registers.accumulator } // STA - Store A in M (Zero Paged)
+        map[0x86] = storeOp (zeroPagedAdr()) { it.registers.indexX } // STX - Store X in M (Zero Paged)
+        map[0x8d] = storeOp (absoluteAdr()) { it.registers.accumulator } // STA - Store A in M
+        map[0x8e] = storeOp (absoluteAdr()) { it.registers.indexX } // STX - Store X in M
 
         //  Set and Clear operations
         map[0x18] = setOp { it.processorStatus.carry = false } // CLC - Clear Carry Flag
@@ -32,12 +32,14 @@ class Opcodes {
         map[0xf8] = setOp { it.processorStatus.decimalMode = true } // SED - Set Decimal mode
 
         //  Add M to A with Carry
-        map[0x69] = addToA (immediate()) // ADC - Add M to A
         map[0x61] = addToA (indirectX()) // ADC - Add M to A
+        map[0x65] = addToA (zeroPaged()) // ADC - Add M to A
+        map[0x69] = addToA (immediate()) // ADC - Add M to A
 
         // SBC - Subtract M from A with Borrow
-        map[0xe9] = subtractFromA (immediate())
         map[0xe1] = subtractFromA (indirectX())
+        map[0xe5] = subtractFromA (zeroPaged())
+        map[0xe9] = subtractFromA (immediate())
 
         //  Push operations
         map[0x08] = pushOp { it.processorStatus.asByte() } //  PHP - Push Processor Status on Stack
@@ -47,43 +49,54 @@ class Opcodes {
         map[0xb8] = clearOp { it.processorStatus.overflow = false } // CLV - Clear Overflow Flag
 
         //  Operations over Accumulator
+        map[0x01] = opWithA (indirectX()) { a, m -> ((a or m) and 0xff) } // ORA - "OR" M with A
         map[0x05] = opWithA (zeroPaged()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
-        map[0x01] = opWithA (indirectX()) { a, m -> ((a or m) and 0xff) } // ORA - "OR" M with A
-        map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x21] = opWithA (indirectX()) { a, m -> (a and m) } // AND - "AND" M with A
-        map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        map[0x25] = opWithA (zeroPaged()) { a, m -> (a and m) } // AND - "AND" M with A
+        map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x41] = opWithA (indirectX()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        map[0x45] = opWithA (zeroPaged()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
 
         //  Load operations
-        map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
-        map[0xa5] = load (zeroPaged()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
-        map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
         map[0xa1] = load (indirectX()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xa2] = load (immediate()) { registers, mem -> registers.indexX = mem } // LDX - Load X with M
-        map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
         map[0xa4] = load (zeroPaged()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
-        map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
+        map[0xa5] = load (zeroPaged()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xa6] = load (zeroPaged()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
+        map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
 
         //  Compare operations
-        map[0xc9] = compareOp (immediate()) { it.accumulator } //  CMP - Compare M and A
-        map[0xc1] = compareOp (indirectX()) { it.accumulator } //  CMP - Compare M and A
         map[0xc0] = compareOp (immediate()) { it.indexY } // CPY - Compare M and Y
+        map[0xc1] = compareOp (indirectX()) { it.accumulator } //  CMP - Compare M and A
+        map[0xc4] = compareOp (zeroPaged()) { it.indexY } // CPY - Compare M and Y
+        map[0xc5] = compareOp (zeroPaged()) { it.accumulator } //  CMP - Compare M and A
+        map[0xc9] = compareOp (immediate()) { it.accumulator } //  CMP - Compare M and A
         map[0xe0] = compareOp (immediate()) { it.indexX } // CPX - Compare M and X
+        map[0xe4] = compareOp (zeroPaged()) { it.indexX } // CPX - Compare M and X
+
+        //  Shift operations
+        map[0x06] = shiftLeft (zeroPagedAdr())  // ASL - Shift Left One Bit
+        map[0x26] = rotateLeft (zeroPagedAdr()) // ROL - Rotate Left One Bit
+        map[0x46] = shiftRight (zeroPagedAdr()) // LSR - Shift Right One Bit
+        map[0x66] = rotateRight (zeroPagedAdr()) // ROR - Rotate Right One Bit
 
         //  Transfer operations
-        map[0xa8] = transfer ({it.accumulator}) { r, acc -> r.indexY = acc } //  TAY - Transfer A to Y
-        map[0xaa] = transfer ({it.accumulator}) { r, acc -> r.indexX = acc } //  TAX - Transfer A to X
-        map[0x98] = transfer ({it.indexY}) { r, y -> r.accumulator = y } // TYA - Transfer Y to A
         map[0x8a] = transfer ({it.indexX}) { r, x -> r.accumulator = x } // TXA - Transfer X to A
-        map[0xba] = transfer ({it.stackPointer}) { r, sp -> r.indexX = sp } // TSX - Transfer Stack Pointer to X
+        map[0x98] = transfer ({it.indexY}) { r, y -> r.accumulator = y } // TYA - Transfer Y to A
         map[0x9a] = Opcode {
             it.apply {
                 it.registers.stackPointer = it.registers.indexX
                 //  TODO: 2 cycles
             }
         } // TXS - Transfer X to Stack Pointer (doesn't set program counter)
+        map[0xa8] = transfer ({it.accumulator}) { r, acc -> r.indexY = acc } //  TAY - Transfer A to Y
+        map[0xaa] = transfer ({it.accumulator}) { r, acc -> r.indexX = acc } //  TAX - Transfer A to X
+        map[0xba] = transfer ({it.stackPointer}) { r, sp -> r.indexX = sp } // TSX - Transfer Stack Pointer to X
 
         //  BRK - Force Break
         map[0x00] = Opcode {
@@ -235,7 +248,7 @@ class Opcodes {
             }
         }
 
-        //  ASL - Shift Left One Bit (M or A)
+        //  ASL A
         map[0x0a] = Opcode {
             it.apply {
                 processorStatus.carry = registers.accumulator.isBitSet(7)
@@ -399,6 +412,56 @@ class Opcodes {
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
 
             //  TODO: Takes 6 cycles
+        }
+    }
+
+    private fun shiftRight(addr: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val addr = addr(it)
+            val result = memory[addr]
+
+            processorStatus.carry = result.isBitSet(0)
+            val shiftedResult = ((result.toUnsignedInt() shr 1) and 0x7F).toSignedByte()
+            memory[addr] = shiftedResult
+            processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
+        }
+    }
+
+    private fun shiftLeft(addr: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val addr = addr(it)
+            val result = memory[addr]
+
+            processorStatus.carry = result.isBitSet(7)
+            val shiftedResult = ((result.toUnsignedInt() shl 1) and 0xFF).toSignedByte()
+            memory[addr] = shiftedResult
+            processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
+        }
+    }
+
+    private fun rotateRight(addr: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val addr = addr(it)
+            val result = memory[addr]
+
+            val oldCarry = processorStatus.carry
+            processorStatus.carry = result.isBitSet(0)
+            val rotatedResult = ((result.toUnsignedInt() shr 1) or (if (oldCarry) 0x80 else 0)).toSignedByte()
+            memory[addr] = rotatedResult
+            processorStatus.resolveZeroAndNegativeFlags(rotatedResult)
+        }
+    }
+
+    private fun rotateLeft(addr: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val addr = addr(it)
+            val result = memory[addr]
+
+            val rotatedResult = (result.toUnsignedInt() shl 1) or (if (processorStatus.carry) 1 else 0)
+            processorStatus.carry = (rotatedResult and 0xFF00) > 0
+            memory[addr] = (rotatedResult and 0xFF).toSignedByte()
+            processorStatus.resolveZeroAndNegativeFlags((rotatedResult and 0xFF).toSignedByte())
+            //  TODO: Takes 2 cycles
         }
     }
 
