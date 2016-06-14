@@ -54,11 +54,13 @@ class Logger {
         opcodeLog[0x65] = {"${it.byte1} ${nValue()}  ADC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x66] = {"${it.byte1} ${nValue()}  ROR $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x6a] = {"${nValue()} ${nValue()}  ROR A"}
+        opcodeLog[0x6c] = {"${it.byte1} ${it.byte2}  JMP ($${it.byte2}${it.byte1}) = XXXX"} // TODO: Fix this without replicating logic here
         opcodeLog[0x6d] = {"${it.byte1} ${it.byte2}  ADC $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x6e] = {"${it.byte1} ${it.byte2}  ROR $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x68] = {"${nValue()} ${nValue()}  PLA"}
         opcodeLog[0x69] = {"${it.byte1} ${nValue()}  ADC #$${it.byte1}"}
         opcodeLog[0x70] = {"${it.byte1} ${nValue()}  BVS $${it.progc}"}
+        opcodeLog[0x71] = { indirectYOp(it, "ADC")}
         opcodeLog[0x78] = {"${nValue()} ${nValue()}  SEI"}
         opcodeLog[0x81] = { indirectXOp(it, "STA")}
         opcodeLog[0x84] = {"${it.byte1} ${nValue()}  STY $${it.byte1} = ${format(it.cpu.registers.indexY)}"}
@@ -70,6 +72,7 @@ class Logger {
         opcodeLog[0x8d] = {"${it.byte1} ${it.byte2}  STA $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x8e] = {"${it.byte1} ${it.byte2}  STX $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0x90] = {"${it.byte1} ${nValue()}  BCC $${it.progc}"}
+        opcodeLog[0x91] = { indirectYOp(it, "STA")}
         opcodeLog[0x98] = {"${nValue()} ${nValue()}  TYA"}
         opcodeLog[0x9a] = {"${nValue()} ${nValue()}  TXS"}
         opcodeLog[0xa0] = {"${it.byte1} ${nValue()}  LDY #$${it.byte1}"}
@@ -87,6 +90,7 @@ class Logger {
         opcodeLog[0xb0] = {"${it.byte1} ${nValue()}  BCS $${it.progc}"}
         opcodeLog[0xb1] = { indirectYOp(it, "LDA")}
         opcodeLog[0xb8] = {"${nValue()} ${nValue()}  CLV"}
+        opcodeLog[0xb9] = { absoluteYOp(it, "LDA")}
         opcodeLog[0xba] = {"${nValue()} ${nValue()}  TSX"}
         opcodeLog[0xc0] = {"${it.byte1} ${nValue()}  CPY #$${it.byte1}"}
         opcodeLog[0xc1] = { indirectXOp(it, "CMP")}
@@ -100,6 +104,7 @@ class Logger {
         opcodeLog[0xcd] = {"${it.byte1} ${it.byte2}  CMP $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xce] = {"${it.byte1} ${it.byte2}  DEC $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xd0] = {"${it.byte1} ${nValue()}  BNE $${it.progc}"}
+        opcodeLog[0xd1] = { indirectYOp(it, "CMP")}
         opcodeLog[0xd8] = {"${nValue()} ${nValue()}  CLD"}
         opcodeLog[0xe0] = {"${it.byte1} ${nValue()}  CPX #$${it.byte1}"}
         opcodeLog[0xe1] = { indirectXOp(it, "SBC")}
@@ -113,9 +118,11 @@ class Logger {
         opcodeLog[0xed] = {"${it.byte1} ${it.byte2}  SBC $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xee] = {"${it.byte1} ${it.byte2}  INC $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xf0] = {"${it.byte1} ${nValue()}  BEQ $${it.progc}"}
+        opcodeLog[0xf1] = { indirectYOp(it, "SBC")}
         opcodeLog[0xf8] = {"${nValue()} ${nValue()}  SED"}
     }
 
+    //  TODO: This is stupid... Refactor so that don't need to replicate logic here
     private fun indirectXOp(args: Arguments, op: String): String {
         return args.let {
             val lookupAddr = it.cpu.memory[(it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF, ((it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF) + 1]
@@ -129,6 +136,15 @@ class Logger {
             val addr = it.cpu.memory[mem].toUnsignedInt() or (it.cpu.memory[(mem+1) and 0xFF].toUnsignedInt() shl 8)
             val shiftedAddr = (addr + it.cpu.registers.indexY.toUnsignedInt()) and 0xFFFF
             "${it.byte1} ${nValue()}  $op ($${it.byte1}),Y = ${"%04X".format(addr)} @ ${"%04X".format(shiftedAddr)} = ${it.cpu.memory[shiftedAddr].toHexString()}"
+        }
+    }
+
+    private fun absoluteYOp(args: Arguments, op: String): String {
+        return args.let {
+            val addr = it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt(), it.cpu.registers.programCounter.toUnsignedInt()+1]
+            val shiftedAddr = addr.toUnsignedInt() + it.cpu.registers.indexY.toUnsignedInt()
+            val mem = it.cpu.memory[shiftedAddr and 0xFFFF]
+            "${it.byte1} ${it.byte2}  $op $${"%04X".format(addr)},Y @ ${"%04X".format(shiftedAddr)} = ${mem.toHexString()}"
         }
     }
 

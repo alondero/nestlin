@@ -21,9 +21,10 @@ class Opcodes {
         map[0x84] = storeOp (zeroPagedAdr()) { it.registers.indexY } // STY - Store Y in M (Zero Paged)
         map[0x85] = storeOp (zeroPagedAdr()) { it.registers.accumulator } // STA - Store A in M (Zero Paged)
         map[0x86] = storeOp (zeroPagedAdr()) { it.registers.indexX } // STX - Store X in M (Zero Paged)
-        map[0x8c] = storeOp (absoluteAdr()) { it.registers.indexY } // STY - Store Y in M
-        map[0x8d] = storeOp (absoluteAdr()) { it.registers.accumulator } // STA - Store A in M
-        map[0x8e] = storeOp (absoluteAdr()) { it.registers.indexX } // STX - Store X in M
+        map[0x8c] = storeOp (absoluteAdr())  { it.registers.indexY } // STY - Store Y in M
+        map[0x8d] = storeOp (absoluteAdr())  { it.registers.accumulator } // STA - Store A in M
+        map[0x8e] = storeOp (absoluteAdr())  { it.registers.indexX } // STX - Store X in M
+        map[0x91] = storeOp (indirectYAdr()) { it.registers.accumulator } // STA - Store A in M
 
         //  Set and Clear operations
         map[0x18] = setOp { it.processorStatus.carry = false } // CLC - Clear Carry Flag
@@ -37,12 +38,14 @@ class Opcodes {
         map[0x65] = addToA (zeroPaged()) // ADC - Add M to A
         map[0x69] = addToA (immediate()) // ADC - Add M to A
         map[0x6d] = addToA (absolute())  // ADC - Add M to A
+        map[0x71] = addToA (indirectY()) // ADC - Add M to A
 
         // SBC - Subtract M from A with Borrow
         map[0xe1] = subtractFromA (indirectX())
         map[0xe5] = subtractFromA (zeroPaged())
         map[0xe9] = subtractFromA (immediate())
         map[0xed] = subtractFromA (absolute())
+        map[0xf1] = subtractFromA (indirectY())
 
         //  Push operations
         map[0x08] = pushOp { it.processorStatus.asByte() } //  PHP - Push Processor Status on Stack
@@ -80,6 +83,7 @@ class Opcodes {
         map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
         map[0xb1] = load (indirectY()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        map[0xb9] = load (absolute {it.registers.indexY}) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
 
         //  Bit operations
         map[0x24] = bit (zeroPaged()) //  BIT - Test Bits in M with A
@@ -93,6 +97,7 @@ class Opcodes {
         map[0xc5] = compareOp (zeroPaged()) { it.accumulator } //  CMP - Compare M and A
         map[0xc9] = compareOp (immediate()) { it.accumulator } //  CMP - Compare M and A
         map[0xcd] = compareOp (absolute())  { it.accumulator } //  CMP - Compare M and A
+        map[0xd1] = compareOp (indirectY())  { it.accumulator } //  CMP - Compare M and A
         map[0xe0] = compareOp (immediate()) { it.indexX } // CPX - Compare M and X
         map[0xe4] = compareOp (zeroPaged()) { it.indexX } // CPX - Compare M and X
         map[0xec] = compareOp (absolute())  { it.indexX } // CPX - Compare M and X
@@ -159,17 +164,12 @@ class Opcodes {
         }
 
         // JMP - Jump to location
-        map[0x4c] = Opcode {
-            it.apply {
-                val temp = registers.programCounter
-                registers.programCounter = readShortAtPC()
-
-                if (registers.programCounter == (temp-1).toSignedShort()) {
-                    // TODO: Set idle
-                }
-
-                //  TODO: Takes 3 cycles
-            }
+        map[0x4c] = jump { absoluteAdr()(it).toSignedShort() }
+        map[0x6c] = jump {
+            //  Apparently some bug in this processor means this looks a bit odd
+            val addr = absoluteAdr()(it)
+            val hiByte = it.memory[(addr and 0xff00) or ((addr + 1) and 0x00ff)]
+            ((hiByte.toUnsignedInt() shl 8) or it.memory[addr].toUnsignedInt()).toSignedShort()
         }
 
         // NOP - No Operation
@@ -298,10 +298,11 @@ class Opcodes {
     }
 
     private fun immediate(): (Cpu) -> Byte = { it.readByteAtPC() }
-    private fun absolute(): (Cpu) -> Byte = { it.memory[absoluteAdr()(it)] }
+    private fun absolute(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[(absoluteAdrShifted(shift)(it) and 0xFFFF)] }
     private fun zeroPaged(): (Cpu) -> Byte = { it.memory[zeroPagedAdr()(it)] }
     private fun indirectX(): (Cpu) -> Byte = { it.memory[indirectXAdr()(it)] }
     private fun indirectY(): (Cpu) -> Byte = { it.memory[indirectYAdr()(it)]}
+    private fun absoluteAdrShifted(shift: (Cpu) -> Byte): (Cpu) -> Int = { absoluteAdr()(it) + shift(it).toUnsignedInt() }
     private fun absoluteAdr(): (Cpu) -> Int = { it.readShortAtPC().toUnsignedInt() }
     private fun zeroPagedAdr(): (Cpu) -> Int = { it.readByteAtPC().toUnsignedInt() }
     private fun indirectXAdr(): (Cpu) -> Int = {
@@ -509,6 +510,19 @@ class Opcodes {
             }
         }
         //  TODO: Takes 3 cycles
+    }
+
+    private fun jump(mem: (Cpu) -> Short) = Opcode {
+        it.apply {
+            val temp = registers.programCounter
+            registers.programCounter = mem(it)
+
+            if (registers.programCounter == (temp-1).toSignedShort()) {
+                // TODO: Set idle
+            }
+
+            //  TODO: Takes 3 cycles
+        }
     }
 
     operator fun get(code: Int): Opcode? = map[code]
