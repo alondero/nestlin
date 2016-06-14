@@ -56,14 +56,17 @@ class Opcodes {
         map[0x05] = opWithA (zeroPaged()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x0d] = opWithA (absolute())  { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
+        map[0x11] = opWithA (indirectY()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x21] = opWithA (indirectX()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x25] = opWithA (zeroPaged()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x2d] = opWithA (absolute())  { a, m -> (a and m) } // AND - "AND" M with A
+        map[0x31] = opWithA (indirectY()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x41] = opWithA (indirectX()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x45] = opWithA (zeroPaged()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x4d] = opWithA (absolute())  { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        map[0x51] = opWithA (indirectY()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
 
         //  Load operations
         map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
