@@ -16,15 +16,16 @@ class Opcodes {
         map[0xd0] = branchOp { !it.processorStatus.zero } // BNE - Branch on Result Not Zero
         map[0xf0] = branchOp { it.processorStatus.zero } // BEQ - Branch on Result Zero
 
-        //  Store operations
-        map[0x81] = storeOp (indirectXAdr()) { it.registers.accumulator } // STA - Store A in M (Relative to X)
-        map[0x84] = storeOp (zeroPagedAdr()) { it.registers.indexY } // STY - Store Y in M (Zero Paged)
-        map[0x85] = storeOp (zeroPagedAdr()) { it.registers.accumulator } // STA - Store A in M (Zero Paged)
-        map[0x86] = storeOp (zeroPagedAdr()) { it.registers.indexX } // STX - Store X in M (Zero Paged)
-        map[0x8c] = storeOp (absoluteAdr())  { it.registers.indexY } // STY - Store Y in M
-        map[0x8d] = storeOp (absoluteAdr())  { it.registers.accumulator } // STA - Store A in M
-        map[0x8e] = storeOp (absoluteAdr())  { it.registers.indexX } // STX - Store X in M
-        map[0x91] = storeOp (indirectYAdr()) { it.registers.accumulator } // STA - Store A in M
+        //  STA/STX/STY - Store operations
+        map[0x81] = storeOp (indirectXAdr()) { it.registers.accumulator }
+        map[0x84] = storeOp (zeroPagedAdr()) { it.registers.indexY }
+        map[0x85] = storeOp (zeroPagedAdr()) { it.registers.accumulator }
+        map[0x86] = storeOp (zeroPagedAdr()) { it.registers.indexX }
+        map[0x8c] = storeOp (absoluteAdr())  { it.registers.indexY }
+        map[0x8d] = storeOp (absoluteAdr())  { it.registers.accumulator }
+        map[0x8e] = storeOp (absoluteAdr())  { it.registers.indexX }
+        map[0x91] = storeOp (indirectYAdr()) { it.registers.accumulator }
+        map[0x99] = storeOp (absoluteAdrShifted {it.registers.indexY}) { it.registers.accumulator }
 
         //  Set and Clear operations
         map[0x18] = setOp { it.processorStatus.carry = false } // CLC - Clear Carry Flag
@@ -33,12 +34,13 @@ class Opcodes {
         map[0xd8] = setOp { it.processorStatus.decimalMode = false } // CLD - Clear Decimal mode
         map[0xf8] = setOp { it.processorStatus.decimalMode = true } // SED - Set Decimal mode
 
-        //  Add M to A with Carry
-        map[0x61] = addToA (indirectX()) // ADC - Add M to A
-        map[0x65] = addToA (zeroPaged()) // ADC - Add M to A
-        map[0x69] = addToA (immediate()) // ADC - Add M to A
-        map[0x6d] = addToA (absolute())  // ADC - Add M to A
-        map[0x71] = addToA (indirectY()) // ADC - Add M to A
+        //  ADC - Add M to A with Carry
+        map[0x61] = addToA (indirectX())
+        map[0x65] = addToA (zeroPaged())
+        map[0x69] = addToA (immediate())
+        map[0x6d] = addToA (absolute())
+        map[0x71] = addToA (indirectY())
+        map[0x79] = addToA (absolute {it.registers.indexY})
 
         // SBC - Subtract M from A with Borrow
         map[0xe1] = subtractFromA (indirectX())
@@ -46,6 +48,7 @@ class Opcodes {
         map[0xe9] = subtractFromA (immediate())
         map[0xed] = subtractFromA (absolute())
         map[0xf1] = subtractFromA (indirectY())
+        map[0xf9] = subtractFromA (absolute {it.registers.indexY})
 
         //  Push operations
         map[0x08] = pushOp { it.processorStatus.asByte() } //  PHP - Push Processor Status on Stack
@@ -60,16 +63,19 @@ class Opcodes {
         map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x0d] = opWithA (absolute())  { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x11] = opWithA (indirectY()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
+        map[0x19] = opWithA (absolute {it.registers.indexY}) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
         map[0x21] = opWithA (indirectX()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x25] = opWithA (zeroPaged()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x2d] = opWithA (absolute())  { a, m -> (a and m) } // AND - "AND" M with A
         map[0x31] = opWithA (indirectY()) { a, m -> (a and m) } // AND - "AND" M with A
+        map[0x39] = opWithA (absolute {it.registers.indexY}) { a, m -> (a and m) } // AND - "AND" M with A
         map[0x41] = opWithA (indirectX()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x45] = opWithA (zeroPaged()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x4d] = opWithA (absolute())  { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
         map[0x51] = opWithA (indirectY()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        map[0x59] = opWithA (absolute {it.registers.indexY})  { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
 
         //  Load operations
         map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
@@ -93,11 +99,12 @@ class Opcodes {
         map[0xc0] = compareOp (immediate()) { it.indexY } // CPY - Compare M and Y
         map[0xc1] = compareOp (indirectX()) { it.accumulator } //  CMP - Compare M and A
         map[0xc4] = compareOp (zeroPaged()) { it.indexY } // CPY - Compare M and Y
-        map[0xcc] = compareOp (absolute())  { it.indexY } // CPY - Compare M and Y
         map[0xc5] = compareOp (zeroPaged()) { it.accumulator } //  CMP - Compare M and A
         map[0xc9] = compareOp (immediate()) { it.accumulator } //  CMP - Compare M and A
+        map[0xcc] = compareOp (absolute())  { it.indexY } // CPY - Compare M and Y
         map[0xcd] = compareOp (absolute())  { it.accumulator } //  CMP - Compare M and A
         map[0xd1] = compareOp (indirectY())  { it.accumulator } //  CMP - Compare M and A
+        map[0xd9] = compareOp (absolute {it.registers.indexY})  { it.accumulator } //  CMP - Compare M and A
         map[0xe0] = compareOp (immediate()) { it.indexX } // CPX - Compare M and X
         map[0xe4] = compareOp (zeroPaged()) { it.indexX } // CPX - Compare M and X
         map[0xec] = compareOp (absolute())  { it.indexX } // CPX - Compare M and X
