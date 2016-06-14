@@ -76,6 +76,7 @@ class Opcodes {
         map[0xac] = load (absolute()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
         map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
         map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
+        map[0xb1] = load (indirectY()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
 
         //  Bit operations
         map[0x24] = bit (zeroPaged()) //  BIT - Test Bits in M with A
@@ -297,6 +298,7 @@ class Opcodes {
     private fun absolute(): (Cpu) -> Byte = { it.memory[absoluteAdr()(it)] }
     private fun zeroPaged(): (Cpu) -> Byte = { it.memory[zeroPagedAdr()(it)] }
     private fun indirectX(): (Cpu) -> Byte = { it.memory[indirectXAdr()(it)] }
+    private fun indirectY(): (Cpu) -> Byte = { it.memory[indirectYAdr()(it)]}
     private fun absoluteAdr(): (Cpu) -> Int = { it.readShortAtPC().toUnsignedInt() }
     private fun zeroPagedAdr(): (Cpu) -> Int = { it.readByteAtPC().toUnsignedInt() }
     private fun indirectXAdr(): (Cpu) -> Int = {
@@ -304,6 +306,14 @@ class Opcodes {
             val mem = it.readByteAtPC()
             it.memory[(mem + it.registers.indexX) and 0xFF, (mem + it.registers.indexX + 1) and 0xFF]
         }.toUnsignedInt()
+    }
+    private fun indirectYAdr(): (Cpu) -> Int = {
+        it.let {
+            val mem = it.readByteAtPC().toUnsignedInt()
+            val addr = it.memory[mem].toUnsignedInt() or (it.memory[(mem+1) and 0xFF].toUnsignedInt() shl 8)
+            val shiftedAddr = ((addr + it.registers.indexY.toUnsignedInt()) and 0xFFFF)
+            shiftedAddr
+        }
     }
 
 

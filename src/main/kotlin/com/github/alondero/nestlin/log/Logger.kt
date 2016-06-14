@@ -12,7 +12,7 @@ class Logger {
 
     init {
         opcodeLog[0x00] = {"${nValue()} ${nValue()}  BRK"}
-        opcodeLog[0x01] = {indirectOp(it, "ORA")}
+        opcodeLog[0x01] = { indirectXOp(it, "ORA")}
         opcodeLog[0x05] = {"${it.byte1} ${nValue()}  ORA $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x06] = {"${it.byte1} ${nValue()}  ASL $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x08] = {"${nValue()} ${nValue()}  PHP"}
@@ -23,7 +23,7 @@ class Logger {
         opcodeLog[0x10] = {"${it.byte1} ${nValue()}  BPL $${it.progc}"}
         opcodeLog[0x18] = {"${nValue()} ${nValue()}  CLC"}
         opcodeLog[0x20] = {"${it.byte1} ${it.byte2}  JSR $${it.byte2}${it.byte1}"}
-        opcodeLog[0x21] = {indirectOp(it, "AND")}
+        opcodeLog[0x21] = { indirectXOp(it, "AND")}
         opcodeLog[0x24] = {"${it.byte1} ${nValue()}  BIT $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x25] = {"${it.byte1} ${nValue()}  AND $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x26] = {"${it.byte1} ${nValue()}  ROL $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -36,7 +36,7 @@ class Logger {
         opcodeLog[0x30] = {"${it.byte1} ${nValue()}  BMI $${it.progc}"}
         opcodeLog[0x38] = {"${nValue()} ${nValue()}  SEC"}
         opcodeLog[0x40] = {"${nValue()} ${nValue()}  RTI"}
-        opcodeLog[0x41] = {indirectOp(it, "EOR")}
+        opcodeLog[0x41] = { indirectXOp(it, "EOR")}
         opcodeLog[0x45] = {"${it.byte1} ${nValue()}  EOR $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x46] = {"${it.byte1} ${nValue()}  LSR $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x48] = {"${nValue()} ${nValue()}  PHA"}
@@ -47,7 +47,7 @@ class Logger {
         opcodeLog[0x4e] = {"${it.byte1} ${it.byte2}  LSR $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x50] = {"${it.byte1} ${nValue()}  BVC $${it.progc}"}
         opcodeLog[0x60] = {"${nValue()} ${nValue()}  RTS"}
-        opcodeLog[0x61] = {indirectOp(it, "ADC")}
+        opcodeLog[0x61] = { indirectXOp(it, "ADC")}
         opcodeLog[0x65] = {"${it.byte1} ${nValue()}  ADC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x66] = {"${it.byte1} ${nValue()}  ROR $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x6a] = {"${nValue()} ${nValue()}  ROR A"}
@@ -57,7 +57,7 @@ class Logger {
         opcodeLog[0x69] = {"${it.byte1} ${nValue()}  ADC #$${it.byte1}"}
         opcodeLog[0x70] = {"${it.byte1} ${nValue()}  BVS $${it.progc}"}
         opcodeLog[0x78] = {"${nValue()} ${nValue()}  SEI"}
-        opcodeLog[0x81] = {indirectOp(it, "STA")}
+        opcodeLog[0x81] = { indirectXOp(it, "STA")}
         opcodeLog[0x84] = {"${it.byte1} ${nValue()}  STY $${it.byte1} = ${format(it.cpu.registers.indexY)}"}
         opcodeLog[0x85] = {"${it.byte1} ${nValue()}  STA $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x86] = {"${it.byte1} ${nValue()}  STX $${it.byte1} = ${format(it.cpu.registers.indexX)}"}
@@ -70,7 +70,7 @@ class Logger {
         opcodeLog[0x98] = {"${nValue()} ${nValue()}  TYA"}
         opcodeLog[0x9a] = {"${nValue()} ${nValue()}  TXS"}
         opcodeLog[0xa0] = {"${it.byte1} ${nValue()}  LDY #$${it.byte1}"}
-        opcodeLog[0xa1] = {indirectOp(it, "LDA")}
+        opcodeLog[0xa1] = { indirectXOp(it, "LDA")}
         opcodeLog[0xa2] = {"${it.byte1} ${nValue()}  LDX #$${it.byte1}"}
         opcodeLog[0xa4] = {"${it.byte1} ${nValue()}  LDY $${it.byte1} = ${format(it.cpu.registers.indexY)}"}
         opcodeLog[0xa5] = {"${it.byte1} ${nValue()}  LDA $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -82,10 +82,11 @@ class Logger {
         opcodeLog[0xad] = {"${it.byte1} ${it.byte2}  LDA $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xae] = {"${it.byte1} ${it.byte2}  LDX $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0xb0] = {"${it.byte1} ${nValue()}  BCS $${it.progc}"}
+        opcodeLog[0xb1] = { indirectYOp(it, "LDA")}
         opcodeLog[0xb8] = {"${nValue()} ${nValue()}  CLV"}
         opcodeLog[0xba] = {"${nValue()} ${nValue()}  TSX"}
         opcodeLog[0xc0] = {"${it.byte1} ${nValue()}  CPY #$${it.byte1}"}
-        opcodeLog[0xc1] = {indirectOp(it, "CMP")}
+        opcodeLog[0xc1] = { indirectXOp(it, "CMP")}
         opcodeLog[0xc4] = {"${it.byte1} ${nValue()}  CPY $${it.byte1} = ${format(it.cpu.registers.indexY)}"}
         opcodeLog[0xc5] = {"${it.byte1} ${nValue()}  CMP $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xc6] = {"${it.byte1} ${nValue()}  DEC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -98,7 +99,7 @@ class Logger {
         opcodeLog[0xd0] = {"${it.byte1} ${nValue()}  BNE $${it.progc}"}
         opcodeLog[0xd8] = {"${nValue()} ${nValue()}  CLD"}
         opcodeLog[0xe0] = {"${it.byte1} ${nValue()}  CPX #$${it.byte1}"}
-        opcodeLog[0xe1] = {indirectOp(it, "SBC")}
+        opcodeLog[0xe1] = { indirectXOp(it, "SBC")}
         opcodeLog[0xe4] = {"${it.byte1} ${nValue()}  CPX $${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0xe5] = {"${it.byte1} ${nValue()}  SBC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xe6] = {"${it.byte1} ${nValue()}  INC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -112,10 +113,19 @@ class Logger {
         opcodeLog[0xf8] = {"${nValue()} ${nValue()}  SED"}
     }
 
-    private fun indirectOp(args: Arguments, op: String): String {
+    private fun indirectXOp(args: Arguments, op: String): String {
         return args.let {
             val lookupAddr = it.cpu.memory[(it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF, ((it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()] + it.cpu.registers.indexX) and 0xFF) + 1]
             "${it.byte1} ${nValue()}  $op (${it.byte1},X) @ ${it.byte1} = ${lookupAddr.toHexString()} = ${it.cpu.memory[lookupAddr.toUnsignedInt()].toHexString()}"
+        }
+    }
+
+    private fun indirectYOp(args: Arguments, op: String): String {
+        return args.let {
+            val mem = it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()].toUnsignedInt()
+            val addr = it.cpu.memory[mem].toUnsignedInt() or (it.cpu.memory[(mem+1) and 0xFF].toUnsignedInt() shl 8)
+            val shiftedAddr = (addr + it.cpu.registers.indexY.toUnsignedInt()) and 0xFFFF
+            "${it.byte1} ${nValue()}  $op ($${it.byte1}),Y = ${"%04X".format(addr)} @ ${"%04X".format(shiftedAddr)} = ${it.cpu.memory[shiftedAddr].toHexString()}"
         }
     }
 
