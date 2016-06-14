@@ -21,6 +21,7 @@ class Logger {
         opcodeLog[0x0d] = {"${it.byte1} ${it.byte2}  ORA $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x0e] = {"${it.byte1} ${it.byte2}  ASL $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x10] = {"${it.byte1} ${nValue()}  BPL $${it.progc}"}
+        opcodeLog[0x11] = { indirectYOp(it, "ORA")}
         opcodeLog[0x18] = {"${nValue()} ${nValue()}  CLC"}
         opcodeLog[0x20] = {"${it.byte1} ${it.byte2}  JSR $${it.byte2}${it.byte1}"}
         opcodeLog[0x21] = { indirectXOp(it, "AND")}
@@ -34,6 +35,7 @@ class Logger {
         opcodeLog[0x2d] = {"${it.byte1} ${it.byte2}  AND $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x2e] = {"${it.byte1} ${it.byte2}  ROL $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x30] = {"${it.byte1} ${nValue()}  BMI $${it.progc}"}
+        opcodeLog[0x31] = { indirectYOp(it, "AND")}
         opcodeLog[0x38] = {"${nValue()} ${nValue()}  SEC"}
         opcodeLog[0x40] = {"${nValue()} ${nValue()}  RTI"}
         opcodeLog[0x41] = { indirectXOp(it, "EOR")}
@@ -46,6 +48,7 @@ class Logger {
         opcodeLog[0x4d] = {"${it.byte1} ${it.byte2}  EOR $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x4e] = {"${it.byte1} ${it.byte2}  LSR $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x50] = {"${it.byte1} ${nValue()}  BVC $${it.progc}"}
+        opcodeLog[0x51] = { indirectYOp(it, "EOR")}
         opcodeLog[0x60] = {"${nValue()} ${nValue()}  RTS"}
         opcodeLog[0x61] = { indirectXOp(it, "ADC")}
         opcodeLog[0x65] = {"${it.byte1} ${nValue()}  ADC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
