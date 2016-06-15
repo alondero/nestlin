@@ -1,5 +1,7 @@
 package com.github.alondero.nestlin
 
+import com.github.alondero.nestlin.cpu.Cpu
+import com.github.alondero.nestlin.cpu.ProcessorStatus
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo

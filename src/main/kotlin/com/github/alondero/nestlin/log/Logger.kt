@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin.log
 
-import com.github.alondero.nestlin.Cpu
-import com.github.alondero.nestlin.UnhandledOpcodeException
+import com.github.alondero.nestlin.cpu.Cpu
+import com.github.alondero.nestlin.cpu.UnhandledOpcodeException
 import com.github.alondero.nestlin.toHexString
 import com.github.alondero.nestlin.toUnsignedInt
 import java.util.*

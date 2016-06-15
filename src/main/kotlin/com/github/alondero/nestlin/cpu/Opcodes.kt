@@ -1,5 +1,9 @@
-package com.github.alondero.nestlin
+package com.github.alondero.nestlin.cpu
 
+import com.github.alondero.nestlin.isBitSet
+import com.github.alondero.nestlin.toSignedByte
+import com.github.alondero.nestlin.toSignedShort
+import com.github.alondero.nestlin.toUnsignedInt
 import java.util.*
 
 class Opcodes {
@@ -557,7 +561,7 @@ class Opcodes {
             val temp = registers.programCounter
             registers.programCounter = mem(it)
 
-            if (registers.programCounter == (temp-1).toSignedShort()) {
+            if (registers.programCounter == (temp - 1).toSignedShort()) {
                 // TODO: Set idle
             }
 

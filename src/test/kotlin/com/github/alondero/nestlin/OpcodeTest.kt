@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin
 
+import com.github.alondero.nestlin.cpu.Cpu
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.Test

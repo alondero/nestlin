@@ -1,7 +1,9 @@
 package com.github.alondero.nestlin
 
+import com.github.alondero.nestlin.cpu.Cpu
 import com.github.alondero.nestlin.file.RomLoader
 import com.github.alondero.nestlin.gamepak.GamePak
+import com.github.alondero.nestlin.ppu.Ppu
 import java.nio.file.Path
 
 class Nestlin {
