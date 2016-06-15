@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin
 
+import com.github.alondero.nestlin.cpu.UnhandledOpcodeException
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
