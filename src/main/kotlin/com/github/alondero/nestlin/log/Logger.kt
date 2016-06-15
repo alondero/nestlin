@@ -22,8 +22,12 @@ class Logger {
         opcodeLog[0x0e] = {"${it.byte1} ${it.byte2}  ASL $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x10] = {"${it.byte1} ${nValue()}  BPL $${it.progc}"}
         opcodeLog[0x11] = { indirectYOp(it, "ORA")}
+        opcodeLog[0x15] = { zeroPagedXOp(it, "ORA")}
+        opcodeLog[0x16] = { zeroPagedXOp(it, "ASL")}
         opcodeLog[0x18] = {"${nValue()} ${nValue()}  CLC"}
         opcodeLog[0x19] = { absoluteYOp(it, "ORA")}
+        opcodeLog[0x1d] = { absoluteXOp(it, "ORA")}
+        opcodeLog[0x1e] = { absoluteXOp(it, "ASL")}
         opcodeLog[0x20] = {"${it.byte1} ${it.byte2}  JSR $${it.byte2}${it.byte1}"}
         opcodeLog[0x21] = { indirectXOp(it, "AND")}
         opcodeLog[0x24] = {"${it.byte1} ${nValue()}  BIT $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -37,8 +41,12 @@ class Logger {
         opcodeLog[0x2e] = {"${it.byte1} ${it.byte2}  ROL $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x30] = {"${it.byte1} ${nValue()}  BMI $${it.progc}"}
         opcodeLog[0x31] = { indirectYOp(it, "AND")}
+        opcodeLog[0x35] = { zeroPagedXOp(it, "AND")}
+        opcodeLog[0x36] = { zeroPagedXOp(it, "ROL")}
         opcodeLog[0x38] = {"${nValue()} ${nValue()}  SEC"}
         opcodeLog[0x39] = { absoluteYOp(it, "AND")}
+        opcodeLog[0x3d] = { absoluteXOp(it, "AND")}
+        opcodeLog[0x3e] = { absoluteXOp(it, "ROL")}
         opcodeLog[0x40] = {"${nValue()} ${nValue()}  RTI"}
         opcodeLog[0x41] = { indirectXOp(it, "EOR")}
         opcodeLog[0x45] = {"${it.byte1} ${nValue()}  EOR $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -51,7 +59,11 @@ class Logger {
         opcodeLog[0x4e] = {"${it.byte1} ${it.byte2}  LSR $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0x50] = {"${it.byte1} ${nValue()}  BVC $${it.progc}"}
         opcodeLog[0x51] = { indirectYOp(it, "EOR")}
+        opcodeLog[0x55] = { zeroPagedXOp(it, "EOR")}
+        opcodeLog[0x56] = { zeroPagedXOp(it, "LSR")}
         opcodeLog[0x59] = { absoluteYOp(it, "EOR")}
+        opcodeLog[0x5d] = { absoluteXOp(it, "EOR")}
+        opcodeLog[0x5e] = { absoluteXOp(it, "LSR")}
         opcodeLog[0x60] = {"${nValue()} ${nValue()}  RTS"}
         opcodeLog[0x61] = { indirectXOp(it, "ADC")}
         opcodeLog[0x65] = {"${it.byte1} ${nValue()}  ADC $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -64,8 +76,12 @@ class Logger {
         opcodeLog[0x69] = {"${it.byte1} ${nValue()}  ADC #$${it.byte1}"}
         opcodeLog[0x70] = {"${it.byte1} ${nValue()}  BVS $${it.progc}"}
         opcodeLog[0x71] = { indirectYOp(it, "ADC")}
+        opcodeLog[0x75] = { zeroPagedXOp(it, "ADC")}
+        opcodeLog[0x76] = { zeroPagedXOp(it, "ROR")}
         opcodeLog[0x78] = {"${nValue()} ${nValue()}  SEI"}
         opcodeLog[0x79] = { absoluteYOp(it, "ADC")}
+        opcodeLog[0x7d] = { absoluteXOp(it, "ADC")}
+        opcodeLog[0x7e] = { absoluteXOp(it, "ROR")}
         opcodeLog[0x81] = { indirectXOp(it, "STA")}
         opcodeLog[0x84] = {"${it.byte1} ${nValue()}  STY $${it.byte1} = ${format(it.cpu.registers.indexY)}"}
         opcodeLog[0x85] = {"${it.byte1} ${nValue()}  STA $${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
@@ -77,9 +93,13 @@ class Logger {
         opcodeLog[0x8e] = {"${it.byte1} ${it.byte2}  STX $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0x90] = {"${it.byte1} ${nValue()}  BCC $${it.progc}"}
         opcodeLog[0x91] = { indirectYOp(it, "STA")}
+        opcodeLog[0x94] = { zeroPagedXOp(it, "STY")}
+        opcodeLog[0x95] = { zeroPagedXOp(it, "STA")}
+        opcodeLog[0x96] = { zeroPagedYOp(it, "STX")}
         opcodeLog[0x98] = {"${nValue()} ${nValue()}  TYA"}
         opcodeLog[0x99] = { absoluteYOp(it, "STA")}
         opcodeLog[0x9a] = {"${nValue()} ${nValue()}  TXS"}
+        opcodeLog[0x9d] = { absoluteXOp(it, "STA")}
         opcodeLog[0xa0] = {"${it.byte1} ${nValue()}  LDY #$${it.byte1}"}
         opcodeLog[0xa1] = { indirectXOp(it, "LDA")}
         opcodeLog[0xa2] = {"${it.byte1} ${nValue()}  LDX #$${it.byte1}"}
@@ -94,9 +114,15 @@ class Logger {
         opcodeLog[0xae] = {"${it.byte1} ${it.byte2}  LDX $${it.byte2}${it.byte1} = ${format(it.cpu.registers.indexX)}"}
         opcodeLog[0xb0] = {"${it.byte1} ${nValue()}  BCS $${it.progc}"}
         opcodeLog[0xb1] = { indirectYOp(it, "LDA")}
+        opcodeLog[0xb4] = { zeroPagedXOp(it, "LDY")}
+        opcodeLog[0xb5] = { zeroPagedXOp(it, "LDA")}
+        opcodeLog[0xb6] = { zeroPagedYOp(it, "LDX")}
         opcodeLog[0xb8] = {"${nValue()} ${nValue()}  CLV"}
         opcodeLog[0xb9] = { absoluteYOp(it, "LDA")}
         opcodeLog[0xba] = {"${nValue()} ${nValue()}  TSX"}
+        opcodeLog[0xbc] = { absoluteXOp(it, "LDY")}
+        opcodeLog[0xbd] = { absoluteXOp(it, "LDA")}
+        opcodeLog[0xbe] = { absoluteYOp(it, "LDX")}
         opcodeLog[0xc0] = {"${it.byte1} ${nValue()}  CPY #$${it.byte1}"}
         opcodeLog[0xc1] = { indirectXOp(it, "CMP")}
         opcodeLog[0xc4] = {"${it.byte1} ${nValue()}  CPY $${it.byte1} = ${format(it.cpu.registers.indexY)}"}
@@ -110,8 +136,12 @@ class Logger {
         opcodeLog[0xce] = {"${it.byte1} ${it.byte2}  DEC $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xd0] = {"${it.byte1} ${nValue()}  BNE $${it.progc}"}
         opcodeLog[0xd1] = { indirectYOp(it, "CMP")}
+        opcodeLog[0xd5] = { zeroPagedXOp(it, "CMP")}
+        opcodeLog[0xd6] = { zeroPagedXOp(it, "DEC")}
         opcodeLog[0xd8] = {"${nValue()} ${nValue()}  CLD"}
         opcodeLog[0xd9] = { absoluteYOp(it, "CMP")}
+        opcodeLog[0xdd] = { absoluteXOp(it, "CMP")}
+        opcodeLog[0xde] = { absoluteXOp(it, "DEC")}
         opcodeLog[0xe0] = {"${it.byte1} ${nValue()}  CPX #$${it.byte1}"}
         opcodeLog[0xe1] = { indirectXOp(it, "SBC")}
         opcodeLog[0xe4] = {"${it.byte1} ${nValue()}  CPX $${it.byte1} = ${format(it.cpu.registers.indexX)}"}
@@ -125,8 +155,12 @@ class Logger {
         opcodeLog[0xee] = {"${it.byte1} ${it.byte2}  INC $${it.byte2}${it.byte1} = ${format(it.cpu.registers.accumulator)}"}
         opcodeLog[0xf0] = {"${it.byte1} ${nValue()}  BEQ $${it.progc}"}
         opcodeLog[0xf1] = { indirectYOp(it, "SBC")}
+        opcodeLog[0xf5] = { zeroPagedXOp(it, "SBC")}
+        opcodeLog[0xf6] = { zeroPagedXOp(it, "INC")}
         opcodeLog[0xf8] = {"${nValue()} ${nValue()}  SED"}
         opcodeLog[0xf9] = { absoluteYOp(it, "SBC")}
+        opcodeLog[0xfd] = { absoluteXOp(it, "SBC")}
+        opcodeLog[0xfe] = { absoluteXOp(it, "INC")}
     }
 
     //  TODO: This is stupid... Refactor so that don't need to replicate logic here
@@ -146,12 +180,36 @@ class Logger {
         }
     }
 
-    private fun absoluteYOp(args: Arguments, op: String): String {
+    private fun absoluteXOp(args: Arguments, op: String) = absoluteOp('X', args, op)
+    private fun absoluteYOp(args: Arguments, op: String) = absoluteOp('Y', args, op)
+
+    private fun absoluteOp(shift: Char, args: Arguments, op: String): String {
         return args.let {
             val addr = it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt(), it.cpu.registers.programCounter.toUnsignedInt()+1]
-            val shiftedAddr = addr.toUnsignedInt() + it.cpu.registers.indexY.toUnsignedInt()
+            var shiftedAddr = addr.toUnsignedInt()
+            when (shift) {
+                'X' -> shiftedAddr += it.cpu.registers.indexX.toUnsignedInt()
+                'Y' -> shiftedAddr += it.cpu.registers.indexY.toUnsignedInt()
+            }
             val mem = it.cpu.memory[shiftedAddr and 0xFFFF]
-            "${it.byte1} ${it.byte2}  $op $${"%04X".format(addr)},Y @ ${"%04X".format(shiftedAddr)} = ${mem.toHexString()}"
+            "${it.byte1} ${it.byte2}  $op $${"%04X".format(addr)},$shift @ ${"%04X".format(shiftedAddr)} = ${mem.toHexString()}"
+        }
+    }
+
+    private fun zeroPagedXOp(args: Arguments, op: String) = zeroPagedOp('X', args, op)
+    private fun zeroPagedYOp(args: Arguments, op: String) = zeroPagedOp('Y', args, op)
+
+    private fun zeroPagedOp(shift: Char, args: Arguments, op: String): String {
+        return args.let {
+            val addr = it.cpu.memory[it.cpu.registers.programCounter.toUnsignedInt()]
+            var shiftedAddr = addr.toUnsignedInt()
+            when (shift) {
+                'X' -> shiftedAddr += it.cpu.registers.indexX.toUnsignedInt()
+                'Y' -> shiftedAddr += it.cpu.registers.indexY.toUnsignedInt()
+            }
+
+            val mem = it.cpu.memory[shiftedAddr and 0xFFFF]
+            "${it.byte1} ${nValue()}  $op $${addr.toHexString()},$shift @ ${shiftedAddr.toHexString()} = ${mem.toHexString()}"
         }
     }
 

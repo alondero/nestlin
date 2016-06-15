@@ -25,7 +25,11 @@ class Opcodes {
         map[0x8d] = storeOp (absoluteAdr())  { it.registers.accumulator }
         map[0x8e] = storeOp (absoluteAdr())  { it.registers.indexX }
         map[0x91] = storeOp (indirectYAdr()) { it.registers.accumulator }
-        map[0x99] = storeOp (absoluteAdrShifted {it.registers.indexY}) { it.registers.accumulator }
+        map[0x94] = storeOp (zeroPagedAdr {it.registers.indexX}) { it.registers.indexY }
+        map[0x95] = storeOp (zeroPagedAdr {it.registers.indexX}) { it.registers.accumulator }
+        map[0x96] = storeOp (zeroPagedAdr {it.registers.indexY}) { it.registers.indexX }
+        map[0x99] = storeOp (absoluteAdr {it.registers.indexY}) { it.registers.accumulator }
+        map[0x9d] = storeOp (absoluteAdr {it.registers.indexX}) { it.registers.accumulator }
 
         //  Set and Clear operations
         map[0x18] = setOp { it.processorStatus.carry = false } // CLC - Clear Carry Flag
@@ -40,7 +44,9 @@ class Opcodes {
         map[0x69] = addToA (immediate())
         map[0x6d] = addToA (absolute())
         map[0x71] = addToA (indirectY())
+        map[0x75] = addToA (zeroPaged {it.registers.indexX})
         map[0x79] = addToA (absolute {it.registers.indexY})
+        map[0x7d] = addToA (absolute {it.registers.indexX})
 
         // SBC - Subtract M from A with Borrow
         map[0xe1] = subtractFromA (indirectX())
@@ -48,7 +54,9 @@ class Opcodes {
         map[0xe9] = subtractFromA (immediate())
         map[0xed] = subtractFromA (absolute())
         map[0xf1] = subtractFromA (indirectY())
+        map[0xf5] = subtractFromA (zeroPaged{it.registers.indexX})
         map[0xf9] = subtractFromA (absolute {it.registers.indexY})
+        map[0xfd] = subtractFromA (absolute {it.registers.indexX})
 
         //  Push operations
         map[0x08] = pushOp { it.processorStatus.asByte() } //  PHP - Push Processor Status on Stack
@@ -57,39 +65,51 @@ class Opcodes {
         //  Clear flag operations
         map[0xb8] = clearOp { it.processorStatus.overflow = false } // CLV - Clear Overflow Flag
 
-        //  Operations over Accumulator
-        map[0x01] = opWithA (indirectX()) { a, m -> ((a or m) and 0xff) } // ORA - "OR" M with A
-        map[0x05] = opWithA (zeroPaged()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
-        map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
-        map[0x0d] = opWithA (absolute())  { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
-        map[0x11] = opWithA (indirectY()) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
-        map[0x19] = opWithA (absolute {it.registers.indexY}) { a, m -> ((a or m) and 0xff) }  //  ORA - "OR" M with A
-        map[0x21] = opWithA (indirectX()) { a, m -> (a and m) } // AND - "AND" M with A
-        map[0x25] = opWithA (zeroPaged()) { a, m -> (a and m) } // AND - "AND" M with A
-        map[0x29] = opWithA (immediate()) { a, m -> (a and m) } // AND - "AND" M with A
-        map[0x2d] = opWithA (absolute())  { a, m -> (a and m) } // AND - "AND" M with A
-        map[0x31] = opWithA (indirectY()) { a, m -> (a and m) } // AND - "AND" M with A
-        map[0x39] = opWithA (absolute {it.registers.indexY}) { a, m -> (a and m) } // AND - "AND" M with A
-        map[0x41] = opWithA (indirectX()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
-        map[0x45] = opWithA (zeroPaged()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
-        map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
-        map[0x4d] = opWithA (absolute())  { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
-        map[0x51] = opWithA (indirectY()) { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
-        map[0x59] = opWithA (absolute {it.registers.indexY})  { a, m -> ((a xor m) and 0xff) } //  EOR - "XOR" M with A
+        //  ORA/AND/EOR Operations over Accumulator
+        map[0x01] = opWithA (indirectX()) { a, m -> ((a or m) and 0xff) }
+        map[0x05] = opWithA (zeroPaged()) { a, m -> ((a or m) and 0xff) }
+        map[0x09] = opWithA (immediate()) { a, m -> ((a or m) and 0xff) }
+        map[0x0d] = opWithA (absolute())  { a, m -> ((a or m) and 0xff) }
+        map[0x11] = opWithA (indirectY()) { a, m -> ((a or m) and 0xff) }
+        map[0x15] = opWithA (zeroPaged {it.registers.indexX }) { a, m -> ((a or m) and 0xff) }
+        map[0x19] = opWithA (absolute {it.registers.indexY}) { a, m -> ((a or m) and 0xff) }
+        map[0x1d] = opWithA (absolute {it.registers.indexX}) { a, m -> ((a or m) and 0xff) }
+        map[0x21] = opWithA (indirectX()) { a, m -> (a and m) }
+        map[0x25] = opWithA (zeroPaged()) { a, m -> (a and m) }
+        map[0x29] = opWithA (immediate()) { a, m -> (a and m) }
+        map[0x2d] = opWithA (absolute())  { a, m -> (a and m) }
+        map[0x31] = opWithA (indirectY()) { a, m -> (a and m) }
+        map[0x35] = opWithA (zeroPaged {it.registers.indexX}) { a, m -> (a and m) }
+        map[0x39] = opWithA (absolute {it.registers.indexY}) { a, m -> (a and m) }
+        map[0x3d] = opWithA (absolute {it.registers.indexX}) { a, m -> (a and m) }
+        map[0x41] = opWithA (indirectX()) { a, m -> ((a xor m) and 0xff) }
+        map[0x45] = opWithA (zeroPaged()) { a, m -> ((a xor m) and 0xff) }
+        map[0x49] = opWithA (immediate()) { a, m -> ((a xor m) and 0xff) }
+        map[0x4d] = opWithA (absolute())  { a, m -> ((a xor m) and 0xff) }
+        map[0x51] = opWithA (indirectY()) { a, m -> ((a xor m) and 0xff) }
+        map[0x55] = opWithA (zeroPaged {it.registers.indexX})  { a, m -> ((a xor m) and 0xff) }
+        map[0x59] = opWithA (absolute {it.registers.indexY})  { a, m -> ((a xor m) and 0xff) }
+        map[0x5d] = opWithA (absolute {it.registers.indexX}) { a, m -> ((a xor m) and 0xff) }
 
-        //  Load operations
-        map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
-        map[0xa1] = load (indirectX()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
-        map[0xa2] = load (immediate()) { registers, mem -> registers.indexX = mem } // LDX - Load X with M
-        map[0xa4] = load (zeroPaged()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
-        map[0xa5] = load (zeroPaged()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
-        map[0xa6] = load (zeroPaged()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
-        map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
-        map[0xac] = load (absolute()) { registers, mem -> registers.indexY = mem } // LDY - Load Y with M
-        map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
-        map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }// LDX - Load X with M
-        map[0xb1] = load (indirectY()) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
-        map[0xb9] = load (absolute {it.registers.indexY}) { registers, mem -> registers.accumulator = mem } // LDA - Load A with M
+        //  LDA/LDX/LDY Load operations
+        map[0xa0] = load (immediate()) { registers, mem -> registers.indexY = mem }
+        map[0xa1] = load (indirectX()) { registers, mem -> registers.accumulator = mem }
+        map[0xa2] = load (immediate()) { registers, mem -> registers.indexX = mem }
+        map[0xa4] = load (zeroPaged()) { registers, mem -> registers.indexY = mem }
+        map[0xa5] = load (zeroPaged()) { registers, mem -> registers.accumulator = mem }
+        map[0xa6] = load (zeroPaged()) { registers, mem -> registers.indexX = mem }
+        map[0xa9] = load (immediate()) { registers, mem -> registers.accumulator = mem }
+        map[0xac] = load (absolute()) { registers, mem -> registers.indexY = mem }
+        map[0xad] = load (absolute()) { registers, mem -> registers.accumulator = mem }
+        map[0xae] = load (absolute()) { registers, mem -> registers.indexX = mem }
+        map[0xb1] = load (indirectY()) { registers, mem -> registers.accumulator = mem }
+        map[0xb4] = load (zeroPaged {it.registers.indexX}) { registers, mem -> registers.indexY = mem }
+        map[0xb5] = load (zeroPaged {it.registers.indexX}) { registers, mem -> registers.accumulator = mem }
+        map[0xb6] = load (zeroPaged {it.registers.indexY}) { registers, mem -> registers.indexX = mem }
+        map[0xb9] = load (absolute {it.registers.indexY}) { registers, mem -> registers.accumulator = mem }
+        map[0xbc] = load (absolute {it.registers.indexX}) { registers, mem -> registers.indexY = mem }
+        map[0xbd] = load (absolute {it.registers.indexX}) { registers, mem -> registers.accumulator = mem }
+        map[0xbe] = load (absolute {it.registers.indexY}) { registers, mem -> registers.indexX = mem }
 
         //  Bit operations
         map[0x24] = bit (zeroPaged()) //  BIT - Test Bits in M with A
@@ -104,26 +124,40 @@ class Opcodes {
         map[0xcc] = compareOp (absolute())  { it.indexY } // CPY - Compare M and Y
         map[0xcd] = compareOp (absolute())  { it.accumulator } //  CMP - Compare M and A
         map[0xd1] = compareOp (indirectY())  { it.accumulator } //  CMP - Compare M and A
+        map[0xd5] = compareOp (zeroPaged{it.registers.indexX})  { it.accumulator } //  CMP - Compare M and A
         map[0xd9] = compareOp (absolute {it.registers.indexY})  { it.accumulator } //  CMP - Compare M and A
+        map[0xdd] = compareOp (absolute {it.registers.indexX})  { it.accumulator } //  CMP - Compare M and A
         map[0xe0] = compareOp (immediate()) { it.indexX } // CPX - Compare M and X
         map[0xe4] = compareOp (zeroPaged()) { it.indexX } // CPX - Compare M and X
         map[0xec] = compareOp (absolute())  { it.indexX } // CPX - Compare M and X
 
-        //  Shift operations
-        map[0x06] = shiftLeft (zeroPagedAdr())   // ASL - Shift Left One Bit
-        map[0x0e] = shiftLeft (absoluteAdr())    // ASL - Shift Left One Bit
-        map[0x26] = rotateLeft (zeroPagedAdr())  // ROL - Rotate Left One Bit
-        map[0x2e] = rotateLeft (absoluteAdr())   // ROL - Rotate Left One Bit
-        map[0x46] = shiftRight (zeroPagedAdr())  // LSR - Shift Right One Bit
-        map[0x4e] = shiftRight (absoluteAdr())   // LSR - Shift Right One Bit
-        map[0x66] = rotateRight (zeroPagedAdr()) // ROR - Rotate Right One Bit
-        map[0x6e] = rotateRight (absoluteAdr())  // ROR - Rotate Right One Bit
+        //  ASL/LSR/ROL/ROR Shift and Rotate operations
+        map[0x06] = shiftLeft (zeroPagedAdr())
+        map[0x0e] = shiftLeft (absoluteAdr())
+        map[0x16] = shiftLeft (zeroPagedAdr { it.registers.indexX })
+        map[0x1e] = shiftLeft (absoluteAdr { it.registers.indexX })
+        map[0x26] = rotateLeft (zeroPagedAdr())
+        map[0x2e] = rotateLeft (absoluteAdr())
+        map[0x36] = rotateLeft (zeroPagedAdr { it.registers.indexX })
+        map[0x3e] = rotateLeft (absoluteAdr { it.registers.indexX })
+        map[0x46] = shiftRight (zeroPagedAdr())
+        map[0x4e] = shiftRight (absoluteAdr())
+        map[0x56] = shiftRight (zeroPagedAdr { it.registers.indexX })
+        map[0x5e] = shiftRight (absoluteAdr { it.registers.indexX })
+        map[0x66] = rotateRight (zeroPagedAdr())
+        map[0x6e] = rotateRight (absoluteAdr())
+        map[0x76] = rotateRight (zeroPagedAdr { it.registers.indexX })
+        map[0x7e] = rotateRight (absoluteAdr { it.registers.indexX })
 
-        //  Increment operations
-        map[0xc6] = unary (zeroPagedAdr()) { dec() } // DEC - Decrement M by 1
-        map[0xce] = unary (absoluteAdr())  { dec() } // DEC - Decrement M by 1
-        map[0xe6] = unary (zeroPagedAdr()) { inc() } // INC - Increment M by 1
-        map[0xee] = unary (absoluteAdr())  { inc() } // INC - Increment M by 1
+        //  INC/DEC Increment/Decrement
+        map[0xc6] = unary (zeroPagedAdr()) { dec() }
+        map[0xce] = unary (absoluteAdr())  { dec() }
+        map[0xd6] = unary (zeroPagedAdr{it.registers.indexX}) { dec() }
+        map[0xde] = unary (absoluteAdr{it.registers.indexX}) { dec() }
+        map[0xe6] = unary (zeroPagedAdr()) { inc() }
+        map[0xee] = unary (absoluteAdr())  { inc() }
+        map[0xf6] = unary (zeroPagedAdr{it.registers.indexX}) { inc() }
+        map[0xfe] = unary (absoluteAdr{it.registers.indexX}) { inc() }
 
         //  Transfer operations
         map[0x8a] = transfer ({it.indexX}) { r, x -> r.accumulator = x } // TXA - Transfer X to A
@@ -305,13 +339,12 @@ class Opcodes {
     }
 
     private fun immediate(): (Cpu) -> Byte = { it.readByteAtPC() }
-    private fun absolute(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[(absoluteAdrShifted(shift)(it) and 0xFFFF)] }
-    private fun zeroPaged(): (Cpu) -> Byte = { it.memory[zeroPagedAdr()(it)] }
+    private fun absolute(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[(absoluteAdr(shift)(it) and 0xFFFF)] }
+    private fun zeroPaged(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[zeroPagedAdr(shift)(it) and 0xFFFF] }
     private fun indirectX(): (Cpu) -> Byte = { it.memory[indirectXAdr()(it)] }
     private fun indirectY(): (Cpu) -> Byte = { it.memory[indirectYAdr()(it)]}
-    private fun absoluteAdrShifted(shift: (Cpu) -> Byte): (Cpu) -> Int = { absoluteAdr()(it) + shift(it).toUnsignedInt() }
-    private fun absoluteAdr(): (Cpu) -> Int = { it.readShortAtPC().toUnsignedInt() }
-    private fun zeroPagedAdr(): (Cpu) -> Int = { it.readByteAtPC().toUnsignedInt() }
+    private fun absoluteAdr(shift: (Cpu) -> Byte = {0}): (Cpu) -> Int = { it.readShortAtPC().toUnsignedInt() + shift(it).toUnsignedInt() }
+    private fun zeroPagedAdr(shift: (Cpu) -> Byte = {0}): (Cpu) -> Int = { (it.readByteAtPC().toUnsignedInt() + shift(it).toUnsignedInt()) and 0xFF }
     private fun indirectXAdr(): (Cpu) -> Int = {
         it.let {
             val mem = it.readByteAtPC()
