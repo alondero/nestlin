@@ -14,7 +14,7 @@ class Cpu(
         var registers: Registers = Registers(),
         var processorStatus: ProcessorStatus = ProcessorStatus(),
         var interrupt: Interrupt? = null,
-        var cycles: Int = 0,
+        var workCyclesLeft: Int = 0,
         var opcodes: Opcodes = Opcodes()
 ) {
     var currentGame: GamePak? = null
@@ -32,7 +32,7 @@ class Cpu(
 
         processorStatus.reset()
         registers.reset()
-        cycles = 0
+        workCyclesLeft = 0
 
         if (isTestRom) {
             // Starts test rom in automation mode
@@ -45,30 +45,21 @@ class Cpu(
     private fun resetVector() = memory[0xFFFC, 0xFFFD]
 
     fun tick() {
-        val initialPC = registers.programCounter
-        val opcodeVal = readByteAtPC().toUnsignedInt()
-        val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
+        if (readyForNextInstruction()) {
+            val initialPC = registers.programCounter
+            val opcodeVal = readByteAtPC().toUnsignedInt()
+            val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
 
-        opcode?.apply {
-            logger?.cpuTick(initialPC, opcodeVal, this@Cpu)
-            op(this@Cpu)
+            opcode?.apply {
+                logger?.cpuTick(initialPC, opcodeVal, this@Cpu)
+                op(this@Cpu)
+            }
         }
+
+        if (workCyclesLeft > 0) workCyclesLeft--
     }
 
-    fun branch(flag: Boolean) {
-        if (flag) {
-            val previousCounter: Short = registers.programCounter.inc()
-
-            //  Relative addressing
-            registers.programCounter = (readByteAtPC() + registers.programCounter).toSignedShort()
-
-            //  TODO: Add cycle
-            if (hasCrossedPageBoundary(previousCounter, registers.programCounter)) pageBoundaryFlag = true
-            if ((previousCounter - 2).toSignedShort() == registers.programCounter) idle = true
-        } else {
-            registers.programCounter++ // Increment the program counter
-        }
-    }
+    private fun readyForNextInstruction() = workCyclesLeft <= 0
 
     fun push(value: Byte) {
         memory[0x100 + (registers.stackPointer.toUnsignedInt())] = value
@@ -83,7 +74,7 @@ class Cpu(
     fun readByteAtPC() = memory[registers.programCounter++.toUnsignedInt()]
     fun readShortAtPC() = memory[registers.programCounter++.toUnsignedInt(), registers.programCounter++.toUnsignedInt()]
 
-    private fun hasCrossedPageBoundary(previousCounter: Short, programCounter: Short) = (previousCounter.toUnsignedInt() and 0xFF00) != (programCounter.toUnsignedInt() and 0xFF00)
+    fun hasCrossedPageBoundary(previousCounter: Short, programCounter: Short) = (previousCounter.toUnsignedInt() and 0xFF00) != (programCounter.toUnsignedInt() and 0xFF00)
 }
 
 

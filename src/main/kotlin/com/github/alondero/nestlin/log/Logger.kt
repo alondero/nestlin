@@ -230,7 +230,7 @@ class Logger {
                 "Y:${format(cpu.registers.indexY)} " +
                 "P:${format(cpu.processorStatus.asByte())} " +
                 "SP:${format(cpu.registers.stackPointer)} " +
-                "CYC:${"%1$3s".format(cpu.cycles.toString())}")
+                "CYC:${"%1$3s".format(cpu.workCyclesLeft.toString())}")
     }
 
     private fun format(byte: Byte): String = "%02X".format(byte.toUnsignedInt())
