@@ -1,9 +1,6 @@
 package com.github.alondero.nestlin.cpu
 
-import com.github.alondero.nestlin.isBitSet
-import com.github.alondero.nestlin.toSignedByte
-import com.github.alondero.nestlin.toSignedShort
-import com.github.alondero.nestlin.toUnsignedInt
+import com.github.alondero.nestlin.*
 import java.util.*
 
 class Opcodes {
@@ -490,7 +487,7 @@ class Opcodes {
             val result = memory[addr]
 
             processorStatus.carry = result.isBitSet(0)
-            val shiftedResult = ((result.toUnsignedInt() shr 1) and 0x7F).toSignedByte()
+            val shiftedResult = result.shiftRight()
             memory[addr] = shiftedResult
             processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
         }

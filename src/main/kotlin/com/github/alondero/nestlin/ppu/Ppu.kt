@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.ppu
 
+import com.github.alondero.nestlin.shiftRight
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
 
@@ -44,14 +45,55 @@ class Ppu {
         sprites.apply {
             decrementCounters()
             getActiveSprites().forEach {
-                //  If the counter is zero, the sprite becomes "active", and the respective pair of shift registers for the sprite is shifted once every cycle.
+                // If the counter is zero, the sprite becomes "active", and the respective pair of shift registers for the sprite is shifted once every cycle.
                 // This output accompanies the data in the sprite's latch, to form a pixel.
+                it.shiftRegisters()
                 // The current pixel for each "active" sprite is checked (from highest to lowest priority), and the first non-transparent pixel moves on to a multiplexer,
                 // where it joins the BG pixel
             }
         }
 
         cycle++
+    }
+
+    private fun fetchNextScanLineTiles() {
+//        This is where the first two tiles for the next scanline are fetched, and loaded into the shift registers. Again, each memory access takes 2 PPU cycles to complete, and 4 are performed for the two tiles:
+//
+//        Nametable byte
+//                Attribute table byte
+//        Tile bitmap low
+//        Tile bitmap high (+8 bytes from tile bitmap low)
+    }
+
+    private fun fetchSpriteTile() {
+//        The tile data for the sprites on the next scanline are fetched here. Again, each memory access takes 2 PPU cycles to complete, and 4 are performed for each of the 8 sprites:
+//
+//        Garbage nametable byte
+//        Garbage nametable byte
+//        Tile bitmap low
+//        Tile bitmap high (+8 bytes from tile bitmap low)
+//        The garbage fetches occur so that the same circuitry that performs the BG tile fetches could be reused for the sprite tile fetches.
+//
+//        If there are less than 8 sprites on the next scanline, then dummy fetches to tile $FF occur for the left-over sprites, because of the dummy sprite data in the secondary OAM (see sprite evaluation). This data is then discarded, and the sprites are loaded with a transparent bitmap instead.
+//
+//        In addition to this, the X positions and attributes for each sprite are loaded from the secondary OAM into their respective counters/latches. This happens during the second garbage nametable fetch, with the attribute byte loaded during the first tick and the X coordinate during the second.
+    }
+
+    private fun fetchData() {
+        //  The data for each tile is fetched during this phase. Each memory access takes 2 PPU cycles to complete, and 4 must be performed per tile:
+//        Nametable byte
+//        Attribute table byte
+//        Tile bitmap low
+//        Tile bitmap high (+8 bytes from tile bitmap low)
+//        The data fetched from these accesses is placed into internal latches, and then fed to the appropriate shift registers when it's time to do so (every 8 cycles). Because the PPU can only fetch an attribute byte every 8 cycles, each sequential string of 8 pixels is forced to have the same palette attribute.
+//
+//        Sprite zero hits act as if the image starts at cycle 2 (which is the same cycle that the shifters shift for the first time), so the sprite zero flag will be raised at this point at the earliest. Actual pixel output is delayed further due to internal render pipelining, and the first pixel is output during cycle 4.
+//
+//        The shifters are reloaded during ticks 9, 17, 25, ..., 257.
+//
+//        Note: At the beginning of each scanline, the data for the first two tiles is already loaded into the shift registers (and ready to be rendered), so the first tile that gets fetched is Tile 3.
+//
+//        While all of this is going on, sprite evaluation for the next scanline is taking place as a seperate process, independent to what's happening here.
     }
 
 }
@@ -69,12 +111,17 @@ class SpriteRegister {
 
 data class Sprite(
         val objectAttributeMemory: Byte = 0,
-        val bitmapDataA: Byte = 0,
-        val bitMapDataB: Byte = 0,
+        var bitmapDataA: Byte = 0,
+        var bitmapDataB: Byte = 0,
         val latch: Byte = 0,
         val counter: Int = 0
 ) {
     fun isActive() = counter <= 0
+
+    fun shiftRegisters() {
+        bitmapDataA = bitmapDataA.shiftRight()
+        bitmapDataB = bitmapDataB.shiftRight()
+    }
 }
 
 class Background {
