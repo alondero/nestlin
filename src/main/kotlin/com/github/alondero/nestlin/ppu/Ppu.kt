@@ -13,17 +13,20 @@ const val POST_RENDER_SCANLINE = 240
 
 class Ppu {
     var cycle = 0
+    var scanline = 0
     val background = Background()
     val sprites = SpriteRegister()
     var vBlank = false
 
     fun tick() {
-        when (cycle) {
+//        println("Rendering ($cycle, $scanline)")
+        when (cycle++) {
             IDLE_SCANLINE,POST_RENDER_SCANLINE -> return // Idle
             in 1..256 -> fetchData()
             in 257..320 -> fetchSpriteTile()
             in 321..336 -> fetchNextScanLineTiles()
             in 337..340 -> return // Does irrelevant stuff
+            341 -> endLine()
         }
 
         if (cycle in 241..260) {
@@ -52,8 +55,20 @@ class Ppu {
                 // where it joins the BG pixel
             }
         }
+    }
 
-        cycle++
+    private fun endLine() {
+        when (scanline) {
+            NTSC_SCANLINES-1 -> endFrame()
+            else -> scanline++
+        }
+        cycle = 0
+    }
+
+    private fun endFrame() {
+        //  What to do here?
+        scanline = 0
+        vBlank = false
     }
 
     private fun fetchNextScanLineTiles() {

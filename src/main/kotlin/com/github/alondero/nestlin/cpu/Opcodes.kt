@@ -166,7 +166,7 @@ class Opcodes {
         map[0x9a] = Opcode {
             it.apply {
                 it.registers.stackPointer = it.registers.indexX
-                //  TODO: 2 cycles
+                it.workCyclesLeft += 2
             }
         } // TXS - Transfer X to Stack Pointer (doesn't set program counter)
         map[0xa8] = transfer ({it.accumulator}) { r, acc -> r.indexY = acc } //  TAY - Transfer A to Y
@@ -186,7 +186,7 @@ class Opcodes {
                 registers.programCounter = memory[0xFFFE, 0xFFFF]
                 processorStatus.interruptDisable = true
 
-                //  TODO: Takes 7 cycles
+                it.workCyclesLeft = 7
             }
         }
 
@@ -361,39 +361,49 @@ class Opcodes {
         }
     }
 
-
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {
         it.apply {
-            branch(flag(it))
-            //  TODO: Takes 2 cycles
+            if (flag(it)) {
+                val previousCounter: Short = registers.programCounter.inc()
+
+                //  Relative addressing
+                registers.programCounter = (readByteAtPC() + registers.programCounter).toSignedShort()
+
+                workCyclesLeft++
+                if (hasCrossedPageBoundary(previousCounter, registers.programCounter)) pageBoundaryFlag = true
+                if ((previousCounter - 2).toSignedShort() == registers.programCounter) idle = true
+            } else {
+                registers.programCounter++ // Increment the program counter
+            }
+            workCyclesLeft += 2
         }
     }
 
     private fun storeOp(adr: (Cpu) -> Int, value: (Cpu) -> Byte) = Opcode {
         it.apply {
             memory[adr(it)] = value(it)
-            // TODO: Takes 4 cycles
+            workCyclesLeft += 4
         }
     }
 
     private fun setOp(op: (Cpu) -> Unit) = Opcode {
         it.apply {
             op(it)
-            //  TODO: Takes 2 cycles
+            workCyclesLeft += 2
         }
     }
 
     private fun pushOp(value: (Cpu) -> Byte) = Opcode {
         it.apply {
             push(value(it))
-            //  TODO: Takes 3 cycles
+            workCyclesLeft += 3
         }
     }
 
     private fun clearOp(op: (Cpu) -> Unit) = Opcode {
         it.apply {
             op(it)
-            //  TODO: Takes 2 cycles
+            workCyclesLeft += 2
         }
     }
 
@@ -403,7 +413,7 @@ class Opcodes {
                 processorStatus.resolveZeroAndNegativeFlags(this)
             }
 
-            //  TODO: Takes 2 cycles
+            workCyclesLeft += 2
         }
     }
 
@@ -414,7 +424,7 @@ class Opcodes {
                 processorStatus.resolveZeroAndNegativeFlags(this)
             }
 
-            //  TODO: Takes 2 cycles
+            workCyclesLeft += 2
         }
     }
 
@@ -429,7 +439,7 @@ class Opcodes {
                 carry = register.toUnsignedInt() >= mem.toUnsignedInt()
             }
 
-            //  TODO: Takes 2 cycles
+            workCyclesLeft += 2
         }
     }
 
@@ -439,7 +449,7 @@ class Opcodes {
                 processorStatus.resolveZeroAndNegativeFlags(this)
                 transfer(registers, this)
             }
-            // TODO: Takes 2 cycles
+            workCyclesLeft += 2
         }
     }
 
@@ -458,7 +468,7 @@ class Opcodes {
                     ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
 
-            // TODO: Takes 2 cycles
+            workCyclesLeft += 2
         }
     }
 
@@ -477,7 +487,7 @@ class Opcodes {
                     ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
 
-            //  TODO: Takes 6 cycles
+            workCyclesLeft += 6
         }
     }
 
@@ -490,6 +500,8 @@ class Opcodes {
             val shiftedResult = result.shiftRight()
             memory[addr] = shiftedResult
             processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
+
+            workCyclesLeft += 2
         }
     }
 
@@ -502,6 +514,8 @@ class Opcodes {
             val shiftedResult = ((result.toUnsignedInt() shl 1) and 0xFF).toSignedByte()
             memory[addr] = shiftedResult
             processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
+
+            workCyclesLeft += 2
         }
     }
 
@@ -515,6 +529,8 @@ class Opcodes {
             val rotatedResult = ((result.toUnsignedInt() shr 1) or (if (oldCarry) 0x80 else 0)).toSignedByte()
             memory[addr] = rotatedResult
             processorStatus.resolveZeroAndNegativeFlags(rotatedResult)
+
+            workCyclesLeft += 2
         }
     }
 
@@ -527,7 +543,8 @@ class Opcodes {
             processorStatus.carry = (rotatedResult and 0xFF00) > 0
             memory[addr] = (rotatedResult and 0xFF).toSignedByte()
             processorStatus.resolveZeroAndNegativeFlags((rotatedResult and 0xFF).toSignedByte())
-            //  TODO: Takes 2 cycles
+
+            workCyclesLeft += 2
         }
     }
 
@@ -538,7 +555,8 @@ class Opcodes {
 
             memory[addr] = result
             processorStatus.resolveZeroAndNegativeFlags(result)
-            //  TODO: Takes 6 cycles
+
+            workCyclesLeft += 6
         }
     }
 
@@ -549,8 +567,9 @@ class Opcodes {
                 processorStatus.negative = (this and 0b10000000) != 0
                 processorStatus.overflow = (this and 0b01000000) != 0
             }
+
+            workCyclesLeft += 3
         }
-        //  TODO: Takes 3 cycles
     }
 
     private fun jump(mem: (Cpu) -> Short) = Opcode {
@@ -562,7 +581,7 @@ class Opcodes {
                 // TODO: Set idle
             }
 
-            //  TODO: Takes 3 cycles
+            workCyclesLeft += 3
         }
     }
 
