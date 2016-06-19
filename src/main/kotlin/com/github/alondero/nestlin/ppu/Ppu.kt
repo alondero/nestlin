@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.ppu
 
+import com.github.alondero.nestlin.Memory
 import com.github.alondero.nestlin.shiftRight
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
@@ -11,7 +12,10 @@ const val NTSC_SCANLINES = 262
 const val IDLE_SCANLINE = 0
 const val POST_RENDER_SCANLINE = 240
 
-class Ppu {
+class Ppu(
+        var memory:Memory
+) {
+
     var cycle = 0
     var scanline = 0
     val background = Background()

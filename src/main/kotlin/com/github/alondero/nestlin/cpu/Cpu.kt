@@ -1,24 +1,21 @@
 package com.github.alondero.nestlin.cpu
 
+import com.github.alondero.nestlin.*
 import com.github.alondero.nestlin.gamepak.GamePak
-import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.log.Logger
-import com.github.alondero.nestlin.toSignedByte
-import com.github.alondero.nestlin.toSignedShort
-import com.github.alondero.nestlin.toUnsignedInt
 
 private const val TEST_ROM_CRC = 0x9e179d92
 
 class Cpu(
-        var memory: Memory = Memory(),
-        var registers: Registers = Registers(),
-        var processorStatus: ProcessorStatus = ProcessorStatus(),
-        var interrupt: Interrupt? = null,
-        var workCyclesLeft: Int = 0,
+        var memory: Memory,
         var opcodes: Opcodes = Opcodes()
 ) {
     var currentGame: GamePak? = null
+    var interrupt: Interrupt? = null
+    var workCyclesLeft: Int = 0
     var pageBoundaryFlag: Boolean = false
+    var registers: Registers = Registers()
+    var processorStatus: ProcessorStatus = ProcessorStatus()
     var idle = false
     private val logger: Logger? = Logger() // TODO: Only log when DEBUG param passed
 
@@ -42,8 +39,6 @@ class Cpu(
         }
     }
 
-    private fun resetVector() = memory[0xFFFC, 0xFFFD]
-
     fun tick() {
         if (readyForNextInstruction()) {
             val initialPC = registers.programCounter
@@ -59,8 +54,6 @@ class Cpu(
         if (workCyclesLeft > 0) workCyclesLeft--
     }
 
-    private fun readyForNextInstruction() = workCyclesLeft <= 0
-
     fun push(value: Byte) {
         memory[0x100 + (registers.stackPointer.toUnsignedInt())] = value
         registers.stackPointer--
@@ -73,10 +66,11 @@ class Cpu(
 
     fun readByteAtPC() = memory[registers.programCounter++.toUnsignedInt()]
     fun readShortAtPC() = memory[registers.programCounter++.toUnsignedInt(), registers.programCounter++.toUnsignedInt()]
-
     fun hasCrossedPageBoundary(previousCounter: Short, programCounter: Short) = (previousCounter.toUnsignedInt() and 0xFF00) != (programCounter.toUnsignedInt() and 0xFF00)
-}
 
+    private fun readyForNextInstruction() = workCyclesLeft <= 0
+    private fun resetVector() = memory[0xFFFC, 0xFFFD]
+}
 
 enum class Interrupt {
     IRQ_BRK,
@@ -144,102 +138,3 @@ data class ProcessorStatus(
     }
 }
 
-class Memory {
-    private var internalRam: ByteArray = ByteArray(0x800)
-    private var ppuRegisters: PpuRegisters = PpuRegisters()
-    private var apuIoRegisters: ByteArray = ByteArray(0x20)
-    private var cartridgeSpace: ByteArray = ByteArray(0xBFE0)
-
-    fun readCartridge(data: GamePak) {
-        for ((idx, value) in data.programRom.copyOfRange(0, 16384).withIndex()) {
-            cartridgeSpace[0x8000+idx - 0x4020] = value
-        }
-
-        for ((idx, value) in data.programRom.copyOfRange(data.programRom.size - 16384, data.programRom.size).withIndex()) {
-            cartridgeSpace[0xC000+idx - 0x4020] = value
-        }
-    }
-
-    operator fun set(address: Int, value: Byte) {
-        when (address) {
-            in 0x0000..0x1FFF -> internalRam[address%0x800] = value
-            in 0x2000..0x3FFF -> ppuRegisters[address%8] = value
-            in 0x4000..0x401F -> apuIoRegisters[address-0x4000] = value
-            else -> cartridgeSpace[address-0x4020] = value
-        }
-    }
-
-    operator fun get(address: Int): Byte {
-        var foundByte: Byte
-
-        when (address) {
-            in 0x0000..0x1FFF -> foundByte = internalRam[address%0x800]
-            in 0x2000..0x3FFF -> foundByte = ppuRegisters[address%8]
-            in 0x4000..0x401F -> foundByte = apuIoRegisters[address - 0x4000]
-            else /* in 0x4020..0xFFFF */ -> foundByte = cartridgeSpace[address - 0x4020]
-        }
-
-        return foundByte
-    }
-
-    operator fun get(address1: Int, address2: Int): Short {
-        val addr1 = this[address1].toUnsignedInt()
-        val addr2 = this[address2].toUnsignedInt() shl 8
-
-        return (addr2 + addr1).toSignedShort()
-    }
-
-    fun clear() {
-        internalRam.fill(0xFF.toSignedByte())
-        apuIoRegisters.fill(0) // TODO: Do something better with APU Registers (when implementing audio and input)
-        ppuRegisters.reset()
-    }
-}
-
-data class PpuRegisters (
-        var controller: Byte = 0,
-        var mask: Byte = 0,
-        var status: Byte = 0,
-        var oamAddress: Byte = 0,
-        var oamData: Byte = 0,
-        var scroll: Byte = 0,
-        var address: Byte = 0,
-        var data: Byte = 0
-) {
-    fun reset() {
-        controller = 0
-        mask = 0
-        status = 0
-        oamAddress = 0
-        oamData = 0
-        scroll = 0
-        address = 0
-        data = 0
-    }
-
-    operator fun get(addr: Int): Byte {
-        when (addr) {
-            0 -> return controller
-            1 -> return mask
-            2 -> return status
-            3 -> return oamAddress
-            4 -> return oamData
-            5 -> return scroll
-            6 -> return address
-            else /*7*/ -> return data
-        }
-    }
-
-    operator fun set(addr: Int, value: Byte) {
-        when (addr) {
-            0 -> controller = value
-            1 -> mask = value
-            2 -> status = value
-            3 -> oamAddress = value
-            4 -> oamData = value
-            5 -> scroll = value
-            6 -> address = value
-            else /*7*/ -> data = value
-        }
-    }
-}
