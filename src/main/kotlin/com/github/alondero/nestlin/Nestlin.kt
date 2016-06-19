@@ -8,9 +8,15 @@ import java.nio.file.Path
 
 class Nestlin {
 
-    private val cpu: Cpu = Cpu()
-    private val ppu: Ppu = Ppu()
+    private var cpu: Cpu
+    private var ppu: Ppu
     private val apu: Apu = Apu()
+
+    init {
+        val memory = Memory()
+        cpu = Cpu(memory)
+        ppu = Ppu(memory)
+    }
 
     fun load(rom: Path) {
         GamePak(validate(RomLoader().load(rom)))?.apply {
