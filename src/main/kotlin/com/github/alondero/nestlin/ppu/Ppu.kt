@@ -4,6 +4,7 @@ import com.github.alondero.nestlin.Memory
 import com.github.alondero.nestlin.shiftRight
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
+import com.github.alondero.nestlin.ui.FrameListener
 
 const val RESOLUTION_WIDTH = 256
 const val RESOLUTION_HEIGHT = 224
@@ -15,12 +16,13 @@ const val POST_RENDER_SCANLINE = 240
 class Ppu(
         var memory:Memory
 ) {
-
-    var cycle = 0
-    var scanline = 0
-    val background = Background()
-    val sprites = SpriteRegister()
-    var vBlank = false
+    private var cycle = 0
+    private var scanline = 0
+    private val background = Background()
+    private val sprites = SpriteRegister()
+    private var listener: FrameListener? = null
+    private var vBlank = false
+    private var frame = Frame()
 
     fun tick() {
 //        println("Rendering ($cycle, $scanline)")
@@ -70,6 +72,8 @@ class Ppu(
     }
 
     private fun endFrame() {
+        listener?.frameUpdated(frame)
+
         //  What to do here?
         scanline = 0
         vBlank = false
@@ -115,6 +119,9 @@ class Ppu(
 //        While all of this is going on, sprite evaluation for the next scanline is taking place as a seperate process, independent to what's happening here.
     }
 
+    fun addFrameListener(listener: FrameListener) {
+        this.listener = listener
+    }
 }
 
 class SpriteRegister {
