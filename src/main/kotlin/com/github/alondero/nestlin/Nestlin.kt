@@ -4,6 +4,7 @@ import com.github.alondero.nestlin.cpu.Cpu
 import com.github.alondero.nestlin.file.RomLoader
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.ppu.Ppu
+import com.github.alondero.nestlin.ui.FrameListener
 import java.nio.file.Path
 
 class Nestlin {
@@ -31,6 +32,10 @@ class Nestlin {
         }
 
         return data
+    }
+
+    fun addFrameListener(listener: FrameListener) {
+        ppu.addFrameListener(listener)
     }
 
     fun powerReset() {
