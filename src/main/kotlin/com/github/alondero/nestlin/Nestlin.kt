@@ -12,6 +12,7 @@ class Nestlin {
     private var cpu: Cpu
     private var ppu: Ppu
     private val apu: Apu = Apu()
+    private var running = false
 
     init {
         val memory = Memory()
@@ -43,7 +44,9 @@ class Nestlin {
     }
 
     fun start() {
-        while (true) {
+        running = true
+
+        while (running) {
             for (i in 1..3) {
                 ppu.tick()
             }
@@ -51,6 +54,8 @@ class Nestlin {
             cpu.tick()
         }
     }
+
+    fun stop() {running = false}
 }
 
 class BadHeaderException(message: String) : RuntimeException(message)
