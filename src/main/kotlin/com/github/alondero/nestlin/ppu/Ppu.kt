@@ -5,6 +5,7 @@ import com.github.alondero.nestlin.shiftRight
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
 import com.github.alondero.nestlin.ui.FrameListener
+import java.util.*
 
 const val RESOLUTION_WIDTH = 256
 const val RESOLUTION_HEIGHT = 224
@@ -24,14 +25,14 @@ class Ppu(
     private var vBlank = false
     private var frame = Frame()
 
+    private val rand = Random()
+
     fun tick() {
-//        println("Rendering ($cycle, $scanline)")
-        when (cycle++) {
-            IDLE_SCANLINE,POST_RENDER_SCANLINE -> return // Idle
+//       println("Rendering ($cycle, $scanline)")
+        when (cycle) {// Idle
             in 1..256 -> fetchData()
             in 257..320 -> fetchSpriteTile()
             in 321..336 -> fetchNextScanLineTiles()
-            in 337..340 -> return // Does irrelevant stuff
             341 -> endLine()
         }
 
@@ -61,6 +62,8 @@ class Ppu(
                 // where it joins the BG pixel
             }
         }
+
+        cycle++
     }
 
     private fun endLine() {
@@ -117,6 +120,10 @@ class Ppu(
 //        Note: At the beginning of each scanline, the data for the first two tiles is already loaded into the shift registers (and ready to be rendered), so the first tile that gets fetched is Tile 3.
 //
 //        While all of this is going on, sprite evaluation for the next scanline is taking place as a seperate process, independent to what's happening here.
+
+        if (scanline < RESOLUTION_HEIGHT && cycle-1 < RESOLUTION_WIDTH) {
+            frame[scanline, cycle-1] = rand.nextInt(0xFFFFFF)
+        }
     }
 
     fun addFrameListener(listener: FrameListener) {

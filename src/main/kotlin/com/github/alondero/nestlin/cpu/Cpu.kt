@@ -17,7 +17,7 @@ class Cpu(
     var registers: Registers = Registers()
     var processorStatus: ProcessorStatus = ProcessorStatus()
     var idle = false
-    private val logger: Logger? = Logger() // TODO: Only log when DEBUG param passed
+    private var logger: Logger? = null
 
     fun reset() {
         memory.clear()
@@ -37,6 +37,10 @@ class Cpu(
         } else {
             registers.programCounter = resetVector()
         }
+    }
+
+    fun enableLogging() {
+        logger = Logger()
     }
 
     fun tick() {
