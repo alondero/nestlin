@@ -1,12 +1,10 @@
 package com.github.alondero.nestlin
 
-import com.github.alondero.nestlin.Memory
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.Test
 
 class MemoryTest {
-
     @Test
     fun retrievesA16BitValuefromMemory() {
         val mem = Memory()

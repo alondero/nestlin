@@ -41,12 +41,7 @@ class NestlinApplication : FrameListener, App() {
     override fun start(stage: Stage) {
         this.stage = stage.apply {
             title = "Nestlin"
-
-            val sp = StackPane().apply {
-                children.add(canvas)
-            }
-            scene = Scene(sp)
-
+            scene = Scene(StackPane().apply { children.add(canvas) })
             show()
         }
 

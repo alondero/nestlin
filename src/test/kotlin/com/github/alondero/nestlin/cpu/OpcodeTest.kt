@@ -1,6 +1,8 @@
-package com.github.alondero.nestlin
+package com.github.alondero.nestlin.cpu
 
-import com.github.alondero.nestlin.cpu.Cpu
+import com.github.alondero.nestlin.Memory
+import com.github.alondero.nestlin.toSignedByte
+import com.github.alondero.nestlin.toSignedShort
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.Test

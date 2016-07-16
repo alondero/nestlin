@@ -15,12 +15,14 @@ const val IDLE_SCANLINE = 0
 const val POST_RENDER_SCANLINE = 240
 
 class Ppu(
-        var memory:Memory
+        var memory: Memory
 ) {
     private var cycle = 0
     private var scanline = 0
-    private val background = Background()
-    private val sprites = SpriteRegister()
+
+    private val internalMemory = PpuMemory()
+    private val objectAttributeMemory = ObjectAttributeMemory()
+
     private var listener: FrameListener? = null
     private var vBlank = false
     private var frame = Frame()
@@ -45,30 +47,28 @@ class Ppu(
         if (cycle % 8 == 0) {
             //  Bitmap data for the next tile is loaded into the upper 8 bits
             val bitmap = 0xFF.toSignedByte()
-
-            background.nextTile()
         }
 
-        //  Every cycle a bit is fetched from the 4 background shift registers in order to create a pixel on screen
-        background.fetch()
+        //  Every cycle a bit is fetched from the 4 backgroundNametables shift registers in order to create a pixel on screen
 
-        sprites.apply {
-            decrementCounters()
-            getActiveSprites().forEach {
-                // If the counter is zero, the sprite becomes "active", and the respective pair of shift registers for the sprite is shifted once every cycle.
-                // This output accompanies the data in the sprite's latch, to form a pixel.
-                it.shiftRegisters()
-                // The current pixel for each "active" sprite is checked (from highest to lowest priority), and the first non-transparent pixel moves on to a multiplexer,
-                // where it joins the BG pixel
-            }
-        }
+
+//        with(spriteNametables) {
+//            decrementCounters()
+//            getActiveSprites().forEach {
+//                // If the counter is zero, the sprite becomes "active", and the respective pair of shift registers for the sprite is shifted once every cycle.
+//                // This output accompanies the data in the sprite's latch, to form a pixel.
+//                it.shiftRegisters()
+//                // The current pixel for each "active" sprite is checked (from highest to lowest priority), and the first non-transparent pixel moves on to a multiplexer,
+//                // where it joins the BG pixel
+//            }
+//        }
 
         cycle++
     }
 
     private fun endLine() {
         when (scanline) {
-            NTSC_SCANLINES-1 -> endFrame()
+            NTSC_SCANLINES - 1 -> endFrame()
             else -> scanline++
         }
         cycle = 0
@@ -92,7 +92,7 @@ class Ppu(
     }
 
     private fun fetchSpriteTile() {
-//        The tile data for the sprites on the next scanline are fetched here. Again, each memory access takes 2 PPU cycles to complete, and 4 are performed for each of the 8 sprites:
+//        The tile data for the spriteNametables on the next scanline are fetched here. Again, each memory access takes 2 PPU cycles to complete, and 4 are performed for each of the 8 spriteNametables:
 //
 //        Garbage nametable byte
 //        Garbage nametable byte
@@ -100,12 +100,19 @@ class Ppu(
 //        Tile bitmap high (+8 bytes from tile bitmap low)
 //        The garbage fetches occur so that the same circuitry that performs the BG tile fetches could be reused for the sprite tile fetches.
 //
-//        If there are less than 8 sprites on the next scanline, then dummy fetches to tile $FF occur for the left-over sprites, because of the dummy sprite data in the secondary OAM (see sprite evaluation). This data is then discarded, and the sprites are loaded with a transparent bitmap instead.
+//        If there are less than 8 spriteNametables on the next scanline, then dummy fetches to tile $FF occur for the left-over spriteNametables, because of the dummy sprite data in the secondary OAM (see sprite evaluation). This data is then discarded, and the spriteNametables are loaded with a transparent bitmap instead.
 //
 //        In addition to this, the X positions and attributes for each sprite are loaded from the secondary OAM into their respective counters/latches. This happens during the second garbage nametable fetch, with the attribute byte loaded during the first tick and the X coordinate during the second.
     }
 
     private fun fetchData() {
+        when (cycle % 8) {
+            0 -> memory.ppuRegisters.controller.baseNametableAddr()
+            2 -> return
+            4 -> return
+            6 -> return
+        }
+
         //  The data for each tile is fetched during this phase. Each memory access takes 2 PPU cycles to complete, and 4 must be performed per tile:
 //        Nametable byte
 //        Attribute table byte
@@ -121,8 +128,8 @@ class Ppu(
 //
 //        While all of this is going on, sprite evaluation for the next scanline is taking place as a seperate process, independent to what's happening here.
 
-        if (scanline < RESOLUTION_HEIGHT && cycle-1 < RESOLUTION_WIDTH) {
-            frame[scanline, cycle-1] = rand.nextInt(0xFFFFFF)
+        if (scanline < RESOLUTION_HEIGHT && cycle - 1 < RESOLUTION_WIDTH) {
+            frame[scanline, cycle - 1] = rand.nextInt(0xFFFFFF)
         }
     }
 
@@ -131,12 +138,49 @@ class Ppu(
     }
 }
 
-class SpriteRegister {
-    // 64 sprites for the frame
-    val primaryObjectAttributeMemory = 0
+class ObjectAttributeMemory {
+    private val memory = ByteArray(0x100)
+}
 
+class PpuMemory {
+
+    private val patternTable0 = ByteArray(0x1000)
+    private val patternTable1 = ByteArray(0x1000)
+    private val nameTable0 = ByteArray(0x400)
+    private val nameTable1 = ByteArray(0x400)
+    private val nameTable2 = ByteArray(0x400)
+    private val nameTable3 = ByteArray(0x400)
+    private val paletteRam = PaletteRam()
+
+
+//    private val backgroundNametables = Background()
+//    private val spriteNametables = Sprites()
+
+    operator fun get(addr: Int): Byte = when (addr) {
+        in 0x0000..0x0999 -> patternTable0[addr % 0x1000]
+        in 0x1000..0x1999 -> patternTable1[addr % 0x1000]
+        in 0x2000..0x23FF -> nameTable0[addr % 0x400]
+        in 0x2400..0x27FF -> nameTable1[addr % 0x400]
+        in 0x2800..0x2BFF -> nameTable2[addr % 0x400]
+        in 0x2C00..0x2FFF -> nameTable3[addr % 0x400]
+        in 0x3000..0x3EFF -> this[addr - 0x1000] // Mirror of 0x2000 - 0x2EFF
+        else /*in 0x3F00..0x3FFF*/ -> paletteRam[addr % 0x020]
+    }
+}
+
+class PaletteRam {
+    private val bgPalette = ByteArray(0x10)
+    private val spritePalette = ByteArray(0x10)
+
+    operator fun get(addr: Int): Byte = when (addr) {
+        in 0x00..0x0F -> bgPalette[addr]
+        else /*in 0x10..0x1F*/ -> spritePalette[addr]
+    }
+}
+
+class Sprites {
     //  Holds 8 sprites for the current scanline
-    private val sprites = Array(size = 8, init = {Sprite()})
+    private val sprites = Array(size = 8, init = { Sprite() })
 
     fun decrementCounters() = sprites.forEach { it.counter.dec() }
     fun getActiveSprites() = sprites.filter { it.isActive() }
