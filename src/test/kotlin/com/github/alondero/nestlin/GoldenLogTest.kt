@@ -32,7 +32,7 @@ class GoldenLogTest {
         val golden = Files.readAllLines(Paths.get("src/test/resources/nestest.log"))
         val log = nestlinOut.toString().split(System.getProperty("line.separator"))
 
-        for (line in 1..log.size-1) {
+        (1..log.size-1).forEach { line ->
             if (log[line].length > 0) {
 
                 val goldenTokens = split(golden[line - 1])

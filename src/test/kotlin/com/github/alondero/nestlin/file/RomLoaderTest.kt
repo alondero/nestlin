@@ -16,18 +16,17 @@ class RomLoaderTest {
 
     @Test
     fun loads7zRom() {
-        val loadedFile = RomLoader().load(Paths.get("testroms/nestest.7z"))
-        for ((idx, value) in loadedFile.withIndex()) {
+        for ((idx, value) in load("testroms/nestest.7z").withIndex()) {
             assertThat(value, equalTo(expectedData[idx]))
         }
     }
 
     @Test
     fun loadsNesRom() {
-        val loadedFile = RomLoader().load(Paths.get("testroms/nestest.nes"))
-        for ((idx, value) in loadedFile.withIndex()) {
+        for ((idx, value) in load("testroms/nestest.nes").withIndex()) {
             assertThat(value, equalTo(expectedData[idx]))
         }
     }
 
+    private fun load(romFile: String) = RomLoader().load(Paths.get(romFile))
 }

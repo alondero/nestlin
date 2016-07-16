@@ -7,10 +7,10 @@ import org.junit.Test
 
 class OpcodeCMPTest {
 
-    val cpu = Cpu()
+    val cpu = Cpu(Memory())
 
     init {
-        cpu.apply {
+        with(cpu) {
             reset()
             //  Set up for a CMP to be the next instruction
             registers.programCounter = 0x0000.toSignedShort()
@@ -20,45 +20,43 @@ class OpcodeCMPTest {
 
     @Test
     fun compareWhereAccumulatorGreater() {
-        //  Set up the comparator byte to be lower than the accumulator
-        cpu.memory[0x0001] = -25
-        cpu.registers.accumulator = 57
+        with(cpu) {
+            //  Set up the comparator byte to be lower than the accumulator
+            memory[0x0001] = -25
+            registers.accumulator = 57
+            tick()
 
-        cpu.tick()
-
-        cpu.processorStatus.apply {
-            assertThat(negative, equalTo(false))
-            assertThat(carry, equalTo(true))
-            assertThat(zero, equalTo(false))
+            with(processorStatus) {
+                assertThat(negative, equalTo(false))
+                assertThat(carry, equalTo(false))
+                assertThat(zero, equalTo(false))
+            }
         }
-
-        println(cpu.processorStatus.asByte().toHexString())
     }
 
     @Test
     fun compareWhereAccumulatorLessThan() {
-        //  Set up the comparator byte to be higher than the accumulator
-        cpu.memory[0x0001] = 0
-        cpu.registers.accumulator = 0x80.toSignedByte()
+        with(cpu) {
+            //  Set up the comparator byte to be higher than the accumulator
+            memory[0x0001] = 0
+            registers.accumulator = 0x80.toSignedByte()
+            tick()
 
-        cpu.tick()
-
-        cpu.processorStatus.apply {
-            assertThat(negative, equalTo(true))
-            assertThat(carry, equalTo(true))
-            assertThat(zero, equalTo(false))
+            with(processorStatus) {
+                assertThat(negative, equalTo(true))
+                assertThat(carry, equalTo(true))
+                assertThat(zero, equalTo(false))
+            }
         }
-
-        println(cpu.processorStatus.asByte().toHexString())
     }
 
 }
 
 class OpcodePLATest() {
-    val cpu = Cpu()
+    val cpu = Cpu(Memory())
 
     init {
-        cpu.apply {
+        with(cpu) {
             reset()
             //  Set up for a CMP to be the next instruction
             registers.programCounter = 0x0000.toSignedShort()
@@ -68,36 +66,50 @@ class OpcodePLATest() {
 
     @Test
     fun pullingAValueFromStackSetsStatus() {
-        cpu.memory[0x0101] = 0xED.toSignedByte()
-        cpu.registers.stackPointer = 0x00.toSignedByte()
+        with(cpu) {
+            memory[0x0101] = 0xED.toSignedByte()
+            registers.stackPointer = 0x00.toSignedByte()
+            tick()
 
-        cpu.tick()
-        assertThat(cpu.registers.accumulator, equalTo(0xED.toSignedByte()))
-        assertThat(cpu.registers.stackPointer, equalTo(1.toSignedByte()))
-        assertThat(cpu.processorStatus.zero, equalTo(false))
-        assertThat(cpu.processorStatus.negative, equalTo(true))
+            with(registers) {
+                assertThat(accumulator, equalTo(0xED.toSignedByte()))
+                assertThat(stackPointer, equalTo(1.toSignedByte()))
+            }
+
+            with(processorStatus) {
+                assertThat(zero, equalTo(false))
+                assertThat(negative, equalTo(true))
+            }
+        }
     }
 
 
 
     @Test
     fun pullingAPositiveValueFromStackUnsetsNegativeFlag() {
-        cpu.memory[0x017F] = 0x68.toSignedByte()
-        cpu.registers.stackPointer = 0x7E.toSignedByte()
+        with(cpu) {
+            memory[0x017F] = 0x68.toSignedByte()
+            registers.stackPointer = 0x7E.toSignedByte()
+            tick()
 
-        cpu.tick()
-        assertThat(cpu.registers.accumulator, equalTo(0x39.toSignedByte()))
-        assertThat(cpu.registers.stackPointer, equalTo(0x7F.toSignedByte()))
-        assertThat(cpu.processorStatus.zero, equalTo(false))
-        assertThat(cpu.processorStatus.negative, equalTo(false))
+            with(registers) {
+                assertThat(accumulator, equalTo(0x39.toSignedByte()))
+                assertThat(stackPointer, equalTo(0x7F.toSignedByte()))
+            }
+
+            with(processorStatus) {
+                assertThat(zero, equalTo(false))
+                assertThat(negative, equalTo(false))
+            }
+        }
     }
 }
 
 class OpcodeJSRTest() {
-    val cpu = Cpu()
+    val cpu = Cpu(Memory())
 
     init {
-        cpu.apply {
+        with(cpu) {
             reset()
             //  Set up for a JSR to be the next instruction
             registers.programCounter = 0xCE37.toSignedShort()
@@ -108,11 +120,12 @@ class OpcodeJSRTest() {
 
     @Test
     fun setsCorrectValuesInMemoryOnJSR() {
-        cpu.tick()
+        with (cpu) {
+            tick()
 
-        // 0xCE39
-
-        assertThat(cpu.memory[0x180], equalTo(0xCE.toSignedByte()))
-        assertThat(cpu.memory[0x17F], equalTo(0x39.toSignedByte()))
+            // 0xCE39
+            assertThat(memory[0x180], equalTo(0xCE.toSignedByte()))
+            assertThat(memory[0x17F], equalTo(0x39.toSignedByte()))
+        }
     }
 }

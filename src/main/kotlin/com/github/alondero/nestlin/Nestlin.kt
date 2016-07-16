@@ -39,6 +39,10 @@ class Nestlin {
         ppu.addFrameListener(listener)
     }
 
+    fun enableLogging() {
+        cpu.enableLogging()
+    }
+
     fun powerReset() {
         cpu.reset()
     }

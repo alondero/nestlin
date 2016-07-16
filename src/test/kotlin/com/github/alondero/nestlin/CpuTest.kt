@@ -15,7 +15,7 @@ class CpuTest {
     fun startsNesTestRomInAutomationByProgramCounter0xC000() {
         val path = Paths.get("testroms/nestest.nes")
 
-        val cpu = Cpu().apply {
+        val cpu = Cpu(Memory()).apply {
             this.currentGame = GamePak(Files.readAllBytes(path))
             this.reset()
         }
