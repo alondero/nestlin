@@ -12,6 +12,7 @@ const val RESOLUTION_HEIGHT = 224
 const val NTSC_SCANLINES = 262
 
 const val IDLE_SCANLINE = 0
+const val PRE_RENDER_SCANLINE = 261
 const val POST_RENDER_SCANLINE = 240
 
 class Ppu(
@@ -20,29 +21,43 @@ class Ppu(
     private var cycle = 0
     private var scanline = 0
 
-    private val internalMemory = PpuMemory()
-    private val objectAttributeMemory = ObjectAttributeMemory()
+    // 2 16-Bit registers containing bitmap data for two tiles
+    // Every 8 cycles, the bitmap data for the next tile is loaded into the upper 8 bits of this shift register.
+    // Meanwhile, the pixel to render is fetched from one of the lower 8 bits.
+    var youngTile = 0xFFFF.toSignedShort()
+    var nextTile = 0xFFFF.toSignedShort()
+
+    // 2 8-bit shift registers - These contain the palette attributes for the lower 8 pixels of the 16-bit shift register.
+    // Every 8 cycles, the latch is loaded with the palette attribute for the next tile.
+    val paletteRegisters = 0
+    // These registers are fed by a latch which contains the palette attribute for the next tile.
+    val paletteLatch = 0
 
     private var listener: FrameListener? = null
     private var vBlank = false
+    private val rendering = true
     private var frame = Frame()
 
     private val rand = Random()
 
     fun tick() {
 //       println("Rendering ($cycle, $scanline)")
-        when (cycle) {// Idle
-            in 1..256 -> fetchData()
-            in 257..320 -> fetchSpriteTile()
-            in 321..336 -> fetchNextScanLineTiles()
-            341 -> endLine()
+        if (rendering) {
+            //  Fetch tile data
+            when (cycle) {// Idle
+                in 1..256 -> fetchData()
+                in 257..320 -> fetchSpriteTile()
+                in 321..336 -> fetchData()
+                341 -> endLine()
+            }
+            checkAndSetVerticalAndHorizontalData()
+
         }
 
         if (cycle in 241..260) {
             vBlank = true // Should be set at the second 'tick'?
             // VBlank NMI also occurs?
         }
-
 
         if (cycle % 8 == 0) {
             //  Bitmap data for the next tile is loaded into the upper 8 bits
@@ -66,6 +81,24 @@ class Ppu(
         cycle++
     }
 
+    private fun checkAndSetVerticalAndHorizontalData() {
+        when (cycle) {
+            256 -> memory.ppuAddressedMemory.vRamAddress.incrementVerticalPosition()
+            257 -> with(memory.ppuAddressedMemory) {
+                vRamAddress.coarseXScroll = tempVRamAddress.coarseXScroll
+                vRamAddress.horizontalNameTable = tempVRamAddress.horizontalNameTable
+            }
+        }
+
+        if (scanline == PRE_RENDER_SCANLINE && cycle in 280..304) {
+            with (memory.ppuAddressedMemory) {
+                vRamAddress.coarseYScroll = tempVRamAddress.coarseYScroll
+                vRamAddress.fineYScroll = tempVRamAddress.fineYScroll
+                vRamAddress.verticalNameTable = tempVRamAddress.verticalNameTable
+            }
+        }
+    }
+
     private fun endLine() {
         when (scanline) {
             NTSC_SCANLINES - 1 -> endFrame()
@@ -80,15 +113,6 @@ class Ppu(
         //  What to do here?
         scanline = 0
         vBlank = false
-    }
-
-    private fun fetchNextScanLineTiles() {
-//        This is where the first two tiles for the next scanline are fetched, and loaded into the shift registers. Again, each memory access takes 2 PPU cycles to complete, and 4 are performed for the two tiles:
-//
-//        Nametable byte
-//                Attribute table byte
-//        Tile bitmap low
-//        Tile bitmap high (+8 bytes from tile bitmap low)
     }
 
     private fun fetchSpriteTile() {
@@ -107,7 +131,10 @@ class Ppu(
 
     private fun fetchData() {
         when (cycle % 8) {
-            0 -> memory.ppuRegisters.controller.baseNametableAddr()
+            0 -> {
+                memory.ppuAddressedMemory.vRamAddress.incrementHorizontalPosition()
+                memory.ppuAddressedMemory[memory.ppuAddressedMemory.controller.baseNametableAddr() + memory.ppuAddressedMemory.address]
+            }
             2 -> return
             4 -> return
             6 -> return
@@ -138,45 +165,11 @@ class Ppu(
     }
 }
 
+
 class ObjectAttributeMemory {
     private val memory = ByteArray(0x100)
 }
 
-class PpuMemory {
-
-    private val patternTable0 = ByteArray(0x1000)
-    private val patternTable1 = ByteArray(0x1000)
-    private val nameTable0 = ByteArray(0x400)
-    private val nameTable1 = ByteArray(0x400)
-    private val nameTable2 = ByteArray(0x400)
-    private val nameTable3 = ByteArray(0x400)
-    private val paletteRam = PaletteRam()
-
-
-//    private val backgroundNametables = Background()
-//    private val spriteNametables = Sprites()
-
-    operator fun get(addr: Int): Byte = when (addr) {
-        in 0x0000..0x0999 -> patternTable0[addr % 0x1000]
-        in 0x1000..0x1999 -> patternTable1[addr % 0x1000]
-        in 0x2000..0x23FF -> nameTable0[addr % 0x400]
-        in 0x2400..0x27FF -> nameTable1[addr % 0x400]
-        in 0x2800..0x2BFF -> nameTable2[addr % 0x400]
-        in 0x2C00..0x2FFF -> nameTable3[addr % 0x400]
-        in 0x3000..0x3EFF -> this[addr - 0x1000] // Mirror of 0x2000 - 0x2EFF
-        else /*in 0x3F00..0x3FFF*/ -> paletteRam[addr % 0x020]
-    }
-}
-
-class PaletteRam {
-    private val bgPalette = ByteArray(0x10)
-    private val spritePalette = ByteArray(0x10)
-
-    operator fun get(addr: Int): Byte = when (addr) {
-        in 0x00..0x0F -> bgPalette[addr]
-        else /*in 0x10..0x1F*/ -> spritePalette[addr]
-    }
-}
 
 class Sprites {
     //  Holds 8 sprites for the current scanline
@@ -198,38 +191,6 @@ data class Sprite(
     fun shiftRegisters() {
         bitmapDataA = bitmapDataA.shiftRight()
         bitmapDataB = bitmapDataB.shiftRight()
-    }
-}
-
-class Background {
-    val vRamAddress = 0
-    val tempVRamAddress = 0
-    val fineXScroll = 0
-    val firstWriteToggle = 0
-    val secondWriteToggle = 0
-
-    // 2 16-Bit registers containing bitmap data for two tiles
-    // Every 8 cycles, the bitmap data for the next tile is loaded into the upper 8 bits of this shift register.
-    // Meanwhile, the pixel to render is fetched from one of the lower 8 bits.
-    var youngTile = 0xFFFF.toSignedShort()
-    var nextTile = 0xFFFF.toSignedShort()
-
-    // 2 8-bit shift registers - These contain the palette attributes for the lower 8 pixels of the 16-bit shift register.
-    // Every 8 cycles, the latch is loaded with the palette attribute for the next tile.
-    val paletteRegisters = 0
-    // These registers are fed by a latch which contains the palette attribute for the next tile.
-    val paletteLatch = 0
-
-    fun fetch() {
-        //  Fetch bit from the 4 shift registers
-        //  Exactly what bit fetched depends on fineXScroll
-        //  Shift registers shifted (right/left?) once
-    }
-
-    fun nextTile() {
-        //  TODO: Push nextTile to somewhere...
-        nextTile = youngTile
-        //  TODO: Load youngTile from somewhere...
     }
 }
 
