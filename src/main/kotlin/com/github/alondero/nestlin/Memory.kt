@@ -1,11 +1,11 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.gamepak.GamePak
-import com.github.alondero.nestlin.ppu.PpuRegisters
+import com.github.alondero.nestlin.ppu.PpuAddressedMemory
 
 class Memory {
     private val internalRam: ByteArray = ByteArray(0x800)
-    val ppuRegisters: PpuRegisters = PpuRegisters()
+    val ppuAddressedMemory: PpuAddressedMemory = PpuAddressedMemory()
     private val apuIoRegisters: ByteArray = ByteArray(0x20)
     private val cartridgeSpace: ByteArray = ByteArray(0xBFE0)
 
@@ -22,7 +22,7 @@ class Memory {
     operator fun set(address: Int, value: Byte) {
         when (address) {
             in 0x0000..0x1FFF -> internalRam[address%0x800] = value
-            in 0x2000..0x3FFF -> ppuRegisters[address%8] = value
+            in 0x2000..0x3FFF -> ppuAddressedMemory[address%8] = value
             in 0x4000..0x401F -> apuIoRegisters[address-0x4000] = value
             else -> cartridgeSpace[address-0x4020] = value
         }
@@ -30,7 +30,7 @@ class Memory {
 
     operator fun get(address: Int) = when (address) {
         in 0x0000..0x1FFF -> internalRam[address % 0x800]
-        in 0x2000..0x3FFF -> ppuRegisters[address % 8]
+        in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
         in 0x4000..0x401F -> apuIoRegisters[address - 0x4000]
         else /* in 0x4020..0xFFFF */ -> cartridgeSpace[address - 0x4020]
     }
@@ -45,6 +45,6 @@ class Memory {
     fun clear() {
         internalRam.fill(0xFF.toSignedByte())
         apuIoRegisters.fill(0) // TODO: Do something better with APU Registers (when implementing audio and input)
-        ppuRegisters.reset()
+        ppuAddressedMemory.reset()
     }
 }
