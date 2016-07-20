@@ -28,5 +28,9 @@ fun Byte.toHexString() = "%02X".format(this.toUnsignedInt()).toUpperCase()
 fun Int.toHexString() = "%02X".format(this).toUpperCase()
 
 fun Byte.isBitSet(i: Int) = (this.toUnsignedInt() shr i and 1) == 1
+fun Byte.toggleBit(i: Int): Byte = (this.toUnsignedInt() xor (1 shl i)).toSignedByte()
+fun Byte.setBit(i: Int): Byte = (this.toUnsignedInt() or (1 shl i)).toSignedByte()
+fun Byte.clearBit(i: Int): Byte = (this.toUnsignedInt() and ((1 shl i).inv())).toSignedByte()
+fun Byte.letBit(i: Int, on: Boolean): Byte {if (on) {return this.setBit(i)} else return this.clearBit(i)}
 
 fun Byte.shiftRight() = ((this.toUnsignedInt() shr 1) and 0x7F).toSignedByte()

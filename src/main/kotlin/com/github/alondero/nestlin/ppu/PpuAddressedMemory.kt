@@ -1,13 +1,11 @@
 package com.github.alondero.nestlin.ppu
 
-import com.github.alondero.nestlin.isBitSet
-import com.github.alondero.nestlin.toSignedByte
-import com.github.alondero.nestlin.toUnsignedInt
+import com.github.alondero.nestlin.*
 
 class PpuAddressedMemory {
-    var controller: Control = Control()    // $2000
-    var mask: Mask = Mask()                // $2001
-    var status: Byte = 0                   // $2002
+    val controller = Control()    // $2000
+    val mask = Mask()                // $2001
+    val status = Status()                   // $2002
     var oamAddress: Byte = 0               // $2003
     var oamData: Byte = 0                  // $2004
     var scroll: Byte = 0                   // $2005
@@ -23,10 +21,13 @@ class PpuAddressedMemory {
     val tempVRamAddress = VramAddress() // t
     var fineXScroll = 0 // x
 
+    var nmiOccurred = false
+    var nmiOutput = false
+
     fun reset() {
         controller.reset()
         mask.reset()
-        status = 0
+        status.reset()
         oamAddress = 0
         oamData = 0
         scroll = 0
@@ -41,7 +42,10 @@ class PpuAddressedMemory {
             1 -> mask.register
             2 -> {
                 writeToggle = false
-                status
+                val value = status.register.letBit(7, nmiOccurred)
+                status.clearVBlank()
+                nmiOccurred = false
+                value
             }
             3 -> oamAddress
             4 -> oamData
@@ -62,7 +66,7 @@ class PpuAddressedMemory {
                 tempVRamAddress.updateNameTable(value.toUnsignedInt() and 0x03)
             }
             1 -> mask.register = value
-            2 -> status = value
+            2 -> status.register = value
             3 -> oamAddress = value
             4 -> oamData = value
             5 -> {
@@ -86,7 +90,7 @@ class PpuAddressedMemory {
             }
             else /*7*/ -> {
                 vRamAddress += controller.vramAddressIncrement()
-                data = value
+                data = value.letBit(7, nmiOutput)
             }
         }
     }
@@ -218,6 +222,44 @@ class Mask {
     fun emphasizeRed() = register.isBitSet(5)
     fun emphasizeGreen() = register.isBitSet(6)
     fun emphasizeBlue() = register.isBitSet(7)
+}
+
+class Status {
+    var register: Byte = 0
+
+    /**
+    7  bit  0
+    ---- ----
+    VSO. ....
+    |||| ||||
+    |||+-++++- Least significant bits previously written into a PPU register
+    |||        (due to register not being updated for this address)
+    ||+------- Sprite overflow. The intent was for this flag to be set
+    ||         whenever more than eight sprites appear on a scanline, but a
+    ||         hardware bug causes the actual behavior to be more complicated
+    ||         and generate false positives as well as false negatives; see
+    ||         PPU sprite evaluation. This flag is set during sprite
+    ||         evaluation and cleared at dot 1 (the second dot) of the
+    ||         pre-render line.
+    |+-------- Sprite 0 Hit.  Set when a nonzero pixel of sprite 0 overlaps
+    |          a nonzero background pixel; cleared at dot 1 of the pre-render
+    |          line.  Used for raster timing.
+    +--------- Vertical blank has started (0: not in vblank; 1: in vblank).
+    Set at dot 1 of line 241 (the line *after* the post-render
+    line); cleared after reading $2002 and at dot 1 of the
+    pre-render line.
+     */
+
+    fun spriteOverflow() = register.isBitSet(5)
+    fun sprite0Hit() = register.isBitSet(6)
+    fun vBlankStarted() = register.isBitSet(7)
+
+    fun reset() { register = 0 }
+
+    fun clearOverflow() { register = register.clearBit(5) }
+    fun clearVBlank() { register = register.clearBit(7) }
+
+    fun clearFlags() {reset()}
 }
 
 class PpuInternalMemory {
