@@ -15,6 +15,7 @@ import tornadofx.App
 import java.nio.file.Paths
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.concurrent.thread
 
 fun main(args: Array<String>) {
     if (args.size == 0) {
@@ -45,19 +46,6 @@ class NestlinApplication : FrameListener, App() {
             show()
         }
 
-        executor.submit {
-            with(nestlin) {
-                if (!parameters.named["debug"].isNullOrEmpty()) {
-                    enableLogging()
-                }
-                load(Paths.get(parameters.unnamed[0]))
-                powerReset()
-                start()
-            }
-        }
-
-        running = true
-
         object: AnimationTimer() {
             override fun handle(now: Long) {
                 val pixelWriter = canvas.graphicsContext2D.pixelWriter
@@ -67,6 +55,18 @@ class NestlinApplication : FrameListener, App() {
             }
 
         }.start()
+
+        thread() {
+            with(nestlin) {
+                if (!parameters.named["debug"].isNullOrEmpty()) {
+                    enableLogging()
+                }
+                load(Paths.get(parameters.unnamed[0]))
+                powerReset()
+                start()
+            }
+        }
+        running = true
     }
 
     override fun stop() {

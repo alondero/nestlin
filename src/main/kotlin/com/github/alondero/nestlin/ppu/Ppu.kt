@@ -1,9 +1,6 @@
 package com.github.alondero.nestlin.ppu
 
-import com.github.alondero.nestlin.Memory
-import com.github.alondero.nestlin.shiftRight
-import com.github.alondero.nestlin.toSignedByte
-import com.github.alondero.nestlin.toSignedShort
+import com.github.alondero.nestlin.*
 import com.github.alondero.nestlin.ui.FrameListener
 import java.util.*
 
@@ -35,19 +32,26 @@ class Ppu(
 
     private var listener: FrameListener? = null
     private var vBlank = false
-    private val rendering = true
     private var frame = Frame()
 
     private val rand = Random()
 
+    private var lastNametableByte: Byte = 0
+    private var lastAttributeTableByte: Byte = 0
+
     fun tick() {
 //       println("Rendering ($cycle, $scanline)")
-        if (rendering) {
+        if (cycle == 341) {
+            endLine()
+            return
+        }
+
+        if (rendering()) {
             //  Fetch tile data
             when (cycle) {// Idle
                 in 1..256 -> fetchData()
                 in 257..320 -> fetchSpriteTile()
-                in 321..336 -> fetchData()
+                in 321..336 -> fetchData() // Ready for next scanline
                 341 -> endLine()
             }
             checkAndSetVerticalAndHorizontalData()
@@ -56,8 +60,10 @@ class Ppu(
 
         if (cycle in 241..260) {
             vBlank = true // Should be set at the second 'tick'?
-            // VBlank NMI also occurs?
+            memory.ppuAddressedMemory.nmiOccurred = true
         }
+
+        if (scanline == PRE_RENDER_SCANLINE && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
 
         if (cycle % 8 == 0) {
             //  Bitmap data for the next tile is loaded into the upper 8 bits
@@ -80,6 +86,8 @@ class Ppu(
 
         cycle++
     }
+
+    private fun rendering() = memory.ppuAddressedMemory.mask.showBackground() && memory.ppuAddressedMemory.mask.showSprites()
 
     private fun checkAndSetVerticalAndHorizontalData() {
         when (cycle) {
@@ -131,13 +139,28 @@ class Ppu(
 
     private fun fetchData() {
         when (cycle % 8) {
-            0 -> {
-                memory.ppuAddressedMemory.vRamAddress.incrementHorizontalPosition()
-                memory.ppuAddressedMemory[memory.ppuAddressedMemory.controller.baseNametableAddr() + memory.ppuAddressedMemory.address]
+            0 -> with (memory.ppuAddressedMemory){
+                vRamAddress.incrementHorizontalPosition()
+                lastNametableByte = ppuInternalMemory[controller.baseNametableAddr() or (address.toUnsignedInt() and 0x0FFF)]
             }
-            2 -> return
-            4 -> return
-            6 -> return
+            2 -> with(memory.ppuAddressedMemory){
+                /**
+                 * v := ppu.v
+                address := 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
+                shift := ((v >> 4) & 4) | (v & 2)
+                ppu.attributeTableByte = ((ppu.Read(address) >> shift) & 3) << 2
+                 */
+
+                //  Don't understand this logic... had to inspect other source code to work out what to do...
+                val address = controller.baseNametableAddr() or (vRamAddress.coarseXScroll and 0b11100) or (vRamAddress.coarseYScroll and 0b11100)
+                lastAttributeTableByte = ppuInternalMemory[controller.baseNametableAddr() + 0x3C0]
+            }
+            4 -> with(memory.ppuAddressedMemory) {
+                //  Fetch Low Tile Byte
+            }
+            6 -> with(memory.ppuAddressedMemory) {
+                //  Fetch High Tile Byte
+            }
         }
 
         //  The data for each tile is fetched during this phase. Each memory access takes 2 PPU cycles to complete, and 4 must be performed per tile:
