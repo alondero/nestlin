@@ -52,7 +52,6 @@ class Ppu(
                 in 1..256 -> fetchData()
                 in 257..320 -> fetchSpriteTile()
                 in 321..336 -> fetchData() // Ready for next scanline
-                341 -> endLine()
             }
             checkAndSetVerticalAndHorizontalData()
 

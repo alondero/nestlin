@@ -12,7 +12,7 @@ class PpuAddressedMemory {
     var address: Byte = 0                  // $2006
     var data: Byte = 0                     // $2007
 
-    private var writeToggle: Boolean = false
+    private var writeToggle = false
 
     val ppuInternalMemory = PpuInternalMemory()
     val objectAttributeMemory = ObjectAttributeMemory()

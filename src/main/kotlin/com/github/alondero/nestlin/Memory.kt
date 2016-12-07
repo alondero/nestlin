@@ -4,10 +4,10 @@ import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
 
 class Memory {
-    private val internalRam: ByteArray = ByteArray(0x800)
-    val ppuAddressedMemory: PpuAddressedMemory = PpuAddressedMemory()
-    private val apuIoRegisters: ByteArray = ByteArray(0x20)
-    private val cartridgeSpace: ByteArray = ByteArray(0xBFE0)
+    private val internalRam = ByteArray(0x800)
+    val ppuAddressedMemory = PpuAddressedMemory()
+    private val apuIoRegisters = ByteArray(0x20)
+    private val cartridgeSpace = ByteArray(0xBFE0)
 
     fun readCartridge(data: GamePak) {
         for ((idx, value) in data.programRom.copyOfRange(0, 16384).withIndex()) {

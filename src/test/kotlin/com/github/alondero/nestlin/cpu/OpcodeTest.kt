@@ -84,27 +84,6 @@ class OpcodePLATest() {
             }
         }
     }
-
-
-
-    @Test
-    fun pullingAPositiveValueFromStackUnsetsNegativeFlag() {
-        with(cpu) {
-            memory[0x017F] = 0x68.toSignedByte()
-            registers.stackPointer = 0x7E.toSignedByte()
-            tick()
-
-            with(registers) {
-                assertThat(accumulator, equalTo(0x39.toSignedByte()))
-                assertThat(stackPointer, equalTo(0x7F.toSignedByte()))
-            }
-
-            with(processorStatus) {
-                assertThat(zero, equalTo(false))
-                assertThat(negative, equalTo(false))
-            }
-        }
-    }
 }
 
 class OpcodeJSRTest() {

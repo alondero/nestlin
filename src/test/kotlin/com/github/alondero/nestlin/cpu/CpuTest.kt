@@ -24,18 +24,4 @@ class CpuTest {
         assertThat(cpu.registers.programCounter, equalTo(0xC000.toSignedShort()))
     }
 
-    @Test
-    fun generatesProcessorStatusByteCorrectly() {
-        val p = ProcessorStatus(
-                carry = true,
-                zero = false,
-                interruptDisable = true,
-                decimalMode = false,
-                breakCommand = false,
-                overflow = false,
-                negative = true
-        )
-
-        assertThat(p.asByte(), equalTo(0b10000101.toSignedByte()))
-    }
 }
