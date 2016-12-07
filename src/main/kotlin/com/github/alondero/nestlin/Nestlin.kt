@@ -11,7 +11,7 @@ class Nestlin {
 
     private var cpu: Cpu
     private var ppu: Ppu
-    private val apu: Apu = Apu()
+    private val apu = Apu()
     private var running = false
 
     init {

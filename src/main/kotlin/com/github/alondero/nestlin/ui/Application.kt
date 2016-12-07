@@ -13,7 +13,6 @@ import javafx.scene.layout.StackPane
 import javafx.stage.Stage
 import tornadofx.App
 import java.nio.file.Paths
-import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
@@ -30,9 +29,9 @@ class NestlinApplication : FrameListener, App() {
     private lateinit var stage: Stage
     private var canvas: Canvas
     private var nestlin: Nestlin
-    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val executor = Executors.newSingleThreadExecutor()
     private var running = false
-    private var nextFrame: ByteArray = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
+    private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
 
     init {
         nestlin = Nestlin().apply { addFrameListener(this@NestlinApplication) }
