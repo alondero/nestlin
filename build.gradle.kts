@@ -1,35 +1,34 @@
 buildscript {
-
     repositories {
         mavenCentral()
-        jcenter()
-//        maven {setUrl("https://repo.gradle.org/gradle/repo")}
-//        maven {setUrl("http://dl.bintray.com/kotlin/kotlin-eap-1.1")}
+        gradleScriptKotlin()
+        maven { setUrl("http://dl.bintray.com/kotlin/kotlin-eap-1.1") }
     }
 
     dependencies {
-        classpath(kotlinModule("gradle-plugin"))
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.1.0-beta-22")
     }
 }
 
+repositories {
+    mavenCentral()
+    gradleScriptKotlin()
+    maven { setUrl("http://dl.bintray.com/kotlin/kotlin-eap-1.1") }
+}
+
 apply {
-    plugin("idea")
     plugin("kotlin")
 }
 
-version = "1.0.0-SNAPSHOT"
-
-repositories {
-    mavenCentral()
-}
-
 dependencies {
-    compile(kotlinModule("stdlib"))
+    compile("org.jetbrains.kotlin:kotlin-stdlib:1.1.0-beta-22")
     compile("org.apache.commons:commons-compress:+")
     compile("org.tukaani:xz:+")
-    compile("no.tornado:tornadofx:+")
+    compile("no.tornado:tornadofx:+") {
+        exclude("org.jetbrains.kotlin:kotlin-stdlib")
+        exclude("org.jetbrains.kotlin:kotlin-reflect")
+    }
 
     testCompile("junit:junit:+")
     testCompile("com.natpryce:hamkrest:+")
 }
-
