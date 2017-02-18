@@ -18,6 +18,7 @@ class GoldenLogTest {
             Nestlin().apply {
                 this.load(Paths.get("testroms/nestest.nes"))
                 this.powerReset()
+                this.enableLogging()
                 this.start()
             }
         } catch (e: UnhandledOpcodeException) {
@@ -26,7 +27,7 @@ class GoldenLogTest {
 
         System.setOut(prevOut)
 
-        println(nestlinOut.toString())
+        println("START\n${nestlinOut.toString()}\nEND")
 
         //  Trawl through output comparing line by line with the golden log
         val golden = Files.readAllLines(Paths.get("src/test/resources/nestest.log"))

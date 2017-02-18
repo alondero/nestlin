@@ -13,30 +13,22 @@ import javafx.scene.layout.StackPane
 import javafx.stage.Stage
 import tornadofx.App
 import java.nio.file.Paths
-import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 fun main(args: Array<String>) {
-    if (args.size == 0) {
-        println("Please provide a rom file as an argument")
-        return
+    when {
+        args.size == 0 -> throw IllegalStateException("Please provide a rom file as an argument")
+        else -> Application.launch(NestlinApplication::class.java, *args)
     }
 
-    Application.launch(NestlinApplication::class.java, *args)
 }
 
 class NestlinApplication : FrameListener, App() {
     private lateinit var stage: Stage
-    private var canvas: Canvas
-    private var nestlin: Nestlin
-    private val executor = Executors.newSingleThreadExecutor()
+    private var canvas = Canvas(RESOLUTION_HEIGHT.toDouble(), RESOLUTION_WIDTH.toDouble())
+    private var nestlin = Nestlin().also { it.addFrameListener(this) }
     private var running = false
     private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
-
-    init {
-        nestlin = Nestlin().apply { addFrameListener(this@NestlinApplication) }
-        canvas = Canvas(RESOLUTION_HEIGHT.toDouble(), RESOLUTION_WIDTH.toDouble())
-    }
 
     override fun start(stage: Stage) {
         this.stage = stage.apply {
@@ -55,7 +47,7 @@ class NestlinApplication : FrameListener, App() {
 
         }.start()
 
-        thread() {
+        thread {
             with(nestlin) {
                 if (!parameters.named["debug"].isNullOrEmpty()) {
                     enableLogging()
@@ -70,13 +62,12 @@ class NestlinApplication : FrameListener, App() {
 
     override fun stop() {
         nestlin.stop()
-        executor.shutdown()
         running = false
     }
 
     override fun frameUpdated(frame: Frame) {
-        for ((y, scanline) in frame.scanlines.withIndex()) {
-            for ((x, pixel) in scanline.withIndex()) {
+        frame.scanlines.withIndex().forEach { (y, scanline) ->
+            scanline.withIndex().forEach { (x, pixel) ->
                 val r = (pixel shr 16).toByte()
                 val g = (pixel shr 8).toByte()
                 val b = pixel.toByte()

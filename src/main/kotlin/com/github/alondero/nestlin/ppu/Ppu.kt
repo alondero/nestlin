@@ -12,9 +12,8 @@ const val IDLE_SCANLINE = 0
 const val PRE_RENDER_SCANLINE = 261
 const val POST_RENDER_SCANLINE = 240
 
-class Ppu(
-        var memory: Memory
-) {
+class Ppu(var memory: Memory) {
+
     private var cycle = 0
     private var scanline = 0
 
@@ -86,7 +85,7 @@ class Ppu(
         cycle++
     }
 
-    private fun rendering() = memory.ppuAddressedMemory.mask.showBackground() && memory.ppuAddressedMemory.mask.showSprites()
+    private fun rendering() = with (memory.ppuAddressedMemory.mask) { showBackground() && showSprites() }
 
     private fun checkAndSetVerticalAndHorizontalData() {
         when (cycle) {
@@ -198,7 +197,7 @@ class Sprites {
     private val sprites = Array(size = 8, init = { Sprite() })
 
     fun decrementCounters() = sprites.forEach { it.counter.dec() }
-    fun getActiveSprites() = sprites.filter { it.isActive() }
+    fun getActiveSprites() = sprites.filter(Sprite::isActive)
 }
 
 data class Sprite(
