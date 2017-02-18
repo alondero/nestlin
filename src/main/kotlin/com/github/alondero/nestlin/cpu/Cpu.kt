@@ -4,38 +4,27 @@ import com.github.alondero.nestlin.*
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.log.Logger
 
-private const val TEST_ROM_CRC = 0x9e179d92
-
-class Cpu(
-        var memory: Memory,
-        var opcodes: Opcodes = Opcodes()
-) {
+class Cpu(var memory: Memory)
+{
     var currentGame: GamePak? = null
     var interrupt: Interrupt? = null
-    var workCyclesLeft: Int = 0
-    var pageBoundaryFlag: Boolean = false
-    var registers: Registers = Registers()
-    var processorStatus: ProcessorStatus = ProcessorStatus()
+    var workCyclesLeft = 0
+    var pageBoundaryFlag = false
+    var registers = Registers()
+    var processorStatus = ProcessorStatus()
     var idle = false
     private var logger: Logger? = null
+    private val opcodes = Opcodes()
 
     fun reset() {
         memory.clear()
-        var isTestRom = false
-        currentGame?.let {
-            memory.readCartridge(it)
-            isTestRom = it.crc.value == TEST_ROM_CRC
-        }
-
         processorStatus.reset()
         registers.reset()
         workCyclesLeft = 0
-
-        if (isTestRom) {
-            // Starts test rom in automation mode
-            registers.programCounter = 0xc000.toSignedShort()
-        } else {
-            registers.programCounter = resetVector()
+        currentGame?.let {
+            memory.readCartridge(it)
+            registers.initialise(memory)
+            if (it.isTestRom()) registers.activateAutomationMode()
         }
     }
 
@@ -47,33 +36,23 @@ class Cpu(
         if (readyForNextInstruction()) {
             val initialPC = registers.programCounter
             val opcodeVal = readByteAtPC().toUnsignedInt()
-            val opcode = opcodes[opcodeVal] ?: throw UnhandledOpcodeException(opcodeVal)
-
-            opcode?.apply {
-                logger?.cpuTick(initialPC, opcodeVal, this@Cpu)
-                op(this@Cpu)
-            }
+            opcodes[opcodeVal]?.also {
+                logger?.cpuTick(initialPC, opcodeVal, this)
+                it.op(this)
+            } ?: throw UnhandledOpcodeException(opcodeVal)
         }
 
         if (workCyclesLeft > 0) workCyclesLeft--
     }
 
-    fun push(value: Byte) {
-        memory[0x100 + (registers.stackPointer.toUnsignedInt())] = value
-        registers.stackPointer--
-    }
-
-    fun pop(): Byte {
-        registers.stackPointer++
-        return memory[(0x100 + registers.stackPointer.toUnsignedInt())]
-    }
+    fun push(value: Byte) { memory[0x100 + ((registers.stackPointer--).toUnsignedInt())] = value }
+    fun pop() = memory[(0x100 + (++registers.stackPointer).toUnsignedInt())]
 
     fun readByteAtPC() = memory[registers.programCounter++.toUnsignedInt()]
     fun readShortAtPC() = memory[registers.programCounter++.toUnsignedInt(), registers.programCounter++.toUnsignedInt()]
     fun hasCrossedPageBoundary(previousCounter: Short, programCounter: Short) = (previousCounter.toUnsignedInt() and 0xFF00) != (programCounter.toUnsignedInt() and 0xFF00)
 
     private fun readyForNextInstruction() = workCyclesLeft <= 0
-    private fun resetVector() = memory[0xFFFC, 0xFFFD]
 }
 
 enum class Interrupt {
@@ -95,6 +74,15 @@ data class Registers(
         indexX = 0
         indexY = 0
     }
+
+    fun initialise(memory: Memory) {
+        programCounter = memory.resetVector()
+    }
+
+    fun activateAutomationMode() {
+        programCounter = 0xc000.toSignedShort()
+    }
+
 }
 
 data class ProcessorStatus(
@@ -116,16 +104,15 @@ data class ProcessorStatus(
         negative = false
     }
 
-    fun asByte(): Byte {
-        return ((if (negative) (1 shl 7) else 0) or
-                (if (overflow) (1 shl 6) else 0) or
-                (1 shl 5) or // Special logic needed for the B flag...
-                (0 shl 4) or
-                (if (decimalMode) (1 shl 3) else 0) or
-                (if (interruptDisable) (1 shl 2) else 0) or
-                (if (zero) (1 shl 1) else 0) or
-                (if (carry) 1 else 0)).toSignedByte()
-    }
+    fun asByte() =
+        ((if (negative) (1 shl 7) else 0) or
+         (if (overflow) (1 shl 6) else 0) or
+         (1 shl 5) or // Special logic needed for the B flag...
+         (0 shl 4) or
+         (if (decimalMode) (1 shl 3) else 0) or
+         (if (interruptDisable) (1 shl 2) else 0) or
+         (if (zero) (1 shl 1) else 0) or
+         (if (carry) 1 else 0)).toSignedByte()
 
     fun toFlags(status: Byte) {
         carry = status.isBitSet(0)

@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.cpu.Cpu
-import com.github.alondero.nestlin.file.RomLoader
+import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.ppu.Ppu
 import com.github.alondero.nestlin.ui.FrameListener
@@ -11,28 +11,18 @@ class Nestlin {
 
     private var cpu: Cpu
     private var ppu: Ppu
-    private val apu = Apu()
+    private val apu: Apu
     private var running = false
 
     init {
         val memory = Memory()
         cpu = Cpu(memory)
         ppu = Ppu(memory)
+        apu = Apu()
     }
 
-    fun load(rom: Path) {
-        GamePak(validate(RomLoader().load(rom)))?.apply {
-            println("GamePak information:\n${this.toString()}\n")
-            cpu.currentGame = this
-        }
-    }
-
-    private fun validate(data: ByteArray): ByteArray {
-        if (String(data.copyOfRange(0, 4)).equals("NES\n")) {
-            throw BadHeaderException("Missing NES Token")
-        }
-
-        return data
+    fun load(romPath: Path) {
+        cpu.currentGame = romPath.load()?.let(::GamePak)
     }
 
     fun addFrameListener(listener: FrameListener) {
@@ -51,9 +41,7 @@ class Nestlin {
         running = true
 
         while (running) {
-            for (i in 1..3) {
-                ppu.tick()
-            }
+            (1..3).forEach { ppu.tick() }
             apu.tick()
             cpu.tick()
         }

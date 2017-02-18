@@ -1,3 +1,5 @@
+import org.gradle.script.lang.kotlin.*
+
 buildscript {
     repositories {
         mavenCentral()

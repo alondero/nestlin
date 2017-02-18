@@ -10,12 +10,12 @@ class Memory {
     private val cartridgeSpace = ByteArray(0xBFE0)
 
     fun readCartridge(data: GamePak) {
-        for ((idx, value) in data.programRom.copyOfRange(0, 16384).withIndex()) {
-            cartridgeSpace[0x8000+idx - 0x4020] = value
+        data.programRom.copyOfRange(0, 16384).withIndex().forEach {
+            (idx, value) -> cartridgeSpace[0x8000+idx - 0x4020] = value
         }
 
-        for ((idx, value) in data.programRom.copyOfRange(data.programRom.size - 16384, data.programRom.size).withIndex()) {
-            cartridgeSpace[0xC000+idx - 0x4020] = value
+        data.programRom.copyOfRange(data.programRom.size - 16384, data.programRom.size).withIndex().forEach {
+            (idx, value) -> cartridgeSpace[0xC000+idx - 0x4020] = value
         }
     }
 
@@ -47,4 +47,6 @@ class Memory {
         apuIoRegisters.fill(0) // TODO: Do something better with APU Registers (when implementing audio and input)
         ppuAddressedMemory.reset()
     }
+
+    fun resetVector() = this[0xFFFC, 0xFFFD]
 }
