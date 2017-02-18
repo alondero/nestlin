@@ -6,7 +6,7 @@ buildscript {
     }
 
     dependencies {
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.1.0-beta-22")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.1.0-rc-91")
     }
 }
 
@@ -21,7 +21,7 @@ apply {
 }
 
 dependencies {
-    compile("org.jetbrains.kotlin:kotlin-stdlib:1.1.0-beta-22")
+    compile("org.jetbrains.kotlin:kotlin-stdlib:1.1.0-rc-91")
     compile("org.apache.commons:commons-compress:+")
     compile("org.tukaani:xz:+")
     compile("no.tornado:tornadofx:+") {
