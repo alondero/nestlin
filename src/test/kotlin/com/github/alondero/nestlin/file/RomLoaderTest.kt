@@ -8,11 +8,7 @@ import java.nio.file.Paths
 
 class RomLoaderTest {
 
-    val expectedData: ByteArray
-
-    init {
-        expectedData = Files.readAllBytes(Paths.get("testroms/nestest.nes"))
-    }
+    val expectedData = Files.readAllBytes(Paths.get("testroms/nestest.nes"))!!
 
     @Test
     fun loads7zRom() {
@@ -28,5 +24,5 @@ class RomLoaderTest {
         }
     }
 
-    private fun load(romFile: String) = RomLoader().load(Paths.get(romFile))
+    private fun load(romFile: String): ByteArray = Paths.get(romFile).load()!!
 }
