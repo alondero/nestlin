@@ -17,17 +17,20 @@ class Ppu(var memory: Memory) {
     private var cycle = 0
     private var scanline = 0
 
-    // 2 16-Bit registers containing bitmap data for two tiles
-    // Every 8 cycles, the bitmap data for the next tile is loaded into the upper 8 bits of this shift register.
-    // Meanwhile, the pixel to render is fetched from one of the lower 8 bits.
-    var youngTile = 0xFFFF.toSignedShort()
-    var nextTile = 0xFFFF.toSignedShort()
+    // Pattern table shift registers (16-bit, hold 2 tiles worth of bitmap data)
+    // Bit 15 = current pixel being rendered, bits shift left each cycle
+    private var patternShiftLow: Int = 0
+    private var patternShiftHigh: Int = 0
 
-    // 2 8-bit shift registers - These contain the palette attributes for the lower 8 pixels of the 16-bit shift register.
-    // Every 8 cycles, the latch is loaded with the palette attribute for the next tile.
-    val paletteRegisters = 0
-    // These registers are fed by a latch which contains the palette attribute for the next tile.
-    val paletteLatch = 0
+    // Palette attribute shift registers (8-bit, hold palette for next 8 pixels)
+    // Each bit corresponds to one bit of the 2-bit palette index
+    private var paletteShiftLow: Byte = 0
+    private var paletteShiftHigh: Byte = 0
+
+    // Latches hold fetched data until time to load into shift registers (every 8 cycles)
+    private var patternLatchLow: Byte = 0
+    private var patternLatchHigh: Byte = 0
+    private var paletteLatch: Int = 0
 
     private var listener: FrameListener? = null
     private var vBlank = false
@@ -63,9 +66,16 @@ class Ppu(var memory: Memory) {
 
         if (scanline == PRE_RENDER_SCANLINE && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
 
-        if (cycle % 8 == 0) {
-            //  Bitmap data for the next tile is loaded into the upper 8 bits
-            val bitmap = 0xFF.toSignedByte()
+        // Load shift registers every 8 cycles (at cycles 9, 17, 25, ..., 249, 257, 329, 337)
+        if (cycle % 8 == 1 && ((cycle >= 1 && cycle <= 256) || (cycle >= 321 && cycle <= 336))) {
+            // Load the upper 8 bits of pattern shift registers with fetched tile data
+            patternShiftLow = (patternShiftLow and 0xFF) or (patternLatchLow.toUnsignedInt() shl 8)
+            patternShiftHigh = (patternShiftHigh and 0xFF) or (patternLatchHigh.toUnsignedInt() shl 8)
+
+            // Reload palette attribute shift registers
+            // Each bit represents whether that pixel uses this palette bit
+            paletteShiftLow = if ((paletteLatch and 0x01) != 0) 0xFF.toByte() else 0x00
+            paletteShiftHigh = if ((paletteLatch and 0x02) != 0) 0xFF.toByte() else 0x00
         }
 
         //  Every cycle a bit is fetched from the 4 backgroundNametables shift registers in order to create a pixel on screen
@@ -142,22 +152,33 @@ class Ppu(var memory: Memory) {
                 lastNametableByte = ppuInternalMemory[controller.baseNametableAddr() or (address.toUnsignedInt() and 0x0FFF)]
             }
             2 -> with(memory.ppuAddressedMemory){
-                /**
-                 * v := ppu.v
-                address := 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
-                shift := ((v >> 4) & 4) | (v & 2)
-                ppu.attributeTableByte = ((ppu.Read(address) >> shift) & 3) << 2
-                 */
+                // Fetch Attribute Table Byte
+                // Formula from nesdev wiki for attribute table addressing
+                val v = vRamAddress.asAddress()
+                val attributeAddr = 0x23C0 or (v and 0x0C00) or ((v shr 4) and 0x38) or ((v shr 2) and 0x07)
+                val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
 
-                //  Don't understand this logic... had to inspect other source code to work out what to do...
-                val address = controller.baseNametableAddr() or (vRamAddress.coarseXScroll and 0b11100) or (vRamAddress.coarseYScroll and 0b11100)
-                lastAttributeTableByte = ppuInternalMemory[controller.baseNametableAddr() + 0x3C0]
+                // Extract the 2-bit palette for this specific tile
+                val shift = ((v shr 4) and 4) or (v and 2)
+                paletteLatch = ((attributeByte shr shift) and 0x03) shl 2
+
+                lastAttributeTableByte = attributeByte.toSignedByte()
             }
             4 -> with(memory.ppuAddressedMemory) {
-                //  Fetch Low Tile Byte
+                //  Fetch Low Tile Byte (bit 0 of each pixel)
+                val patternTableBase = controller.backgroundPatternTableAddress()
+                val tileIndex = lastNametableByte.toUnsignedInt()
+                val fineY = vRamAddress.fineYScroll
+                val address = patternTableBase + (tileIndex * 16) + fineY
+                patternLatchLow = ppuInternalMemory[address]
             }
             6 -> with(memory.ppuAddressedMemory) {
-                //  Fetch High Tile Byte
+                //  Fetch High Tile Byte (bit 1 of each pixel, 8 bytes after low byte)
+                val patternTableBase = controller.backgroundPatternTableAddress()
+                val tileIndex = lastNametableByte.toUnsignedInt()
+                val fineY = vRamAddress.fineYScroll
+                val address = patternTableBase + (tileIndex * 16) + fineY + 8
+                patternLatchHigh = ppuInternalMemory[address]
             }
         }
 
@@ -176,8 +197,43 @@ class Ppu(var memory: Memory) {
 //
 //        While all of this is going on, sprite evaluation for the next scanline is taking place as a seperate process, independent to what's happening here.
 
-        if (scanline < RESOLUTION_HEIGHT && cycle - 1 < RESOLUTION_WIDTH) {
-            frame[scanline, cycle - 1] = rand.nextInt(0xFFFFFF)
+        // Render pixel during visible scanline and cycles 1-256
+        if (scanline < RESOLUTION_HEIGHT && cycle >= 1 && cycle <= 256) {
+            val x = cycle - 1
+
+            // Shift registers every cycle to advance to next pixel
+            patternShiftLow = patternShiftLow shl 1
+            patternShiftHigh = patternShiftHigh shl 1
+            paletteShiftLow = (paletteShiftLow.toInt() shl 1).toByte()
+            paletteShiftHigh = (paletteShiftHigh.toInt() shl 1).toByte()
+
+            // Extract pixel from shift registers with fine X scroll
+            // Fine X scroll (0-7) determines which bit to extract
+            val fineX = memory.ppuAddressedMemory.fineXScroll
+            val shiftAmount = 15 - fineX
+            val paletteShiftAmount = 7 - fineX
+
+            val patternBit0 = (patternShiftLow shr shiftAmount) and 1
+            val patternBit1 = (patternShiftHigh shr shiftAmount) and 1
+            val pixelValue = (patternBit1 shl 1) or patternBit0
+
+            // Extract palette bits with fine X scroll
+            val paletteBit0 = (paletteShiftLow.toInt() shr paletteShiftAmount) and 1
+            val paletteBit1 = (paletteShiftHigh.toInt() shr paletteShiftAmount) and 1
+            val paletteIndex = (paletteBit1 shl 1) or paletteBit0
+
+            // Look up color in palette RAM
+            // If pixel value is 0 (transparent), use universal background color
+            val paletteAddr = if (pixelValue == 0) {
+                0x3F00 // Universal background color
+            } else {
+                0x3F00 + (paletteIndex shl 2) + pixelValue
+            }
+
+            val nesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
+            val rgbColor = NesPalette.getRgb(nesColorIndex)
+
+            frame[scanline, x] = rgbColor
         }
     }
 

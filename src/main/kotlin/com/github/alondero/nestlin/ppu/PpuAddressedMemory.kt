@@ -286,14 +286,65 @@ class PpuInternalMemory {
         in 0x3000..0x3EFF -> this[addr - 0x1000] // Mirror of 0x2000 - 0x2EFF
         else /*in 0x3F00..0x3FFF*/ -> paletteRam[addr % 0x020]
     }
+
+    operator fun set(addr: Int, value: Byte) {
+        when (addr) {
+            in 0x0000..0x0999 -> patternTable0[addr % 0x1000] = value
+            in 0x1000..0x1999 -> patternTable1[addr % 0x1000] = value
+            in 0x2000..0x23FF -> nameTable0[addr % 0x400] = value
+            in 0x2400..0x27FF -> nameTable1[addr % 0x400] = value
+            in 0x2800..0x2BFF -> nameTable2[addr % 0x400] = value
+            in 0x2C00..0x2FFF -> nameTable3[addr % 0x400] = value
+            in 0x3000..0x3EFF -> this[addr - 0x1000] = value // Mirror of 0x2000 - 0x2EFF
+            else /*in 0x3F00..0x3FFF*/ -> paletteRam[addr % 0x020] = value
+        }
+    }
+
+    /**
+     * Load CHR ROM data into pattern tables.
+     * CHR ROM contains tile graphics data.
+     * $0000-$0FFF: Pattern table 0
+     * $1000-$1FFF: Pattern table 1
+     */
+    fun loadChrRom(chrRom: ByteArray) {
+        if (chrRom.isEmpty()) return
+
+        // Load pattern table 0 ($0000-$0FFF)
+        val table0Size = minOf(0x1000, chrRom.size)
+        chrRom.copyInto(
+            destination = patternTable0,
+            destinationOffset = 0,
+            startIndex = 0,
+            endIndex = table0Size
+        )
+
+        // Load pattern table 1 ($1000-$1FFF) if CHR ROM is large enough
+        if (chrRom.size > 0x1000) {
+            val table1Size = minOf(0x1000, chrRom.size - 0x1000)
+            chrRom.copyInto(
+                destination = patternTable1,
+                destinationOffset = 0,
+                startIndex = 0x1000,
+                endIndex = 0x1000 + table1Size
+            )
+        }
+    }
 }
 
 class PaletteRam {
-    private val bgPalette = ByteArray(0x10)
-    private val spritePalette = ByteArray(0x10)
+    private val memory = ByteArray(0x20)
 
-    operator fun get(addr: Int): Byte = when (addr) {
-        in 0x00..0x0F -> bgPalette[addr]
-        else /*in 0x10..0x1F*/ -> spritePalette[addr]
+    operator fun get(addr: Int): Byte {
+        val index = addr and 0x1F
+        // Mirror $3F10/$3F14/$3F18/$3F1C to $3F00/$3F04/$3F08/$3F0C
+        val mirroredIndex = if (index and 0x13 == 0x10) index and 0x0F else index
+        return memory[mirroredIndex]
+    }
+
+    operator fun set(addr: Int, value: Byte) {
+        val index = addr and 0x1F
+        // Mirror $3F10/$3F14/$3F18/$3F1C to $3F00/$3F04/$3F08/$3F0C
+        val mirroredIndex = if (index and 0x13 == 0x10) index and 0x0F else index
+        memory[mirroredIndex] = value
     }
 }
