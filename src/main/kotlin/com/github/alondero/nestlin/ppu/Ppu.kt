@@ -17,6 +17,16 @@ class Ppu(var memory: Memory) {
     private var cycle = 0
     private var scanline = 0
 
+    private fun reverseBits(value: Int): Int {
+        var result = 0
+        var v = value
+        for (i in 0..7) {
+            result = (result shl 1) or (v and 1)
+            v = v shr 1
+        }
+        return result
+    }
+
     // Pattern table shift registers (16-bit, hold 2 tiles worth of bitmap data)
     // Bit 15 = current pixel being rendered, bits shift left each cycle
     private var patternShiftLow: Int = 0
@@ -191,11 +201,25 @@ class Ppu(var memory: Memory) {
                 val tileDataLow = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr]
                 val tileDataHigh = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr + 8]
 
-                activeSpriteBuffer.add(ActiveSprite(
+                // Load shift registers with tile data
+                val activeSprite = ActiveSprite(
                     data = spriteData,
                     tileDataLow = tileDataLow,
                     tileDataHigh = tileDataHigh
-                ))
+                )
+
+                // Initialize shift registers with tile data, apply horizontal flip
+                if (spriteData.horizontalFlip) {
+                    // If flipped, reverse bit order
+                    activeSprite.shiftLow = reverseBits(tileDataLow.toUnsignedInt() and 0xFF)
+                    activeSprite.shiftHigh = reverseBits(tileDataHigh.toUnsignedInt() and 0xFF)
+                } else {
+                    // Normal: no flip, just load the data
+                    activeSprite.shiftLow = tileDataLow.toUnsignedInt()
+                    activeSprite.shiftHigh = tileDataHigh.toUnsignedInt()
+                }
+
+                activeSpriteBuffer.add(activeSprite)
             }
         }
     }
@@ -261,6 +285,12 @@ class Ppu(var memory: Memory) {
             patternShiftHigh = patternShiftHigh shl 1
             paletteShiftLow = (paletteShiftLow.toInt() shl 1).toByte()
             paletteShiftHigh = (paletteShiftHigh.toInt() shl 1).toByte()
+
+            // Shift active sprite registers
+            activeSpriteBuffer.forEach { sprite ->
+                sprite.shiftLow = sprite.shiftLow shl 1
+                sprite.shiftHigh = sprite.shiftHigh shl 1
+            }
 
             // Extract pixel from shift registers with fine X scroll
             // Fine X scroll (0-7) determines which bit to extract
