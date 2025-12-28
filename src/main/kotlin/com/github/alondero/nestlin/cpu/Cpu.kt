@@ -34,6 +34,13 @@ class Cpu(var memory: Memory)
 
     fun tick() {
         if (readyForNextInstruction()) {
+            // Check for NMI interrupt before executing next instruction
+            if (checkAndHandleNmi()) {
+                // NMI was handled, skip regular instruction execution
+                workCyclesLeft--
+                return
+            }
+
             val initialPC = registers.programCounter
             val opcodeVal = readByteAtPC().toUnsignedInt()
             opcodes[opcodeVal]?.also {
@@ -43,6 +50,38 @@ class Cpu(var memory: Memory)
         }
 
         if (workCyclesLeft > 0) workCyclesLeft--
+    }
+
+    private fun checkAndHandleNmi(): Boolean {
+        // NMI is edge-triggered: check if NMI occurred and NMI generation is enabled
+        if (memory.ppuAddressedMemory.nmiOccurred && memory.ppuAddressedMemory.controller.generateNmi()) {
+            // Clear the NMI flag (edge-triggered, not level-triggered)
+            memory.ppuAddressedMemory.nmiOccurred = false
+
+            // Push PC (high byte first, then low byte)
+            val pc = registers.programCounter.toUnsignedInt()
+            push((pc shr 8).toSignedByte())
+            push((pc and 0xFF).toSignedByte())
+
+            // Push processor status (with B flag clear for interrupts)
+            val statusByte = processorStatus.asByte().toUnsignedInt()
+            // Clear bit 4 (B flag) for interrupt context
+            val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
+            push(statusForInterrupt)
+
+            // Set interrupt disable flag
+            processorStatus.interruptDisable = true
+
+            // Load PC from NMI vector at $FFFA-$FFFB
+            registers.programCounter = memory[0xFFFA, 0xFFFB]
+
+            // NMI takes 7 cycles
+            workCyclesLeft = 7
+
+            return true
+        }
+
+        return false
     }
 
     fun push(value: Byte) { memory[0x100 + ((registers.stackPointer--).toUnsignedInt())] = value }
