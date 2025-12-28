@@ -288,20 +288,20 @@ class PpuInternalMemory {
             }
             addr in 0x2400..0x27FF -> {
                 when (mirroring) {
-                    Mirroring.HORIZONTAL -> Pair(nameTable0, addr % 0x400)  // H-mirror: maps to same as 0x2000
-                    Mirroring.VERTICAL -> Pair(nameTable1, addr % 0x400)
+                    Mirroring.HORIZONTAL -> Pair(nameTable1, addr % 0x400)  // H-mirror: left/right, so 0x2400 = NT1
+                    Mirroring.VERTICAL -> Pair(nameTable0, addr % 0x400)    // V-mirror: top/bottom, so 0x2400 = NT0
                 }
             }
             addr in 0x2800..0x2BFF -> {
                 when (mirroring) {
-                    Mirroring.HORIZONTAL -> Pair(nameTable1, addr % 0x400)
-                    Mirroring.VERTICAL -> Pair(nameTable0, addr % 0x400)  // V-mirror: maps to same as 0x2000
+                    Mirroring.HORIZONTAL -> Pair(nameTable0, addr % 0x400)  // H-mirror: 0x2800 same as 0x2000 (NT0)
+                    Mirroring.VERTICAL -> Pair(nameTable1, addr % 0x400)    // V-mirror: 0x2800 = NT1
                 }
             }
             addr in 0x2C00..0x2FFF -> {
                 when (mirroring) {
-                    Mirroring.HORIZONTAL -> Pair(nameTable1, addr % 0x400)
-                    Mirroring.VERTICAL -> Pair(nameTable1, addr % 0x400)
+                    Mirroring.HORIZONTAL -> Pair(nameTable1, addr % 0x400)  // H-mirror: 0x2C00 same as 0x2400 (NT1)
+                    Mirroring.VERTICAL -> Pair(nameTable1, addr % 0x400)    // V-mirror: 0x2C00 same as 0x2800 (NT1)
                 }
             }
             else -> error("Invalid nametable address: ${addr.toString(16)}")
