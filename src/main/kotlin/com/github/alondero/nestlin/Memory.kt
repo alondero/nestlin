@@ -10,6 +10,7 @@ class Memory {
     private val cartridgeSpace = ByteArray(0xBFE0)
 
     fun readCartridge(data: GamePak) {
+        // Load PRG ROM into CPU address space
         data.programRom.copyOfRange(0, 16384).withIndex().forEach {
             (idx, value) -> cartridgeSpace[0x8000+idx - 0x4020] = value
         }
@@ -17,6 +18,9 @@ class Memory {
         data.programRom.copyOfRange(data.programRom.size - 16384, data.programRom.size).withIndex().forEach {
             (idx, value) -> cartridgeSpace[0xC000+idx - 0x4020] = value
         }
+
+        // Load CHR ROM into PPU pattern tables
+        ppuAddressedMemory.ppuInternalMemory.loadChrRom(data.chrRom)
     }
 
     operator fun set(address: Int, value: Byte) {
