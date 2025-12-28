@@ -1,17 +1,13 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.gamepak.GamePak
-import com.github.alondero.nestlin.ppu.ObjectAttributeMemory
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
 
 class Memory {
     private val internalRam = ByteArray(0x800)
     val ppuAddressedMemory = PpuAddressedMemory()
-    private val oam = ObjectAttributeMemory()
     private val apuIoRegisters = ByteArray(0x20)
     private val cartridgeSpace = ByteArray(0xBFE0)
-
-    fun getOAM(): ObjectAttributeMemory = oam
 
     fun readCartridge(data: GamePak) {
         // Load PRG ROM into CPU address space
@@ -30,7 +26,6 @@ class Memory {
     operator fun set(address: Int, value: Byte) {
         when (address) {
             in 0x0000..0x1FFF -> internalRam[address%0x800] = value
-            in 0x0200..0x02FF -> oam[address - 0x0200] = value
             in 0x2000..0x3FFF -> ppuAddressedMemory[address%8] = value
             in 0x4000..0x401F -> apuIoRegisters[address-0x4000] = value
             else -> cartridgeSpace[address-0x4020] = value
@@ -39,7 +34,6 @@ class Memory {
 
     operator fun get(address: Int) = when (address) {
         in 0x0000..0x1FFF -> internalRam[address % 0x800]
-        in 0x0200..0x02FF -> oam[address - 0x0200]
         in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
         in 0x4000..0x401F -> apuIoRegisters[address - 0x4000]
         else /* in 0x4020..0xFFFF */ -> cartridgeSpace[address - 0x4020]
