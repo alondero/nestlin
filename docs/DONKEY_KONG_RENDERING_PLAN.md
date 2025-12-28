@@ -19,6 +19,9 @@ Your emulator has a solid foundation:
 8. **Nametable Mirroring**: ✅ HORIZONTAL/VERTICAL mirroring implemented and configured from iNES header (Commit: 89b5004)
 9. **Sprite Coordinate System**: ✅ Fixed sprite pixel extraction to use correct coordinate space (Commit: 89b5004)
 10. **Undocumented Opcode Support**: ✅ Defensive logging and fallback handling for unknown instructions in regular games (Commit: a49d784)
+11. **Canvas Rendering**: ✅ Fixed canvas dimensions from (height, width) to (width, height) (Commit: 7ebdedd)
+12. **VRAM Write Implementation**: ✅ Fixed critical bug where $2007 writes weren't being stored to VRAM (Commit: 3a1c09b)
+13. **Pattern Table Protection**: ✅ Pattern tables now read-only in NROM mode, preventing tile data corruption (Commit: 3a1c09b)
 
 ---
 
@@ -31,15 +34,27 @@ Your emulator has a solid foundation:
 - **Note**: Game encounters ~25 unique undocumented SKB/NOP variants which are logged but don't crash
 - **Next blocker**: Now hitting PPU rendering issues as game waits for display output
 
-### 2. PPU Rendering Not Producing Visual Output (CRITICAL - Phase 1.5 blocker)
-- **Problem**: Despite CPU running correctly, game doesn't display anything on screen
-- **Impact**: Can't validate rendering logic without visual output
-- **Investigation needed**:
-  - Verify tile data is being fetched from correct VRAM addresses
-  - Check shift register loading and pixel output timing
-  - Validate palette selection from attribute tables
-  - Confirm fine X scroll is being applied correctly
-- **Current Status**: PPU Framework exists but rendering pipeline may have bugs
+### 2. ⚠️ PPU Rendering Issues (PARTIALLY RESOLVED - Phase 1.6 blocker)
+
+**FIXED:**
+- ✅ Canvas dimensions swapped (Commit: 7ebdedd) - was (height, width), now (width, height)
+- ✅ VRAM writes not implemented (Commit: 3a1c09b) - $2007 writes now stored to VRAM
+- ✅ Pattern tables being corrupted (Commit: 3a1c09b) - writes to 0x0000-0x1FFF now ignored
+
+**Current Status**: Game now displays flashing colors with corrupt graphics
+- Game IS writing nametable/attribute data (418+ bytes per frame)
+- Frame buffer IS being populated with pixel data
+- Colors ARE changing (flashing indicates VBlank transitions working)
+- Corruption suggests issues with:
+  - Tile fetching logic (wrong tiles being read)
+  - Palette/color selection (wrong colors being applied)
+  - Shift register timing (pixels misaligned)
+
+**Investigation needed**:
+  - Verify tile indices in nametable are correct
+  - Check palette attribute calculation formula
+  - Validate shift register reload timing
+  - Confirm fine X scroll implementation
 
 ### 3. Controller Input Not Implemented (CRITICAL - Phase 2 blocker)
 - **Problem**: Donkey Kong won't respond to player input
@@ -105,14 +120,28 @@ Your emulator has a solid foundation:
 
 **TODO (Development cleanup):** Remove undocumented opcode logging once emulator stability is proven with multiple games
 
-### Phase 1.6: Debug PPU Rendering Output (NEXT - NEW BLOCKER)
+### Phase 1.6: Debug PPU Rendering Output ✅ (PARTIALLY COMPLETE)
 
-**Priority**: Get something visible on screen to validate rendering logic
-- Add debug visualization of tile fetching and pattern data
-- Verify frame buffer is being updated with pixel data
-- Check if UI is displaying the rendered frame
-- Validate palette application and color output
-- Once rendering works, move to Phase 2
+**Completed** (Session ending 2025-12-28):
+- ✅ Fixed canvas dimensions (was swapped width/height)
+- ✅ Implemented VRAM writes ($2007 register)
+- ✅ Protected pattern tables from corruption
+- ✅ Verified nametable receives game data (418+ bytes/frame)
+- ✅ Confirmed frame buffer populates with pixel data
+- ✅ Golden log test still passes
+
+**Current Blockers** (flashing colors, corrupt graphics):
+- Shift register timing may be off
+- Palette attribute calculation might be wrong
+- Tile fetching could be reading wrong tiles
+- Fine X scroll logic may have issues
+
+**Next Priority**: Fix rendering corruption by debugging tile/palette rendering
+- Add per-scanline debugging for first visible tile
+- Log tile indices vs. expected values
+- Verify attribute table formula produces correct palette indices
+- Check shift register reload timing matches NES spec
+- Once rendering shows correct tiles/colors, move to Phase 2
 
 ### Phase 2: Enable Controller Input (Required for Interaction)
 
@@ -230,8 +259,12 @@ You'll know this is working when:
 - [x] Emulator doesn't crash on startup
 - [x] Emulator runs indefinitely without crashing on undocumented opcodes (Commit: a49d784)
 - [x] Golden log test passes (CPU accuracy maintained)
-- [ ] First frame renders (captures in frame buffer)
-- [ ] UI displays rendered frame with visual content
+- [x] Canvas dimensions correct (Commit: 7ebdedd)
+- [x] VRAM writes work (nametable receives data) (Commit: 3a1c09b)
+- [x] Pattern tables protected from corruption (Commit: 3a1c09b)
+- [x] First frame renders (captures in frame buffer)
+- [x] UI displays rendered frame with visual content (flashing colors)
+- [ ] Graphics render correctly (currently corrupt/wrong tiles/colors)
 - [ ] Keyboard input is recognized and mapped to controller
 - [ ] Game title screen displays with proper graphics
 - [ ] Player sprite (Jumpman) visible and controllable
@@ -259,52 +292,67 @@ You'll know this is working when:
 
 ---
 
-## Session Handoff: Next Steps (Phase 1.6)
+## Session Handoff: Next Steps (Phase 1.6 Continuation)
 
-### Problem Statement
-Donkey Kong CPU runs indefinitely without crashing (thanks to opcode fixes), but nothing appears on screen. The PPU rendering pipeline exists but is either stubbed out or has bugs preventing visual output.
+### Current Status (Session ending 2025-12-28)
+
+**Major Progress:**
+- ✅ Fixed canvas dimensions bug (swapped width/height)
+- ✅ Implemented VRAM writes to PPU memory
+- ✅ Protected pattern tables from corruption
+- ✅ Game now displays flashing colors (proves rendering pipeline works)
+- ✅ Nametable receives 418+ bytes of data per frame
+
+**Current Blocker:**
+- Game displays **flashing colors with corrupt graphics**
+- This proves:
+  - CPU is working (writing data)
+  - PPU rendering is partially working (frame buffer filling)
+  - UI is displaying output (colors visible)
+  - Problem is in **tile/palette rendering logic**, not infrastructure
 
 ### Immediate Action Items for Next Session
 
 **Recommended Prompt for Next Session:**
 ```
-Phase 1.6: Debug PPU Rendering Output for Donkey Kong
+Phase 1.6 Continuation: Fix PPU Rendering Corruption (Flashing Colors)
 
-Context: Donkey Kong now runs indefinitely thanks to CLI (0x58) implementation
-and undocumented opcode fallback (Commit a49d784). However, the game receives
-no visual feedback - likely waiting for PPU to render the title screen.
+Context: Donkey Kong now boots and shows flashing colors with corrupt graphics.
+The infrastructure is working, but tile fetching or palette application is wrong.
 
-Tasks:
-1. Verify the PPU rendering pipeline is actually producing pixel data
-   - Check if fetchData() in Ppu.kt is populating shift registers correctly
-   - Validate that pixel data flows through to the frame buffer
+Current Findings:
+- VRAM writes ARE working (game data populates nametable)
+- Frame buffer IS being populated with pixel data
+- Colors ARE changing (flashing = VBlank transitions work)
+- Corruption indicates wrong tiles/colors are being rendered
 
-2. Add debug logging to understand what's happening:
-   - Log which tiles are being fetched (tile index, VRAM address)
-   - Log palette indices selected from attribute tables
-   - Verify fine X scroll is being applied to shift register reads
+Root Cause Candidates:
+1. Tile fetching reads wrong tile indices from nametable
+2. Palette attribute table calculation is incorrect
+3. Shift register reload timing doesn't match NES spec
+4. Fine X scroll implementation has bugs
 
-3. Identify the actual blocker:
-   - Is frame buffer empty? (PPU not rendering anything)
-   - Is frame buffer full but UI not displaying? (JavaFX issue)
-   - Are wrong colors/tiles rendering? (Logic bug in rendering)
+Recommended Debug Steps:
+1. Log tile indices being fetched vs. palette for first visible scanline
+2. Verify palette attribute formula: 0x23C0 | (v & 0x0C00) | ((v>>4) & 0x38) | ((v>>2) & 0x07)
+3. Check shift register reload at cycles 9, 17, 25, 33, ... etc.
+4. Add per-tile debugging to isolate which component is wrong
 
-4. Once identified, implement fix or escalate to proper phase
-
-Key Files to Investigate:
-- src/main/kotlin/com/github/alondero/nestlin/ppu/Ppu.kt - tick(), fetchData(), pixel rendering
-- src/main/kotlin/com/github/alondero/nestlin/ui/Application.kt - frame display
-- src/main/kotlin/com/github/alondero/nestlin/ppu/PpuAddressedMemory.kt - register access
+Key Files:
+- src/main/kotlin/com/github/alondero/nestlin/ppu/Ppu.kt (fetchData, pixel rendering)
+- src/main/kotlin/com/github/alondero/nestlin/ppu/PpuAddressedMemory.kt (palette math)
+- Test with debug output to identify which tiles are rendered
 ```
 
 ### Why This Matters
-Once we get any visual output on screen (even incorrect), we unlock:
-- Ability to validate tile fetching logic
-- Visual feedback for palette/color fixes
-- Foundation for Phase 2 (controller input) and Phase 3 (gameplay)
+Once we fix the corrupt graphics:
+- Can visually validate Donkey Kong title screen
+- Can move to Phase 2 (controller input) for interactive testing
+- Can verify barrels and game sprites render correctly
 
 ### Development Notes
+- Systematic debugging approach used (evidence gathering before fixes)
+- Commits: 7ebdedd (canvas), 3a1c09b (VRAM writes + pattern protection)
 - Undocumented opcode logging in `undocumented_opcodes.txt` is development-only
-- Remove logging once we have stability with multiple games running
 - Golden log test must continue passing
 - Test ROMs still throw on missing opcodes (maintains test integrity)
