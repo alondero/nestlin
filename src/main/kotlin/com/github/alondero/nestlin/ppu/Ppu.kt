@@ -245,29 +245,55 @@ class Ppu(var memory: Memory) {
 
 class ObjectAttributeMemory {
     private val memory = ByteArray(0x100)
-}
 
+    operator fun get(addr: Int): Byte = memory[addr and 0xFF]
+    operator fun set(addr: Int, value: Byte) {
+        memory[addr and 0xFF] = value
+    }
 
-class Sprites {
-    //  Holds 8 sprites for the current scanline
-    private val sprites = Array(size = 8, init = { Sprite() })
-
-    fun decrementCounters() = sprites.forEach { it.counter.dec() }
-    fun getActiveSprites() = sprites.filter(Sprite::isActive)
-}
-
-data class Sprite(
-        val objectAttributeMemory: Byte = 0,
-        var bitmapDataA: Byte = 0,
-        var bitmapDataB: Byte = 0,
-        val latch: Byte = 0,
-        val counter: Int = 0
-) {
-    fun isActive() = counter <= 0
-
-    fun shiftRegisters() {
-        bitmapDataA = bitmapDataA.shiftRight()
-        bitmapDataB = bitmapDataB.shiftRight()
+    /**
+     * Get sprite data from OAM.
+     * Each sprite occupies 4 bytes: Y, Tile, Attributes, X
+     */
+    fun getSprite(index: Int): SpriteData {
+        val base = (index and 0x3F) * 4  // 64 sprites max, wrap at boundary
+        return SpriteData(
+            y = memory[base].toUnsignedInt(),
+            tileIndex = memory[base + 1],
+            attributes = memory[base + 2],
+            x = memory[base + 3].toUnsignedInt()
+        )
     }
 }
+
+/**
+ * Sprite attribute byte format:
+ * VPHP0000
+ * V = vertical flip (1=flip)
+ * P = priority (1=behind background)
+ * H = horizontal flip (1=flip)
+ * P = palette index (0-3)
+ */
+data class SpriteData(
+    val y: Int,           // 0-255, sprite Y position
+    val tileIndex: Byte,  // Tile index in pattern table
+    val attributes: Byte, // VPHP0000
+    val x: Int            // 0-255, sprite X position
+) {
+    val paletteIndex: Int get() = (attributes.toUnsignedInt() and 0x03)
+    val priority: Int get() = (attributes.toUnsignedInt() shr 5) and 0x01  // 0=in front, 1=behind
+    val horizontalFlip: Boolean get() = (attributes.toUnsignedInt() shr 6) and 0x01 != 0
+    val verticalFlip: Boolean get() = (attributes.toUnsignedInt() shr 7) and 0x01 != 0
+}
+
+/**
+ * Sprite with fetched tile data, ready to render on current scanline.
+ */
+data class ActiveSprite(
+    val data: SpriteData,
+    val tileDataLow: Byte,    // Pattern table low byte (bit 0 plane)
+    val tileDataHigh: Byte,   // Pattern table high byte (bit 1 plane)
+    var shiftLow: Int = 0,    // 8-bit shift register, bits 7-0 = pixels 7-0
+    var shiftHigh: Int = 0    // 8-bit shift register
+)
 
