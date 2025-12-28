@@ -1,34 +1,43 @@
-import org.gradle.script.lang.kotlin.*
-
-buildscript {
-    repositories {
-        mavenCentral()
-        gradleScriptKotlin()
-    }
-
-    dependencies {
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.1.0")
-    }
+plugins {
+    kotlin("jvm") version "1.9.22"
+    application
+    id("org.openjfx.javafxplugin") version "0.1.0"
 }
 
 repositories {
     mavenCentral()
-    gradleScriptKotlin()
 }
 
-apply {
-    plugin("kotlin")
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
+javafx {
+    version = "21.0.1"
+    modules = listOf("javafx.controls", "javafx.graphics")
+}
+
+application {
+    mainClass.set("com.github.alondero.nestlin.ui.ApplicationKt")
 }
 
 dependencies {
-    compile("org.jetbrains.kotlin:kotlin-stdlib:1.1.0")
-    compile("org.apache.commons:commons-compress:+")
-    compile("org.tukaani:xz:+")
-    compile("no.tornado:tornadofx:+") {
-        exclude("org.jetbrains.kotlin:kotlin-stdlib")
-        exclude("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
+    implementation("org.apache.commons:commons-compress:1.25.0")
+    implementation("org.tukaani:xz:1.9")
+    implementation("no.tornado:tornadofx:1.7.20") {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
     }
 
-    testCompile("junit:junit:+")
-    testCompile("com.natpryce:hamkrest:+")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.natpryce:hamkrest:1.8.0.1")
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+    kotlinOptions {
+        jvmTarget = "21"
+    }
 }
