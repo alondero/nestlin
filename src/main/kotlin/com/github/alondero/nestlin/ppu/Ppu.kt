@@ -66,6 +66,8 @@ class Ppu(var memory: Memory) {
             // Fetch sprites for this scanline at cycle 0
             if (cycle == 0) {
                 fetchActiveSpriteDataForScanline(scanline)
+                // Pre-load the first two tiles for this scanline
+                preloadFirstTwoTiles()
             }
 
             //  Fetch tile data
@@ -78,15 +80,17 @@ class Ppu(var memory: Memory) {
 
         }
 
-        if (cycle in 241..260) {
-            vBlank = true // Should be set at the second 'tick'?
+        // VBlank is set at scanline 241, cycle 0 (0-indexed)
+        if (scanline == 241 && cycle == 0) {
+            vBlank = true
             memory.ppuAddressedMemory.nmiOccurred = true
         }
 
         if (scanline == PRE_RENDER_SCANLINE && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
 
         // Load shift registers every 8 cycles (at cycles 9, 17, 25, ..., 249, 257, 329, 337)
-        if (cycle % 8 == 1 && ((cycle >= 1 && cycle <= 256) || (cycle >= 321 && cycle <= 336))) {
+        // Reload happens after fetching is complete (at start of next tile's nametable fetch)
+        if (cycle % 8 == 1 && cycle > 1 && ((cycle <= 256) || (cycle >= 321 && cycle <= 336))) {
             // Load the upper 8 bits of pattern shift registers with fetched tile data
             patternShiftLow = (patternShiftLow and 0xFF) or (patternLatchLow.toUnsignedInt() shl 8)
             patternShiftHigh = (patternShiftHigh and 0xFF) or (patternLatchHigh.toUnsignedInt() shl 8)
@@ -225,19 +229,70 @@ class Ppu(var memory: Memory) {
         }
     }
 
+    /**
+     * Pre-load the shift registers with the first two tiles for this scanline.
+     * The NES has a 2-tile buffer pre-loaded before rendering starts.
+     */
+    private fun preloadFirstTwoTiles() {
+        with(memory.ppuAddressedMemory) {
+            // Save the current VRAM address state
+            val savedCoarseX = vRamAddress.coarseXScroll
+            val savedCoarseY = vRamAddress.coarseYScroll
+            val savedHNameTable = vRamAddress.horizontalNameTable
+            val savedVNameTable = vRamAddress.verticalNameTable
+
+            // Load the first two tiles
+            for (tileNum in 0..1) {
+                // Fetch nametable byte
+                val nametableByte = ppuInternalMemory[controller.baseNametableAddr() or (vRamAddress.asAddress() and 0x0FFF)]
+
+                // Fetch attribute table byte
+                val v = vRamAddress.asAddress()
+                val attributeAddr = 0x23C0 or (v and 0x0C00) or ((v shr 4) and 0x38) or ((v shr 2) and 0x07)
+                val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
+                val shift = ((v shr 4) and 4) or (v and 2)
+                val paletteData = ((attributeByte shr shift) and 0x03) shl 2
+
+                // Fetch pattern table data
+                val patternTableBase = controller.backgroundPatternTableAddress()
+                val tileIndex = nametableByte.toUnsignedInt()
+                val fineY = vRamAddress.fineYScroll
+                val patternLow = ppuInternalMemory[patternTableBase + (tileIndex * 16) + fineY]
+                val patternHigh = ppuInternalMemory[patternTableBase + (tileIndex * 16) + fineY + 8]
+
+                if (tileNum == 0) {
+                    // Load tile 0 into lower 8 bits of shift registers
+                    patternShiftLow = patternLow.toUnsignedInt()
+                    patternShiftHigh = patternHigh.toUnsignedInt()
+                    // Initialize palette for first tile
+                    paletteShiftLow = if ((paletteData and 0x01) != 0) 0xFF.toByte() else 0x00
+                    paletteShiftHigh = if ((paletteData and 0x02) != 0) 0xFF.toByte() else 0x00
+                } else {
+                    // Load tile 1 into upper 8 bits of shift registers
+                    patternShiftLow = (patternShiftLow and 0xFF) or (patternLow.toUnsignedInt() shl 8)
+                    patternShiftHigh = (patternShiftHigh and 0xFF) or (patternHigh.toUnsignedInt() shl 8)
+                    // For tile 1, we need to have palette data ready to reload
+                    paletteLatch = paletteData
+                }
+
+                // Move to next tile
+                vRamAddress.incrementHorizontalPosition()
+            }
+
+            // Restore VRAM address to where it was before pre-loading
+            vRamAddress.coarseXScroll = savedCoarseX
+            vRamAddress.coarseYScroll = savedCoarseY
+            vRamAddress.horizontalNameTable = savedHNameTable
+            vRamAddress.verticalNameTable = savedVNameTable
+        }
+    }
+
     private fun fetchData() {
         when (cycle % 8) {
-            0 -> with (memory.ppuAddressedMemory){
-                vRamAddress.incrementHorizontalPosition()
-                lastNametableByte = ppuInternalMemory[controller.baseNametableAddr() or (address.toUnsignedInt() and 0x0FFF)]
-
-                // DEBUG: Log nametable fetch
-                if (scanline == 0 && cycle == 0) {
-                    val nameAddr = controller.baseNametableAddr() or (address.toUnsignedInt() and 0x0FFF)
-                    System.err.println("Nametable fetch cycle 0: nameAddr=0x${nameAddr.toString(16)} tileIdx=${lastNametableByte.toUnsignedInt()}")
-                }
+            1 -> with (memory.ppuAddressedMemory){
+                lastNametableByte = ppuInternalMemory[controller.baseNametableAddr() or (vRamAddress.asAddress() and 0x0FFF)]
             }
-            2 -> with(memory.ppuAddressedMemory){
+            3 -> with(memory.ppuAddressedMemory){
                 // Fetch Attribute Table Byte
                 // Formula from nesdev wiki for attribute table addressing
                 val v = vRamAddress.asAddress()
@@ -250,7 +305,7 @@ class Ppu(var memory: Memory) {
 
                 lastAttributeTableByte = attributeByte.toSignedByte()
             }
-            4 -> with(memory.ppuAddressedMemory) {
+            5 -> with(memory.ppuAddressedMemory) {
                 //  Fetch Low Tile Byte (bit 0 of each pixel)
                 val patternTableBase = controller.backgroundPatternTableAddress()
                 val tileIndex = lastNametableByte.toUnsignedInt()
@@ -258,13 +313,20 @@ class Ppu(var memory: Memory) {
                 val address = patternTableBase + (tileIndex * 16) + fineY
                 patternLatchLow = ppuInternalMemory[address]
             }
-            6 -> with(memory.ppuAddressedMemory) {
+            7 -> with(memory.ppuAddressedMemory) {
                 //  Fetch High Tile Byte (bit 1 of each pixel, 8 bytes after low byte)
                 val patternTableBase = controller.backgroundPatternTableAddress()
                 val tileIndex = lastNametableByte.toUnsignedInt()
                 val fineY = vRamAddress.fineYScroll
                 val address = patternTableBase + (tileIndex * 16) + fineY + 8
                 patternLatchHigh = ppuInternalMemory[address]
+            }
+        }
+
+        // Increment horizontal position after fetching pattern data (cycle 7)
+        if (cycle % 8 == 7 && (cycle in 1..256 || cycle in 321..336)) {
+            with(memory.ppuAddressedMemory) {
+                vRamAddress.incrementHorizontalPosition()
             }
         }
 
