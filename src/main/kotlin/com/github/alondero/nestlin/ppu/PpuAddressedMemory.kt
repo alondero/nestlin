@@ -59,14 +59,6 @@ class PpuAddressedMemory {
     }
 
     operator fun set(addr: Int, value: Byte) {
-        // DEBUG: Log controller register writes
-        if (addr == 0) {
-            System.err.println("$2000 write: 0x${value.toUnsignedInt().toString(16).padStart(2, '0')} bits: NMI=${value.isBitSet(7)} masterSlave=${value.isBitSet(6)} spriteSize=${value.isBitSet(5)} bgPatTbl=${value.isBitSet(4)} sprPatTbl=${value.isBitSet(3)}")
-        }
-        // DEBUG: Log VRAM writes
-        if (addr == 7) {
-            System.err.println("VRAM write: addr=0x${vRamAddress.asAddress().toString(16).padStart(4, '0')} value=0x${value.toUnsignedInt().toString(16).padStart(2, '0')}")
-        }
 //        println("Setting PPU Addressed data ${addr.toHexString()}, with ${value.toHexString()}")
         when (addr) {
             0 -> {
@@ -97,6 +89,8 @@ class PpuAddressedMemory {
                 }
             }
             else /*7*/ -> {
+                // Write to VRAM at current address, then increment
+                ppuInternalMemory[vRamAddress.asAddress()] = value
                 vRamAddress += controller.vramAddressIncrement()
                 data = value.letBit(7, nmiOutput)
             }
@@ -327,8 +321,10 @@ class PpuInternalMemory {
 
     operator fun set(addr: Int, value: Byte) {
         when (addr) {
-            in 0x0000..0x0999 -> patternTable0[addr % 0x1000] = value
-            in 0x1000..0x1999 -> patternTable1[addr % 0x1000] = value
+            // Pattern tables (0x0000-0x1FFF) are read-only for NROM cartridges
+            // Writes are silently ignored (games shouldn't write here, but some buggy code might try)
+            in 0x0000..0x0FFF -> {} // Ignore writes to pattern table 0
+            in 0x1000..0x1FFF -> {} // Ignore writes to pattern table 1
             in 0x2000..0x2FFF -> {
                 val (table, offset) = mapNametableAddress(addr)
                 table[offset] = value
@@ -347,8 +343,6 @@ class PpuInternalMemory {
     fun loadChrRom(chrRom: ByteArray) {
         if (chrRom.isEmpty()) return
 
-        System.err.println("CHR ROM size: ${chrRom.size} bytes (0x${chrRom.size.toString(16)})")
-
         // Load pattern table 0 ($0000-$0FFF)
         val table0Size = minOf(0x1000, chrRom.size)
         chrRom.copyInto(
@@ -357,7 +351,6 @@ class PpuInternalMemory {
             startIndex = 0,
             endIndex = table0Size
         )
-        System.err.println("Loaded table0: $table0Size bytes, first byte=0x${patternTable0[0].toUnsignedInt().toString(16)}")
 
         // Load pattern table 1 ($1000-$1FFF) if CHR ROM is large enough
         if (chrRom.size > 0x1000) {
@@ -368,9 +361,6 @@ class PpuInternalMemory {
                 startIndex = 0x1000,
                 endIndex = 0x1000 + table1Size
             )
-            System.err.println("Loaded table1: $table1Size bytes, first byte=0x${patternTable1[0].toUnsignedInt().toString(16)}")
-        } else {
-            System.err.println("No table1 data (CHR ROM too small)")
         }
     }
 }
