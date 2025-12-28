@@ -27,10 +27,13 @@ fun main(args: Array<String>) {
 
 class NestlinApplication : FrameListener, App() {
     private lateinit var stage: Stage
-    private var canvas = Canvas((RESOLUTION_WIDTH * DISPLAY_SCALE).toDouble(), (RESOLUTION_HEIGHT * DISPLAY_SCALE).toDouble())
+    private val scaledWidth = RESOLUTION_WIDTH * DISPLAY_SCALE
+    private val scaledHeight = RESOLUTION_HEIGHT * DISPLAY_SCALE
+    private var canvas = Canvas(scaledWidth.toDouble(), scaledHeight.toDouble())
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
     private var running = false
-    private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
+    // 4x larger buffer to hold magnified pixels
+    private var nextFrame = ByteArray(scaledHeight * scaledWidth * 3)
 
     override fun start(stage: Stage) {
         this.stage = stage.apply {
@@ -41,18 +44,11 @@ class NestlinApplication : FrameListener, App() {
 
         object: AnimationTimer() {
             override fun handle(now: Long) {
-                val gc = canvas.graphicsContext2D
-
-                // Scale the graphics context for 4x magnification
-                gc.save()
-                gc.scale(DISPLAY_SCALE.toDouble(), DISPLAY_SCALE.toDouble())
-
-                val pixelWriter = gc.pixelWriter
+                val pixelWriter = canvas.graphicsContext2D.pixelWriter
                 val pixelFormat = PixelFormat.getByteRgbInstance()
 
-                pixelWriter.setPixels(0, 0, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, pixelFormat, nextFrame, 0, RESOLUTION_WIDTH*3)
-
-                gc.restore()
+                // Write the full magnified buffer to the canvas
+                pixelWriter.setPixels(0, 0, scaledWidth, scaledHeight, pixelFormat, nextFrame, 0, scaledWidth*3)
             }
 
         }.start()
@@ -76,15 +72,24 @@ class NestlinApplication : FrameListener, App() {
     }
 
     override fun frameUpdated(frame: Frame) {
+        // Replicate each pixel DISPLAY_SCALE times in both X and Y dimensions
         frame.scanlines.withIndex().forEach { (y, scanline) ->
             scanline.withIndex().forEach { (x, pixel) ->
                 val r = (pixel shr 16).toByte()
                 val g = (pixel shr 8).toByte()
                 val b = pixel.toByte()
-                val pixIdx = (y * RESOLUTION_WIDTH + x) * 3
-                nextFrame[pixIdx] = r
-                nextFrame[pixIdx + 1] = g
-                nextFrame[pixIdx + 2] = b
+
+                // Write this pixel DISPLAY_SCALE x DISPLAY_SCALE times
+                for (dy in 0 until DISPLAY_SCALE) {
+                    for (dx in 0 until DISPLAY_SCALE) {
+                        val scaledX = x * DISPLAY_SCALE + dx
+                        val scaledY = y * DISPLAY_SCALE + dy
+                        val pixIdx = (scaledY * scaledWidth + scaledX) * 3
+                        nextFrame[pixIdx] = r
+                        nextFrame[pixIdx + 1] = g
+                        nextFrame[pixIdx + 2] = b
+                    }
+                }
             }
         }
     }
