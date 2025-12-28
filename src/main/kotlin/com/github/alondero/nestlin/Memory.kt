@@ -21,6 +21,14 @@ class Memory {
 
         // Load CHR ROM into PPU pattern tables
         ppuAddressedMemory.ppuInternalMemory.loadChrRom(data.chrRom)
+
+        // Set nametable mirroring mode from iNES header
+        val pmuMirroring = if (data.header.mirroring == com.github.alondero.nestlin.gamepak.Header.Mirroring.HORIZONTAL) {
+            com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.HORIZONTAL
+        } else {
+            com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.VERTICAL
+        }
+        ppuAddressedMemory.ppuInternalMemory.mirroring = pmuMirroring
     }
 
     operator fun set(address: Int, value: Byte) {

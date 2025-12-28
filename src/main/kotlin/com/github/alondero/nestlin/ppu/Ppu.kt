@@ -325,8 +325,11 @@ class Ppu(var memory: Memory) {
 
             // Check sprites (in order, first non-transparent sprite wins)
             for (sprite in activeSpriteBuffer) {
+                // Current rendering X position (0-255)
+                val pixelX = cycle - 1
+
                 // Calculate sprite X position relative to current pixel
-                val spritePixelX = cycle - sprite.data.x
+                val spritePixelX = pixelX - sprite.data.x
 
                 // Skip if sprite is off-screen horizontally
                 if (spritePixelX < 0 || spritePixelX > 7) continue

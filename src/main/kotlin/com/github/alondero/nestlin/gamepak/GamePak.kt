@@ -31,5 +31,10 @@ class Header(headerData: ByteArray) {
     val programRamSize = headerData[8]
     val chrRomSize = headerData[5]
     val mapper: Int = headerData[6].toUnsignedInt() shr(4) or (headerData[7].toUnsignedInt() and 0xF0)
+    val mirroring: Mirroring = if (headerData[6].toUnsignedInt() and 0x01 == 0) Mirroring.HORIZONTAL else Mirroring.VERTICAL
+
+    enum class Mirroring {
+        HORIZONTAL, VERTICAL
+    }
 
 }
