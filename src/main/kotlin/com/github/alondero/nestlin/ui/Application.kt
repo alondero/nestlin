@@ -25,7 +25,7 @@ fun main(args: Array<String>) {
 
 class NestlinApplication : FrameListener, App() {
     private lateinit var stage: Stage
-    private var canvas = Canvas(RESOLUTION_HEIGHT.toDouble(), RESOLUTION_WIDTH.toDouble())
+    private var canvas = Canvas(RESOLUTION_WIDTH.toDouble(), RESOLUTION_HEIGHT.toDouble())
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
     private var running = false
     private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
