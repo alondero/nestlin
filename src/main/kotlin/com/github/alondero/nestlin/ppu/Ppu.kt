@@ -232,16 +232,15 @@ class Ppu(var memory: Memory) {
     /**
      * Pre-load the shift registers with the first two tiles for this scanline.
      * The NES has a 2-tile buffer pre-loaded before rendering starts.
+     *
+     * After preloading:
+     * - Shift registers contain tiles 0 and 1
+     * - VRAM address is advanced by 2 positions
+     * - First fetch cycle will continue from position 2 (tiles 2-3)
      */
     private fun preloadFirstTwoTiles() {
         with(memory.ppuAddressedMemory) {
-            // Save the current VRAM address state
-            val savedCoarseX = vRamAddress.coarseXScroll
-            val savedCoarseY = vRamAddress.coarseYScroll
-            val savedHNameTable = vRamAddress.horizontalNameTable
-            val savedVNameTable = vRamAddress.verticalNameTable
-
-            // Load the first two tiles
+            // Load the first two tiles (tiles 0 and 1)
             for (tileNum in 0..1) {
                 // Fetch nametable byte
                 val nametableByte = ppuInternalMemory[controller.baseNametableAddr() or (vRamAddress.asAddress() and 0x0FFF)]
@@ -271,19 +270,14 @@ class Ppu(var memory: Memory) {
                     // Load tile 1 into upper 8 bits of shift registers
                     patternShiftLow = (patternShiftLow and 0xFF) or (patternLow.toUnsignedInt() shl 8)
                     patternShiftHigh = (patternShiftHigh and 0xFF) or (patternHigh.toUnsignedInt() shl 8)
-                    // For tile 1, we need to have palette data ready to reload
+                    // For tile 1, we need to have palette data ready to reload at cycle 9
                     paletteLatch = paletteData
                 }
 
-                // Move to next tile
+                // Move to next tile - address will now be at position 2
+                // This is where the next fetch cycle will continue
                 vRamAddress.incrementHorizontalPosition()
             }
-
-            // Restore VRAM address to where it was before pre-loading
-            vRamAddress.coarseXScroll = savedCoarseX
-            vRamAddress.coarseYScroll = savedCoarseY
-            vRamAddress.horizontalNameTable = savedHNameTable
-            vRamAddress.verticalNameTable = savedVNameTable
         }
     }
 
