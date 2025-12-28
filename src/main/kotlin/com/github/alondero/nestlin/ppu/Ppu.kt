@@ -62,9 +62,19 @@ class Ppu(var memory: Memory) {
             return
         }
 
+
         if (rendering()) {
             // Fetch sprites for this scanline at cycle 0
             if (cycle == 0) {
+                // Copy horizontal scroll from temp register BEFORE preloading
+                // This must happen before preload since preload uses vRamAddress
+                with(memory.ppuAddressedMemory) {
+                    if (scanline in 0..239 || scanline == PRE_RENDER_SCANLINE) {
+                        vRamAddress.coarseXScroll = tempVRamAddress.coarseXScroll
+                        vRamAddress.horizontalNameTable = tempVRamAddress.horizontalNameTable
+                    }
+                }
+
                 fetchActiveSpriteDataForScanline(scanline)
                 // Pre-load the first two tiles for this scanline
                 preloadFirstTwoTiles()
@@ -124,16 +134,11 @@ class Ppu(var memory: Memory) {
     private fun checkAndSetVerticalAndHorizontalData() {
         when (cycle) {
             256 -> memory.ppuAddressedMemory.vRamAddress.incrementVerticalPosition()
-            257 -> with(memory.ppuAddressedMemory) {
-                vRamAddress.coarseXScroll = tempVRamAddress.coarseXScroll
-                vRamAddress.horizontalNameTable = tempVRamAddress.horizontalNameTable
-            }
         }
 
         if (scanline == PRE_RENDER_SCANLINE && cycle in 280..304) {
             with (memory.ppuAddressedMemory) {
                 vRamAddress.coarseYScroll = tempVRamAddress.coarseYScroll
-                vRamAddress.fineYScroll = tempVRamAddress.fineYScroll
                 vRamAddress.verticalNameTable = tempVRamAddress.verticalNameTable
             }
         }
@@ -359,17 +364,21 @@ class Ppu(var memory: Memory) {
                 sprite.shiftHigh = sprite.shiftHigh shl 1
             }
 
-            // Extract pixel from shift registers with fine X scroll
-            // Fine X scroll (0-7) determines which bit to extract
+            // Extract pixel from shift registers
+            // Fine X scroll only applies to the first tile (pixels 0-7)
+            // After first tile, extract from bit 15 (MSB) normally
             val fineX = memory.ppuAddressedMemory.fineXScroll
-            val shiftAmount = 15 - fineX
-            val paletteShiftAmount = 7 - fineX
+            val pixelIndexInScanline = cycle - 1  // 0-255
+
+            // For first 8 pixels, apply fine X offset; after that, extract from MSB
+            val shiftAmount = if (pixelIndexInScanline < 8) 15 - fineX else 15
+            val paletteShiftAmount = if (pixelIndexInScanline < 8) 7 - fineX else 7
 
             val patternBit0 = (patternShiftLow shr shiftAmount) and 1
             val patternBit1 = (patternShiftHigh shr shiftAmount) and 1
             val pixelValue = (patternBit1 shl 1) or patternBit0
 
-            // Extract palette bits with fine X scroll
+            // Extract palette bits
             val paletteBit0 = (paletteShiftLow.toInt() shr paletteShiftAmount) and 1
             val paletteBit1 = (paletteShiftHigh.toInt() shr paletteShiftAmount) and 1
             val paletteIndex = (paletteBit1 shl 1) or paletteBit0
