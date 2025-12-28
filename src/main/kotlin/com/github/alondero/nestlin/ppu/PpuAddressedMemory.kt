@@ -340,6 +340,10 @@ class PpuInternalMemory {
      * CHR ROM contains tile graphics data.
      * $0000-$0FFF: Pattern table 0
      * $1000-$1FFF: Pattern table 1
+     *
+     * For cartridges with small CHR ROMs (8KB or less), the CHR ROM is mirrored
+     * across both pattern tables (both tables see the same data).
+     * For cartridges with 16KB+ CHR ROM, pattern table 0 and 1 are separate.
      */
     fun loadChrRom(chrRom: ByteArray) {
         if (chrRom.isEmpty()) return
@@ -353,8 +357,14 @@ class PpuInternalMemory {
             endIndex = table0Size
         )
 
-        // Load pattern table 1 ($1000-$1FFF) if CHR ROM is large enough
-        if (chrRom.size > 0x1000) {
+        // For pattern table 1 ($1000-$1FFF):
+        // - If CHR ROM is 8KB or less: mirror pattern table 0 (same data)
+        // - If CHR ROM is larger: load second half
+        if (chrRom.size <= 0x1000) {
+            // Mirror: copy pattern table 0 data to pattern table 1
+            patternTable0.copyInto(patternTable1)
+        } else {
+            // Separate pattern tables: load second half of CHR ROM
             val table1Size = minOf(0x1000, chrRom.size - 0x1000)
             chrRom.copyInto(
                 destination = patternTable1,

@@ -55,8 +55,16 @@ class NestlinApplication : FrameListener, App() {
 
         thread {
             with(nestlin) {
+                println("[APP] Parameters: named=${parameters.named}, unnamed=${parameters.unnamed}")
                 if (!parameters.named["debug"].isNullOrEmpty()) {
                     enableLogging()
+                }
+                // Check both named parameters and unnamed for diagnostic flag
+                val hasDiagFlag = !parameters.named["ppu-diag"].isNullOrEmpty() ||
+                                  parameters.unnamed.any { it.contains("--ppu-diag") }
+                if (hasDiagFlag) {
+                    println("[APP] PPU diagnostics enabled!")
+                    enablePpuDiagnostics(0, 10)
                 }
                 load(Paths.get(parameters.unnamed[0]))
                 powerReset()
