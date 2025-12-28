@@ -35,6 +35,7 @@ class Opcodes {
         //  Set and Clear operations
         map[0x18] = setOp { it.processorStatus.carry = false } // CLC - Clear Carry Flag
         map[0x38] = setOp { it.processorStatus.carry = true } // SEC - Set Carry Flag
+        map[0x58] = setOp { it.processorStatus.interruptDisable = false } // CLI - Clear Interrupt Disable
         map[0x78] = setOp { it.processorStatus.interruptDisable = true } // SEI - Set Interrupt Disable Status
         map[0xd8] = setOp { it.processorStatus.decimalMode = false } // CLD - Clear Decimal mode
         map[0xf8] = setOp { it.processorStatus.decimalMode = true } // SED - Set Decimal mode

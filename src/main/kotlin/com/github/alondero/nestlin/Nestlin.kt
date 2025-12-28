@@ -40,10 +40,16 @@ class Nestlin {
     fun start() {
         running = true
 
-        while (running) {
-            (1..3).forEach { ppu.tick() }
-            apu.tick()
-            cpu.tick()
+        try {
+            while (running) {
+                (1..3).forEach { ppu.tick() }
+                apu.tick()
+                cpu.tick()
+            }
+        } finally {
+            // TODO: Development-only feature - Remove undocumented opcode dumping once emulator stability is proven
+            // Always dump undocumented opcodes, even if emulation crashes
+            cpu.dumpUndocumentedOpcodes()
         }
     }
 

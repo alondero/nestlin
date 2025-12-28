@@ -3,6 +3,7 @@ package com.github.alondero.nestlin.cpu
 import com.github.alondero.nestlin.*
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.log.Logger
+import java.io.File
 
 class Cpu(var memory: Memory)
 {
@@ -15,6 +16,10 @@ class Cpu(var memory: Memory)
     var idle = false
     private var logger: Logger? = null
     private val opcodes = Opcodes()
+    // TODO: Development-only feature - Remove undocumented opcode logging once emulator stability is proven
+    // This allows us to identify missing opcodes without crashing, useful for game compatibility debugging
+    private val undocumentedOpcodes = mutableSetOf<Int>()
+    private val UNDOCUMENTED_LOG_FILE = "undocumented_opcodes.txt"
 
     fun reset() {
         memory.clear()
@@ -46,10 +51,36 @@ class Cpu(var memory: Memory)
             opcodes[opcodeVal]?.also {
                 logger?.cpuTick(initialPC, opcodeVal, this)
                 it.op(this)
-            } ?: throw UnhandledOpcodeException(opcodeVal)
+            } ?: run {
+                // For test ROMs, throw exception to maintain test compatibility
+                // For regular games, log and treat as 2-cycle NOP
+                // TODO: Development-only feature - Remove this fallback once opcode coverage is complete
+                if (currentGame?.isTestRom() == true) {
+                    throw UnhandledOpcodeException(opcodeVal)
+                } else {
+                    logUndocumentedOpcode(opcodeVal, initialPC)
+                    workCyclesLeft = 2
+                }
+            }
         }
 
         if (workCyclesLeft > 0) workCyclesLeft--
+    }
+
+    private fun logUndocumentedOpcode(opcodeVal: Int, pc: Short) {
+        if (undocumentedOpcodes.add(opcodeVal)) {
+            // First time seeing this opcode, log it
+            val logEntry = "PC: ${"%04X".format(pc.toUnsignedInt())} - Undocumented opcode: 0x${"%02X".format(opcodeVal)} (treating as NOP)\n"
+            File(UNDOCUMENTED_LOG_FILE).appendText(logEntry)
+        }
+    }
+
+    fun dumpUndocumentedOpcodes() {
+        if (undocumentedOpcodes.isNotEmpty()) {
+            val summary = "Found ${undocumentedOpcodes.size} unique undocumented opcodes: " +
+                    undocumentedOpcodes.sorted().joinToString(", ") { "0x${"%02X".format(it)}" }
+            File(UNDOCUMENTED_LOG_FILE).appendText("\n$summary\n")
+        }
     }
 
     private fun checkAndHandleNmi(): Boolean {
