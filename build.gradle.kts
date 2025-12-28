@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm") version "1.9.22"
     application
+    id("org.openjfx.javafxplugin") version "0.1.0"
 }
 
 repositories {
@@ -13,8 +14,13 @@ java {
     }
 }
 
+javafx {
+    version = "21.0.1"
+    modules = listOf("javafx.controls", "javafx.graphics")
+}
+
 application {
-    mainClass.set("com.kotcrab.nestlin.ui.ApplicationKt")
+    mainClass.set("com.github.alondero.nestlin.ui.ApplicationKt")
 }
 
 dependencies {
