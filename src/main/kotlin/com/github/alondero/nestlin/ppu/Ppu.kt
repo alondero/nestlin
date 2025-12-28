@@ -429,7 +429,7 @@ class Ppu(var memory: Memory) {
                 rgbColor = NesPalette.getRgb(spriteNesColorIndex)
             }
 
-            frame[scanline, x] = rgbColor
+            frame[x, scanline] = rgbColor
         }
     }
 
