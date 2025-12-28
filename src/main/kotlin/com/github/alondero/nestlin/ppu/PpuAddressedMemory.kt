@@ -59,6 +59,14 @@ class PpuAddressedMemory {
     }
 
     operator fun set(addr: Int, value: Byte) {
+        // DEBUG: Log controller register writes
+        if (addr == 0) {
+            System.err.println("$2000 write: 0x${value.toUnsignedInt().toString(16).padStart(2, '0')} bits: NMI=${value.isBitSet(7)} masterSlave=${value.isBitSet(6)} spriteSize=${value.isBitSet(5)} bgPatTbl=${value.isBitSet(4)} sprPatTbl=${value.isBitSet(3)}")
+        }
+        // DEBUG: Log VRAM writes
+        if (addr == 7) {
+            System.err.println("VRAM write: addr=0x${vRamAddress.asAddress().toString(16).padStart(4, '0')} value=0x${value.toUnsignedInt().toString(16).padStart(2, '0')}")
+        }
 //        println("Setting PPU Addressed data ${addr.toHexString()}, with ${value.toHexString()}")
         when (addr) {
             0 -> {
@@ -339,6 +347,8 @@ class PpuInternalMemory {
     fun loadChrRom(chrRom: ByteArray) {
         if (chrRom.isEmpty()) return
 
+        System.err.println("CHR ROM size: ${chrRom.size} bytes (0x${chrRom.size.toString(16)})")
+
         // Load pattern table 0 ($0000-$0FFF)
         val table0Size = minOf(0x1000, chrRom.size)
         chrRom.copyInto(
@@ -347,6 +357,7 @@ class PpuInternalMemory {
             startIndex = 0,
             endIndex = table0Size
         )
+        System.err.println("Loaded table0: $table0Size bytes, first byte=0x${patternTable0[0].toUnsignedInt().toString(16)}")
 
         // Load pattern table 1 ($1000-$1FFF) if CHR ROM is large enough
         if (chrRom.size > 0x1000) {
@@ -357,6 +368,9 @@ class PpuInternalMemory {
                 startIndex = 0x1000,
                 endIndex = 0x1000 + table1Size
             )
+            System.err.println("Loaded table1: $table1Size bytes, first byte=0x${patternTable1[0].toUnsignedInt().toString(16)}")
+        } else {
+            System.err.println("No table1 data (CHR ROM too small)")
         }
     }
 }
