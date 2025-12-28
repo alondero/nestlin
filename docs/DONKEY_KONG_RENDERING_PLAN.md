@@ -300,58 +300,88 @@ You'll know this is working when:
 
 ---
 
-## Session Handoff: Next Steps
+## Session Handoff: Next Steps (Phase 1.6 - Continued)
 
-### Current Status (Session ending 2025-12-28)
+### Current Status (Session ending 2025-12-28 - Round 2)
 
-**MAJOR BREAKTHROUGH - Critical PPU Bugs Fixed (Commit: bea2adb)**
+**Status: Critical PPU bugs fixed, but rendering corruption persists**
 
-All root causes of corrupt graphics have been identified and fixed:
-1. ✅ Nametable fetch reading from wrong address variable (THE CRITICAL BUG)
+#### What Was Fixed (Commits: bea2adb, 5dfb49f)
+1. ✅ Nametable fetch reading from wrong address variable (main bug)
 2. ✅ VBlank timing set at wrong cycles
-3. ✅ Fetch cycle sequence was off by one
-4. ✅ Shift register reload happening too early
-5. ✅ Shift registers not pre-loaded for first two tiles
+3. ✅ Fetch cycle sequence was off by one (1, 3, 5, 7 instead of 0, 2, 4, 6)
+4. ✅ Shift register reload happening at cycle 1 (now only at 9, 17, 25...)
+5. ✅ Shift registers not pre-loaded for first two tiles (now preloads at cycle 0)
+6. ✅ Shift register preload address was being restored (now stays advanced)
 
-**Previous Session Summary:**
-- ✅ Fixed canvas dimensions bug (swapped width/height)
-- ✅ Implemented VRAM writes to PPU memory
-- ✅ Protected pattern tables from corruption
-- ✅ Game displayed flashing colors with corrupt graphics
-- ✅ Nametable receives 418+ bytes of data per frame
+#### What We Observe
+**Screenshot shows**: Checkerboard pattern of bright colors (yellow, magenta, cyan)
+- **Good news**: Tiles ARE rendering (not black screen or random noise)
+- **Bad news**: Colors are completely wrong (bright primary colors, not Donkey Kong palette)
+- **Pattern suggests**: Palette calculation is likely broken, not tile fetching
 
-### Immediate Action Items for Next Session
+#### Likely Root Causes (for next session)
+In order of probability:
 
-**Test the Fixes:**
+1. **Palette attribute extraction bug** (60% likely)
+   - The formula at Ppu.kt:352 extracts 2-bit palette from attribute byte
+   - The shift calculation at Ppu.kt:353 might be wrong
+   - This would explain why colors are systematically wrong but tiles render
+
+2. **Fine X scroll bug** (25% likely)
+   - Ppu.kt:366: `val shiftAmount = 15 - fineX` might be off
+   - Would cause horizontal misalignment, possibly mixing palette bits
+
+3. **Palette reload during preload** (10% likely)
+   - Preload doesn't use normal reload logic at cycle 9
+   - Palette might not sync correctly between preload and first fetch
+
+4. **Palette RAM corruption** (5% likely)
+   - Game writes wrong palette data
+   - Less likely since other emulators work with same ROM
+
+### Debugging Strategy for Next Session
+
+**Step 1: Verify Basic Tile Fetching**
+```kotlin
+// Log first scanline tile/palette at cycle 9 (after first reload)
+if (scanline == 0 && cycle == 9) {
+    System.err.println("After reload: patternLow=${patternLatchLow.toUnsignedInt()} palette=$paletteLatch")
+}
 ```
-./gradlew run --args="testroms/donkeykong.nes"
+
+**Step 2: Trace Palette Calculation**
+```kotlin
+// At Ppu.kt:352-353, log what palette is extracted
+val attributeAddr = 0x23C0 or (v and 0x0C00) or ((v shr 4) and 0x38) or ((v shr 2) and 0x07)
+val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
+val shift = ((v shr 4) and 4) or (v and 2)
+val extractedPalette = ((attributeByte shr shift) and 0x03)
+System.err.println("Palette calc: attributeByte=0x${attributeByte.toString(16)} shift=$shift result=$extractedPalette")
 ```
 
-Expected results after fixes:
-1. Donkey Kong title screen should display with proper graphics (barrels, ladders)
-2. Colors should be correct (no more flashing)
-3. Tile rendering should show proper game elements
-4. If graphics still corrupt, the issue is now in different component (fine X scroll, palette math, or pixel output logic)
+**Step 3: Compare Against Reference**
+- Download emulator known to work (FCEUX, Nestopia)
+- Compare palette RAM contents after boot
+- Compare first scanline rendering
 
-**If rendering still has issues:**
-1. Compare first scanline nametable data with Donkey Kong ROM expectations
-2. Verify fine X scroll implementation (Ppu.kt:365-366)
-3. Check palette index extraction (Ppu.kt:373-375)
-4. Log shift register contents during rendering to verify data alignment
+### Key Code Locations for Debugging
+| Issue | File | Lines | Variable |
+|-------|------|-------|----------|
+| Palette extraction | Ppu.kt | 352-353 | `shift`, `paletteLatch` |
+| Fine X scroll | Ppu.kt | 366-367 | `shiftAmount`, `paletteShiftAmount` |
+| Shift register preload | Ppu.kt | 241-282 | `paletteShiftLow/High` |
+| Palette lookup | Ppu.kt | 425 | `paletteAddr` |
 
-**Next Priority after graphics work:**
-- Phase 2: Implement controller input ($4016/$4017)
-  - Allows interactive testing of Donkey Kong gameplay
-  - Once input works, can validate full game behavior
+### Commits History
+- **5dfb49f**: Fix shift register preload address handling
+- **bea2adb**: Critical PPU rendering bug fixes (5 major bugs)
+- **3a1c09b**: VRAM writes + pattern protection
+- **7ebdedd**: Canvas dimensions fix
+- **a49d784**: Opcode implementation
 
-### Development Notes
-- **Systematic debugging used**: Complete root cause analysis before fixes
-- **All fixes verified**: Golden log test still passes (CPU accuracy maintained)
-- **Minimal changes**: Only fixed identified bugs, no over-engineering
-- **Commits history**:
-  - bea2adb: Critical PPU rendering bug fixes
-  - 3a1c09b: VRAM writes + pattern protection
-  - 7ebdedd: Canvas dimensions fix
-  - a49d784: Opcode implementation
-- **Test Framework**: Golden log test must continue passing
-- **Development logs**: undocumented_opcodes.txt for tracking missing opcodes
+### Testing Notes
+- ✅ Golden log test passes (CPU accuracy maintained)
+- ⚠️ Rendering shows wrong colors but proper tile structure
+- Game boots and runs (CPU working fine)
+- Pattern is repeating/ordered (not random garbage)
