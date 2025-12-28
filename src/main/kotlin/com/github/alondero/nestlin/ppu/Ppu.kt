@@ -17,6 +17,16 @@ class Ppu(var memory: Memory) {
     private var cycle = 0
     private var scanline = 0
 
+    private fun reverseBits(value: Int): Int {
+        var result = 0
+        var v = value
+        for (i in 0..7) {
+            result = (result shl 1) or (v and 1)
+            v = v shr 1
+        }
+        return result
+    }
+
     // Pattern table shift registers (16-bit, hold 2 tiles worth of bitmap data)
     // Bit 15 = current pixel being rendered, bits shift left each cycle
     private var patternShiftLow: Int = 0
@@ -31,6 +41,9 @@ class Ppu(var memory: Memory) {
     private var patternLatchLow: Byte = 0
     private var patternLatchHigh: Byte = 0
     private var paletteLatch: Int = 0
+
+    // Active sprites for current scanline (max 8)
+    private val activeSpriteBuffer = mutableListOf<ActiveSprite>()
 
     private var listener: FrameListener? = null
     private var vBlank = false
@@ -49,6 +62,11 @@ class Ppu(var memory: Memory) {
         }
 
         if (rendering()) {
+            // Fetch sprites for this scanline at cycle 0
+            if (cycle == 0) {
+                fetchActiveSpriteDataForScanline(scanline)
+            }
+
             //  Fetch tile data
             when (cycle) {// Idle
                 in 1..256 -> fetchData()
@@ -145,6 +163,67 @@ class Ppu(var memory: Memory) {
 //        In addition to this, the X positions and attributes for each sprite are loaded from the secondary OAM into their respective counters/latches. This happens during the second garbage nametable fetch, with the attribute byte loaded during the first tick and the X coordinate during the second.
     }
 
+    /**
+     * Fetch active sprites for the current scanline.
+     * Checks all 64 sprites in OAM, adds those on current scanline to active buffer.
+     */
+    private fun fetchActiveSpriteDataForScanline(scanline: Int) {
+        activeSpriteBuffer.clear()
+
+        // Get access to PPU's ObjectAttributeMemory
+        val oam = memory.ppuAddressedMemory.objectAttributeMemory
+
+        // Check all 64 sprites in OAM
+        for (i in 0 until 64) {
+            if (activeSpriteBuffer.size >= 8) break  // Max 8 sprites per scanline
+
+            val spriteData = oam.getSprite(i)
+            val spriteY = spriteData.y
+            val spriteHeight = 8  // Minimal path: 8×8 only
+
+            // Check if sprite is visible on current scanline
+            // In the NES, Y position 0 is off-screen (renders at scanline 1)
+            if (scanline > spriteY && scanline <= (spriteY + spriteHeight)) {
+                val tileYOffset = scanline - spriteY - 1  // 0-7 within tile
+
+                // Apply vertical flip if needed
+                val tileY = if (spriteData.verticalFlip) {
+                    (spriteHeight - 1) - tileYOffset
+                } else {
+                    tileYOffset
+                }
+
+                // Fetch sprite tile data from pattern table
+                val patternBase = memory.ppuAddressedMemory.controller.spritePatternTableAddress()
+                val tileIndex = spriteData.tileIndex.toUnsignedInt()
+                val tileAddr = patternBase + (tileIndex * 16) + tileY
+
+                val tileDataLow = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr]
+                val tileDataHigh = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr + 8]
+
+                // Load shift registers with tile data
+                val activeSprite = ActiveSprite(
+                    data = spriteData,
+                    tileDataLow = tileDataLow,
+                    tileDataHigh = tileDataHigh
+                )
+
+                // Initialize shift registers with tile data, apply horizontal flip
+                if (spriteData.horizontalFlip) {
+                    // If flipped, reverse bit order
+                    activeSprite.shiftLow = reverseBits(tileDataLow.toUnsignedInt() and 0xFF)
+                    activeSprite.shiftHigh = reverseBits(tileDataHigh.toUnsignedInt() and 0xFF)
+                } else {
+                    // Normal: no flip, just load the data
+                    activeSprite.shiftLow = tileDataLow.toUnsignedInt()
+                    activeSprite.shiftHigh = tileDataHigh.toUnsignedInt()
+                }
+
+                activeSpriteBuffer.add(activeSprite)
+            }
+        }
+    }
+
     private fun fetchData() {
         when (cycle % 8) {
             0 -> with (memory.ppuAddressedMemory){
@@ -207,6 +286,12 @@ class Ppu(var memory: Memory) {
             paletteShiftLow = (paletteShiftLow.toInt() shl 1).toByte()
             paletteShiftHigh = (paletteShiftHigh.toInt() shl 1).toByte()
 
+            // Shift active sprite registers
+            activeSpriteBuffer.forEach { sprite ->
+                sprite.shiftLow = sprite.shiftLow shl 1
+                sprite.shiftHigh = sprite.shiftHigh shl 1
+            }
+
             // Extract pixel from shift registers with fine X scroll
             // Fine X scroll (0-7) determines which bit to extract
             val fineX = memory.ppuAddressedMemory.fineXScroll
@@ -223,15 +308,54 @@ class Ppu(var memory: Memory) {
             val paletteIndex = (paletteBit1 shl 1) or paletteBit0
 
             // Look up color in palette RAM
-            // If pixel value is 0 (transparent), use universal background color
+            var finalPixel = 0
+            var finalPalette = 0
+            var usedBackground = false
+
+            // Extract background pixel
             val paletteAddr = if (pixelValue == 0) {
-                0x3F00 // Universal background color
+                0x3F00  // Universal background color
             } else {
+                usedBackground = true
                 0x3F00 + (paletteIndex shl 2) + pixelValue
             }
 
-            val nesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
-            val rgbColor = NesPalette.getRgb(nesColorIndex)
+            val bgNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
+            var rgbColor = NesPalette.getRgb(bgNesColorIndex)
+
+            // Check sprites (in order, first non-transparent sprite wins)
+            for (sprite in activeSpriteBuffer) {
+                // Calculate sprite X position relative to current pixel
+                val spritePixelX = cycle - sprite.data.x
+
+                // Skip if sprite is off-screen horizontally
+                if (spritePixelX < 0 || spritePixelX > 7) continue
+
+                // Extract sprite pixel from shift registers
+                val shiftAmount = 7 - spritePixelX
+                val spriteBit0 = (sprite.shiftLow shr shiftAmount) and 1
+                val spriteBit1 = (sprite.shiftHigh shr shiftAmount) and 1
+                val spritePixel = (spriteBit1 shl 1) or spriteBit0
+
+                // Skip transparent sprite pixels
+                if (spritePixel == 0) continue
+
+                // Sprite is visible - check priority
+                if (sprite.data.priority == 0 || !usedBackground) {
+                    // In front of background OR background is transparent
+                    finalPixel = spritePixel
+                    finalPalette = sprite.data.paletteIndex
+                    break  // First visible sprite wins
+                }
+            }
+
+            // Look up final color
+            if (finalPixel != 0) {
+                // Sprite pixel is visible
+                val spritePaletteAddr = 0x3F10 + (finalPalette shl 2) + finalPixel
+                val spriteNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[spritePaletteAddr].toUnsignedInt()
+                rgbColor = NesPalette.getRgb(spriteNesColorIndex)
+            }
 
             frame[scanline, x] = rgbColor
         }
@@ -245,29 +369,55 @@ class Ppu(var memory: Memory) {
 
 class ObjectAttributeMemory {
     private val memory = ByteArray(0x100)
-}
 
+    operator fun get(addr: Int): Byte = memory[addr and 0xFF]
+    operator fun set(addr: Int, value: Byte) {
+        memory[addr and 0xFF] = value
+    }
 
-class Sprites {
-    //  Holds 8 sprites for the current scanline
-    private val sprites = Array(size = 8, init = { Sprite() })
-
-    fun decrementCounters() = sprites.forEach { it.counter.dec() }
-    fun getActiveSprites() = sprites.filter(Sprite::isActive)
-}
-
-data class Sprite(
-        val objectAttributeMemory: Byte = 0,
-        var bitmapDataA: Byte = 0,
-        var bitmapDataB: Byte = 0,
-        val latch: Byte = 0,
-        val counter: Int = 0
-) {
-    fun isActive() = counter <= 0
-
-    fun shiftRegisters() {
-        bitmapDataA = bitmapDataA.shiftRight()
-        bitmapDataB = bitmapDataB.shiftRight()
+    /**
+     * Get sprite data from OAM.
+     * Each sprite occupies 4 bytes: Y, Tile, Attributes, X
+     */
+    fun getSprite(index: Int): SpriteData {
+        val base = (index and 0x3F) * 4  // 64 sprites max, wrap at boundary
+        return SpriteData(
+            y = memory[base].toUnsignedInt(),
+            tileIndex = memory[base + 1],
+            attributes = memory[base + 2],
+            x = memory[base + 3].toUnsignedInt()
+        )
     }
 }
+
+/**
+ * Sprite attribute byte format:
+ * VPHP0000
+ * V = vertical flip (1=flip)
+ * P = priority (1=behind background)
+ * H = horizontal flip (1=flip)
+ * P = palette index (0-3)
+ */
+data class SpriteData(
+    val y: Int,           // 0-255, sprite Y position
+    val tileIndex: Byte,  // Tile index in pattern table
+    val attributes: Byte, // VPHP0000
+    val x: Int            // 0-255, sprite X position
+) {
+    val paletteIndex: Int get() = (attributes.toUnsignedInt() and 0x03)
+    val priority: Int get() = (attributes.toUnsignedInt() shr 5) and 0x01  // 0=in front, 1=behind
+    val horizontalFlip: Boolean get() = (attributes.toUnsignedInt() shr 6) and 0x01 != 0
+    val verticalFlip: Boolean get() = (attributes.toUnsignedInt() shr 7) and 0x01 != 0
+}
+
+/**
+ * Sprite with fetched tile data, ready to render on current scanline.
+ */
+data class ActiveSprite(
+    val data: SpriteData,
+    val tileDataLow: Byte,    // Pattern table low byte (bit 0 plane)
+    val tileDataHigh: Byte,   // Pattern table high byte (bit 1 plane)
+    var shiftLow: Int = 0,    // 8-bit shift register, bits 7-0 = pixels 7-0
+    var shiftHigh: Int = 0    // 8-bit shift register
+)
 
