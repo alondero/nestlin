@@ -54,14 +54,7 @@ class Ppu(var memory: Memory) {
     private var lastNametableByte: Byte = 0
     private var lastAttributeTableByte: Byte = 0
 
-    // DEBUG: Track first frame pixel rendering
-    private var firstPixelLogged = false
-
     fun tick() {
-        // DEBUG: Log shift register state at cycle 1 of first few scanlines
-        if (scanline in 0..2 && cycle == 1 && rendering()) {
-            System.err.println("Cycle 1 SL$scanline START: patLow=0x${patternShiftLow.toString(16).padStart(4, '0')} patHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')} palLow=${paletteShiftLow.toUnsignedInt()} palHigh=${paletteShiftHigh.toUnsignedInt()}")
-        }
 
 //       println("Rendering ($cycle, $scanline)")
         if (cycle == 341) {
@@ -102,11 +95,6 @@ class Ppu(var memory: Memory) {
             // Each bit represents whether that pixel uses this palette bit
             paletteShiftLow = if ((paletteLatch and 0x01) != 0) 0xFF.toByte() else 0x00
             paletteShiftHigh = if ((paletteLatch and 0x02) != 0) 0xFF.toByte() else 0x00
-
-            // DEBUG: Log shift register load on first frame
-            if (scanline == 0 && cycle == 9) {
-                System.err.println("Shift load cycle 9: patternLow=0x${patternShiftLow.toString(16).padStart(4, '0')} patternHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')} paletteLow=${paletteShiftLow.toUnsignedInt()} paletteHigh=${paletteShiftHigh.toUnsignedInt()}")
-            }
         }
 
         //  Every cycle a bit is fetched from the 4 backgroundNametables shift registers in order to create a pixel on screen
@@ -147,11 +135,6 @@ class Ppu(var memory: Memory) {
     }
 
     private fun endLine() {
-        // DEBUG: Log transition between scanlines
-        if (scanline == PRE_RENDER_SCANLINE || scanline == 0) {
-            System.err.println("EndLine scanline=$scanline: patternShiftLow=0x${patternShiftLow.toString(16).padStart(4, '0')} patternShiftHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')}")
-        }
-
         when (scanline) {
             NTSC_SCANLINES - 1 -> endFrame()
             else -> scanline++
@@ -160,15 +143,6 @@ class Ppu(var memory: Memory) {
     }
 
     private fun endFrame() {
-        // DEBUG: Check if nametable has been written to
-        var nonZeroCount = 0
-        for (i in 0x2000..0x23FF) {
-            if (memory.ppuAddressedMemory.ppuInternalMemory[i].toInt() != 0) {
-                nonZeroCount++
-            }
-        }
-        System.err.println("Frame end (scanline=$scanline): Nametable has $nonZeroCount non-zero bytes out of 960")
-
         listener?.frameUpdated(frame)
 
         //  What to do here?
@@ -283,11 +257,6 @@ class Ppu(var memory: Memory) {
                 val fineY = vRamAddress.fineYScroll
                 val address = patternTableBase + (tileIndex * 16) + fineY
                 patternLatchLow = ppuInternalMemory[address]
-
-                // DEBUG: Log tile fetch on first frame
-                if (scanline == 0 && cycle == 4) {
-                    System.err.println("Tile fetch cycle 4: tileIdx=$tileIndex fineY=$fineY patBase=0x${patternTableBase.toString(16)} addr=0x${address.toString(16)} patternLow=0x${patternLatchLow.toUnsignedInt().toString(16)}")
-                }
             }
             6 -> with(memory.ppuAddressedMemory) {
                 //  Fetch High Tile Byte (bit 1 of each pixel, 8 bytes after low byte)
@@ -296,11 +265,6 @@ class Ppu(var memory: Memory) {
                 val fineY = vRamAddress.fineYScroll
                 val address = patternTableBase + (tileIndex * 16) + fineY + 8
                 patternLatchHigh = ppuInternalMemory[address]
-
-                // DEBUG: Log high byte fetch
-                if (scanline == 0 && cycle == 6) {
-                    System.err.println("Tile fetch cycle 6: tileIdx=$tileIndex fineY=$fineY patBase=0x${patternTableBase.toString(16)} addr=0x${address.toString(16)} patternHigh=0x${patternLatchHigh.toUnsignedInt().toString(16)}")
-                }
             }
         }
 
@@ -366,11 +330,6 @@ class Ppu(var memory: Memory) {
             val bgNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
             var rgbColor = NesPalette.getRgb(bgNesColorIndex)
 
-            // DEBUG: Log first frame's pixel data
-            if (!firstPixelLogged && scanline < 10 && x < 10) {
-                System.err.println("Pixel ($x,$scanline): tileIdx=$lastNametableByte pixelVal=$pixelValue paletteIdx=$paletteIndex paletteAddr=0x${paletteAddr.toString(16)} colorIdx=$bgNesColorIndex rgb=0x${rgbColor.toString(16)}")
-                firstPixelLogged = true
-            }
 
             // Check sprites (in order, first non-transparent sprite wins)
             for (sprite in activeSpriteBuffer) {
