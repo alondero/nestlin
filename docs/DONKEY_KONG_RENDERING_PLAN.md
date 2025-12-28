@@ -523,6 +523,97 @@ Recommended approach:
 
 ---
 
+## Session Handoff: Next Steps (Phase 2.0 - Scroll Latching & Fine X Bugs Fixed)
+
+### Current Status (Session ending 2025-12-28 - Round 6)
+
+**Status: Two critical bugs found and fixed - scroll position latching and fine X scroll application**
+
+#### What Was Fixed This Session
+
+1. ✅ **Scroll Position Latching Bug** (PRIMARY - Commit 78ceeaf)
+   - **Bug location**: Ppu.kt, checkAndSetVerticalAndHorizontalData() was copying horizontal scroll at cycle 257
+   - **Problem**:
+     - preloadFirstTwoTiles() runs at cycle 0, using vRamAddress
+     - But vRamAddress.coarseX wasn't synced from tempVRamAddress until cycle 257
+     - This caused preload to use OLD scroll position from previous frame
+     - Result: Only rendering 2 tiles repeatedly (tiles at coarseX 4-5 instead of 0-31)
+   - **Impact**: Completely broken tile addressing - most of screen was showing wrong tiles
+   - **Fix**: Copy horizontal scroll (coarseX, horizontalNameTable) at cycle 0 BEFORE preload
+   - **Evidence**:
+     - Before: vRamAddress.coarseX showed 1009 (out of bounds!) after temp copy
+     - After: Correct coarseX values synced before preload
+
+2. ✅ **Fine X Scroll Application Bug** (SECONDARY - Commit 78ceeaf)
+   - **Bug location**: Ppu.kt lines 362-375 (pixel extraction)
+   - **Problem**: Fine X scroll was being applied to EVERY pixel in scanline
+   - **Should be**: Fine X only applies to first 8 pixels (within first tile)
+   - **Impact**: Pixel data scrambled across entire scanline, compounding tile corruption
+   - **Fix**: Check if pixel is in first 8 positions, only apply fine X offset then
+   - **Code**: `if (pixelIndexInScanline < 8) 15 - fineX else 15`
+
+#### Debugging Methodology Used
+
+**Root Cause Investigation**:
+1. Added logging to track coarseX values through rendering
+2. Discovered coarseX was 1009 (out of bounds!) after PPUADDR write
+3. Traced through setLowerByte() and setUpper7Bits() - logic correct
+4. Found that vRamAddress and tempVRamAddress were different objects
+5. Discovered scroll copy was happening at cycle 257, too late for cycle 0 preload
+6. Added logging to PPUSCROLL/PPUADDR writes to trace scroll changes
+
+**Pattern Analysis**:
+- Only tiles 15 and 39 were ever fetched (at coarseX 4-5)
+- These stayed constant across every scanline, every frame
+- Suggested vRamAddress was stuck at wrong position
+- Systematic logging revealed timing mismatch
+
+**Hypothesis Testing**:
+- Hypothesis: Scroll copy needs to happen before preload
+- Test: Move scroll copy to cycle 0
+- Result: Correct scroll values now used during preload
+
+#### What Remains Unknown
+
+Despite fixing scroll and fine X bugs, rendering may still show issues. Possible remaining bugs:
+
+1. **Palette Loading** - Palette bits may not be loading correctly
+2. **Shift Register Timing** - Reload at cycles 9,17,25... might be wrong
+3. **Pattern Table Data** - Address calculation might have edge cases
+4. **Attribute Table** - Complex formula might have errors
+
+### Next Session Investigation Priority
+
+**Focus: Verify which tiles are now rendering**
+
+With scroll position fixed, we should see:
+- 32 different tile indices across the scanline (not just 15, 39)
+- Proper horizontal scrolling if game changes scroll position
+- More complex tile patterns in rendered output
+
+Recommended testing:
+1. Run with 15+ second timeout to capture full rendering
+2. Check if game title screen appears (not just flashing colors)
+3. Verify player sprite (Jumpman) is visible and positioned correctly
+4. Check if multiple unique tile patterns are now rendering
+
+**Key Code to Verify**:
+- Shift register reload timing (cycles 9, 17, 25...)
+- Palette bit extraction from attribute table
+- Pattern table address calculation validation
+
+### Testing Notes
+- ✅ Golden log test passes (CPU accuracy maintained)
+- ✅ Scroll position now correctly latched at cycle 0
+- ✅ Fine X scroll only applied to first tile
+- ❓ Visual rendering: Unknown if tiles now display correctly
+- 📋 **Important**: Use timeout 15+ for next test to capture full animation
+
+### Commits This Session
+- **78ceeaf**: fix: correct scroll position latching and fine X extraction
+
+---
+
 ## Session Handoff: Next Steps (Phase 1.9 - Nametable Mirroring & Frame Buffer Bugs Fixed)
 
 ### Current Status (Session ending 2025-12-28 - Round 5)
