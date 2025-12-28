@@ -9,7 +9,7 @@ This document outlines the current state of the Nestlin NES emulator and the pat
 
 Your emulator has a solid foundation:
 
-1. **CPU Implementation**: ~90 opcodes with proper addressing modes, cycle counting, and interrupt handling (NMI edge-triggered detection)
+1. **CPU Implementation**: ✅ **151 opcodes** with proper addressing modes, cycle counting, and interrupt handling (NMI edge-triggered detection) - Added CLI (0x58) and undocumented opcode fallback (Commit: a49d784)
 2. **Memory Map**: Correct RAM mirroring ($0000-$1FFF), PPU register mirroring, cartridge space mapping
 3. **ROM Loading**: iNES format parsing, Mapper 0 (NROM) support—exactly what Donkey Kong needs
 4. **PPU Framework**: Timing structure (scanlines/cycles), VRAM address register with scroll logic, tile/sprite fetching
@@ -18,36 +18,44 @@ Your emulator has a solid foundation:
 7. **Test Framework**: Golden log validation working
 8. **Nametable Mirroring**: ✅ HORIZONTAL/VERTICAL mirroring implemented and configured from iNES header (Commit: 89b5004)
 9. **Sprite Coordinate System**: ✅ Fixed sprite pixel extraction to use correct coordinate space (Commit: 89b5004)
+10. **Undocumented Opcode Support**: ✅ Defensive logging and fallback handling for unknown instructions in regular games (Commit: a49d784)
 
 ---
 
 ## ⚠️ Critical Issues Blocking Donkey Kong Display
 
-### 1. ❌ MISSING OPCODE - IMMEDIATE BLOCKER (NEW)
-- **Problem**: Donkey Kong runs for ~15-20 seconds then crashes on unimplemented opcode
-- **Impact**: Prevents any further execution/testing
-- **Fix Required**: Identify which opcode is missing and implement it
-- **Investigation**: Need to add error logging to capture opcode value when exception occurs
+### 1. ✅ MISSING OPCODE - RESOLVED
+- **Problem**: Donkey Kong crashed at ~15-20 seconds on unimplemented opcodes
+- **Fix**: Implemented CLI (0x58), added undocumented opcode fallback (Commit: a49d784)
+- **Result**: Donkey Kong now runs much further without crashing
+- **Note**: Game encounters ~25 unique undocumented SKB/NOP variants which are logged but don't crash
+- **Next blocker**: Now hitting PPU rendering issues as game waits for display output
 
-### 2. Controller Input Not Implemented (CRITICAL - Phase 2 blocker)
-- **Problem**: Donkey Kong won't respond to input—game may hang waiting for button presses
+### 2. PPU Rendering Not Producing Visual Output (CRITICAL - Phase 1.5 blocker)
+- **Problem**: Despite CPU running correctly, game doesn't display anything on screen
+- **Impact**: Can't validate rendering logic without visual output
+- **Investigation needed**:
+  - Verify tile data is being fetched from correct VRAM addresses
+  - Check shift register loading and pixel output timing
+  - Validate palette selection from attribute tables
+  - Confirm fine X scroll is being applied correctly
+- **Current Status**: PPU Framework exists but rendering pipeline may have bugs
+
+### 3. Controller Input Not Implemented (CRITICAL - Phase 2 blocker)
+- **Problem**: Donkey Kong won't respond to player input
 - **Location**: $4016 (strobe/data) and $4017 (data) registers
-- **Impact**: Hard blocker for interactive testing
+- **Impact**: Hard blocker for interactive testing and gameplay
 - **Fix Required**: Full implementation of strobe signal handling and serial data shifting
 
-### 3. ✅ PPU Rendering Path (RESOLVED)
+### 4. ✅ PPU Infrastructure (RESOLVED)
 **Fixed in Commit 89b5004:**
 - ✅ **Sprite X position calculation** - Now correctly converts from PPU cycle (1-341) to pixel coordinate (0-255)
 - ✅ **Nametable Mirroring** - Properly enforced based on iNES header (horizontal for Donkey Kong)
 
-**Still potential issues:**
-- **Fine X scroll extraction** (line 298): May have off-by-one errors in bit shifting logic
-- **Palette index calculation** (line 242): Complex attribute table formula might be wrong
-
-### 4. PPU Memory Access Timing
-- **Expected**: Each memory access should take 2 PPU cycles (read then write)
-- **Current**: Code does fetches at cycle % 8 = {0,2,4,6} but doesn't explicitly model the 2-cycle delay
-- **Risk**: Attribute table or pattern table reads could occur at wrong times, causing tile data misalignment
+**Potential issues to debug in Phase 1.5:**
+- **Fine X scroll extraction** (Ppu.kt:298): May have off-by-one errors in bit shifting logic
+- **Palette index calculation** (Ppu.kt:242): Complex attribute table formula might be wrong
+- **Shift register timing**: Reload happens at correct cycles but pixel output might be misaligned
 
 ---
 
@@ -85,12 +93,26 @@ Your emulator has a solid foundation:
 - Try a test ROM that just renders a solid colored background
 - Verify tiles render before debugging sprites
 
-### Phase 1.5: Fix Missing Opcode (NEW - BLOCKING)
+### Phase 1.5: Fix Missing Opcodes ✅ (COMPLETE)
 
-**Immediate Priority**: Identify and implement missing opcode
-- Donkey Kong crashes after ~15-20 seconds on UnhandledOpcodeException
-- Need to capture opcode value and cross-reference with 6502 instruction set
-- Once fixed, Donkey Kong should run longer and we can proceed to rendering validation
+**Completed**: Implemented CLI (0x58) and undocumented opcode fallback
+- ✅ Added CLI (Clear Interrupt Disable) opcode implementation
+- ✅ Implemented defensive logging for undocumented opcodes to `undocumented_opcodes.txt`
+- ✅ Undocumented opcodes treated as 2-cycle NOPs (instead of crashing) for regular games
+- ✅ Test ROMs still throw exceptions to maintain golden log test compatibility
+- ✅ Donkey Kong encounters ~25 unique undocumented SKB/NOP variants - all logged and handled
+- ✅ Game now runs indefinitely until hitting PPU rendering issues
+
+**TODO (Development cleanup):** Remove undocumented opcode logging once emulator stability is proven with multiple games
+
+### Phase 1.6: Debug PPU Rendering Output (NEXT - NEW BLOCKER)
+
+**Priority**: Get something visible on screen to validate rendering logic
+- Add debug visualization of tile fetching and pattern data
+- Verify frame buffer is being updated with pixel data
+- Check if UI is displaying the rendered frame
+- Validate palette application and color output
+- Once rendering works, move to Phase 2
 
 ### Phase 2: Enable Controller Input (Required for Interaction)
 
@@ -206,13 +228,15 @@ You'll know this is working when:
 - [x] Build compiles without warnings (besides shadowing)
 - [x] Donkey Kong ROM loads successfully
 - [x] Emulator doesn't crash on startup
-- [ ] Emulator runs to completion without missing opcode exception
-- [ ] First frame renders (captures in frame buffer)
-- [ ] UI displays rendered frame
-- [ ] Keyboard input is recognized
-- [ ] Game title screen displays
-- [ ] Player sprite visible and controllable
+- [x] Emulator runs indefinitely without crashing on undocumented opcodes (Commit: a49d784)
 - [x] Golden log test passes (CPU accuracy maintained)
+- [ ] First frame renders (captures in frame buffer)
+- [ ] UI displays rendered frame with visual content
+- [ ] Keyboard input is recognized and mapped to controller
+- [ ] Game title screen displays with proper graphics
+- [ ] Player sprite (Jumpman) visible and controllable
+- [ ] Game responds to input (movement, jumping)
+- [ ] Barrels and ladders render and move correctly
 
 ---
 
@@ -232,3 +256,55 @@ You'll know this is working when:
 - No bank switching, no special memory mapping, straightforward tile-based graphics
 - Main challenges are purely PPU rendering correctness and controller input
 - Once working, will serve as solid validation for the emulator architecture
+
+---
+
+## Session Handoff: Next Steps (Phase 1.6)
+
+### Problem Statement
+Donkey Kong CPU runs indefinitely without crashing (thanks to opcode fixes), but nothing appears on screen. The PPU rendering pipeline exists but is either stubbed out or has bugs preventing visual output.
+
+### Immediate Action Items for Next Session
+
+**Recommended Prompt for Next Session:**
+```
+Phase 1.6: Debug PPU Rendering Output for Donkey Kong
+
+Context: Donkey Kong now runs indefinitely thanks to CLI (0x58) implementation
+and undocumented opcode fallback (Commit a49d784). However, the game receives
+no visual feedback - likely waiting for PPU to render the title screen.
+
+Tasks:
+1. Verify the PPU rendering pipeline is actually producing pixel data
+   - Check if fetchData() in Ppu.kt is populating shift registers correctly
+   - Validate that pixel data flows through to the frame buffer
+
+2. Add debug logging to understand what's happening:
+   - Log which tiles are being fetched (tile index, VRAM address)
+   - Log palette indices selected from attribute tables
+   - Verify fine X scroll is being applied to shift register reads
+
+3. Identify the actual blocker:
+   - Is frame buffer empty? (PPU not rendering anything)
+   - Is frame buffer full but UI not displaying? (JavaFX issue)
+   - Are wrong colors/tiles rendering? (Logic bug in rendering)
+
+4. Once identified, implement fix or escalate to proper phase
+
+Key Files to Investigate:
+- src/main/kotlin/com/github/alondero/nestlin/ppu/Ppu.kt - tick(), fetchData(), pixel rendering
+- src/main/kotlin/com/github/alondero/nestlin/ui/Application.kt - frame display
+- src/main/kotlin/com/github/alondero/nestlin/ppu/PpuAddressedMemory.kt - register access
+```
+
+### Why This Matters
+Once we get any visual output on screen (even incorrect), we unlock:
+- Ability to validate tile fetching logic
+- Visual feedback for palette/color fixes
+- Foundation for Phase 2 (controller input) and Phase 3 (gameplay)
+
+### Development Notes
+- Undocumented opcode logging in `undocumented_opcodes.txt` is development-only
+- Remove logging once we have stability with multiple games running
+- Golden log test must continue passing
+- Test ROMs still throw on missing opcodes (maintains test integrity)
