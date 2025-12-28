@@ -521,22 +521,140 @@ Recommended approach:
 - **(This session)**: Fix palette bit position bug (remove shl 2 shift)
 - Previous: Fix pattern table address ranges
 
+---
+
+## Session Handoff: Next Steps (Phase 1.9 - Nametable Mirroring & Frame Buffer Bugs Fixed)
+
+### Current Status (Session ending 2025-12-28 - Round 5)
+
+**Status: Two critical bugs found and fixed, but rendering STILL SHOWS CORRUPTION with mostly zeros**
+
+#### What Was Fixed This Session
+
+1. ✅ **Nametable Mirroring Was BACKWARDS** (CRITICAL BUG - Commit 8b1b1e9)
+   - **Bug location**: PpuAddressedMemory.kt, mapNametableAddress() function (lines 281-309)
+   - **Problem**: HORIZONTAL/VERTICAL mirroring modes had opposite behavior
+     - HORIZONTAL had: 0x2400→NT0 (wrong!), 0x2800→NT1 (wrong!)
+     - VERTICAL had: 0x2400→NT1 (wrong!), 0x2800→NT0 (wrong!)
+   - **Correct mapping**:
+     - HORIZONTAL (side-by-side): [NT0][NT1] / [NT0][NT1]
+     - VERTICAL (top-bottom): [NT0][NT0] / [NT1][NT1]
+   - **Impact**: PPU was reading/writing to wrong nametable locations, causing corruption
+   - **Fix**: Corrected all four address ranges for both mirroring modes
+   - **Result**: Nametable now stable with 11 unique tile indices per frame (verified via diagnostic logging)
+
+2. ✅ **Frame Buffer Coordinate System Bug** (Commit c64189c)
+   - **Bug location**: Frame.kt line 6, operator fun set()
+   - **Problem**: Frame class had coordinates backwards
+     - Was: `operator fun set(x: Int, y: Int, value: Int) {scanlines[x][y] = value}`
+     - Should be: `operator fun set(x: Int, y: Int, value: Int) {scanlines[y][x] = value}`
+   - **Why**: scanlines structure is `Array[RESOLUTION_HEIGHT][RESOLUTION_WIDTH]` = `Array[y][x]`, but operator was treating it as `Array[x][y]`
+   - **Impact**: Pixels were being written to transposed coordinates, scrambling output
+   - **Test result**: Caused ArrayIndexOutOfBoundsException when trying to fix (revealed actual problem)
+   - **Fix**: Corrected operator to use `scanlines[y][x]` instead of `scanlines[x][y]`
+   - **Ppu.kt change**: Updated pixel write to `frame[x, scanline] = rgbColor` to match fixed operator
+
+#### Evidence Gathered
+
+**Nametable Health**:
+- Frames 0-2: Rendering disabled (mask=0x00)
+- Frame 3+: Rendering enabled (mask=0x1e)
+- Nametable sampling shows 11 unique tiles consistently: [15, 44, 56, 18, 39, 48, 37, 85, 170, 98, 0]
+- **Conclusion**: Nametable NOT corrupted anymore, data is valid
+
+**Rendering Output**:
+- Still shows mostly "0" tiles with magenta/pink blocks mixed in
+- Green background is correct (NES palette color)
+- Sprites visible and moving
+- **Not** the garbled/transposed output from before
+
+#### What Remains Unknown
+
+Despite fixing two critical bugs, rendering still shows corruption with mostly zeros:
+
+1. **Why so many zeros?**
+   - Tile 0 should be blank/empty space, but it's appearing everywhere
+   - Valid tiles (15, 44, 56, etc.) are in nametable but not showing
+   - Could indicate wrong tile is being fetched or pattern table issue
+
+2. **Pattern table lookup still wrong?**
+   - Each tile index should fetch 16 bytes from pattern table
+   - May have off-by-one in address calculation
+   - Or pattern table data being read from wrong location
+
+3. **Shift register timing still wrong?**
+   - Reload at cycles 9, 17, 25... may still be incorrect
+   - Pattern bits not being extracted at correct cycle
+   - Fine X scroll extraction may still be buggy
+
+4. **Attribute table still broken?**
+   - All attributes read as zero (correct at frame 3)
+   - But may be wrong during actual gameplay
+
+### Next Session Investigation Priority
+
+**Use Systematic Debugging Phase 1-4 again**
+
+**Focus: Why are mostly zeros rendering despite nametable having valid tiles?**
+
+Recommended diagnostic approach:
+1. Add logging to verify which tile index is being fetched each cycle
+2. Log the pattern table address being calculated
+3. Log the actual pattern bytes returned from pattern table
+4. Verify pixel extraction is getting correct bits from shift registers
+5. Check if tile 0 pattern table data is actually empty/blank
+
+**Key Code Locations to Verify**:
+| Component | File | Lines | Issue |
+|-----------|------|-------|-------|
+| Tile fetch | Ppu.kt | 247, 290-291 | Are we fetching right nametable byte? |
+| Pattern address calc | Ppu.kt | 260-261 | Is address calculation correct? |
+| Pattern data load | Ppu.kt | 262-263, 306-320 | Are we getting correct bytes? |
+| Shift register reload | Ppu.kt | 93-101 | Timing at cycles 9, 17, 25...? |
+| Pixel extraction | Ppu.kt | 365-375 | Fine X scroll extraction correct? |
+| Frame write | Ppu.kt | 432 | Now using frame[x, scanline] after fix |
+
+### Testing Notes
+- ✅ Golden log test passes (CPU accuracy maintained)
+- ✅ Nametable stable with valid tile data
+- ✅ No more crashes or out-of-bounds errors
+- ❌ Rendering still shows mostly zeros (not fixed yet)
+- ✅ Mirroring fix confirmed working (different nametable data visible in diagnostics)
+- ✅ Frame buffer fix prevents crashes
+
+### Commits This Session
+- **8b1b1e9**: fix: correct nametable mirroring logic for HORIZONTAL and VERTICAL modes
+- **c64189c**: fix: correct frame buffer pixel write coordinate order
+
 ### Next Session Prompt
 
 ```
-The palette bit shift bug has been fixed (removed shl 2 from lines 254 and 302).
-However, rendering is STILL CORRUPT, meaning there's at least one more bug.
+Two critical bugs were fixed:
+1. Nametable mirroring was BACKWARDS (fixed Commit 8b1b1e9)
+2. Frame buffer coordinates were TRANSPOSED (fixed Commit c64189c)
+
+Nametable is now stable with valid tile data (11 unique tiles per frame).
+But rendering STILL SHOWS MOSTLY ZEROS instead of proper graphics.
+
+The remaining issue is likely in the PATTERN TABLE LOOKUP or SHIFT REGISTER TIMING:
+- Tile indices in nametable are correct (15, 44, 56, 18, 39, 48, 37, 85, 170, 98, 0)
+- But pixels are rendering as mostly zeros (tile index 0)
+- Valid tiles exist in pattern table and should be visible
 
 Before starting investigation:
-1. Build and test with: timeout 15 ./gradlew run --args="testroms/donkeykong.nes"
-2. Visually inspect the output for 10+ seconds
-3. Note: Is anything rendering? Are colors wrong? Are tiles invisible?
+1. Build and test: timeout 15 ./gradlew run --args="testroms/donkeykong.nes"
+2. Verify: Golden log test passes
+3. Add diagnostic logging to trace:
+   - Which nametable bytes are being fetched
+   - Which pattern table addresses are being calculated
+   - Which pattern bytes are being loaded into shift registers
+   - Whether pixels are being extracted from shift registers correctly
 
-The bug could be in:
-- Palette memory reading (palette RAM contents)
-- Fine X scroll calculation
-- Shift register timing
-- Pixel color lookup logic
+Most likely culprits:
+- Pattern table address calculation off-by-one error
+- Shift register reload timing still incorrect (cycles 9, 17, 25...)
+- Tile fetch cycle timing misaligned (cycle % 8 == 1, 3, 5, 7)
+- Fine X scroll extraction using wrong bit positions
 
-Use systematic debugging Phase 1-4 again to find and fix the next issue.
+Use systematic debugging to trace data flow from nametable → pattern table → shift registers → pixel output.
 ```
