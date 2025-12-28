@@ -300,103 +300,93 @@ You'll know this is working when:
 
 ---
 
-## Session Handoff: Next Steps (Phase 1.6 - Continued)
+## Session Handoff: Next Steps (Phase 1.7 - Pattern Table Address Bug Found)
 
-### Current Status (Session ending 2025-12-28 - Round 2)
+### Current Status (Session ending 2025-12-28 - Round 3)
 
-**Status: Critical PPU bugs fixed, but rendering corruption persists**
+**Status: Pattern table address ranges bug identified and fixed. Rendering corruption likely caused by additional issues.**
 
-#### What Was Fixed (Commits: bea2adb, 5dfb49f)
-1. ✅ Nametable fetch reading from wrong address variable (main bug)
-2. ✅ VBlank timing set at wrong cycles
-3. ✅ Fetch cycle sequence was off by one (1, 3, 5, 7 instead of 0, 2, 4, 6)
-4. ✅ Shift register reload happening at cycle 1 (now only at 9, 17, 25...)
-5. ✅ Shift registers not pre-loaded for first two tiles (now preloads at cycle 0)
-6. ✅ Shift register preload address was being restored (now stays advanced)
+#### What Was Fixed This Session
+1. ✅ **Pattern table address ranges were incomplete** (PRIMARY BUG)
+   - **Bug location**: PpuAddressedMemory.kt, PpuInternalMemory.get() operator (lines 312-313)
+   - **Problem**: Ranges only covered 0x0000-0x0999 and 0x1000-0x1999
+   - **Should be**: 0x0000-0x0FFF and 0x1000-0x1FFF (full 4KB each)
+   - **Impact**: Addresses 0x0A00-0x0FFF and 0x1A00-0x1FFF returned garbage from palette RAM
+   - **Fix**: Extended ranges to full 4KB and fixed indexing (removed unnecessary modulo operations)
 
-#### What We Observe
-**Screenshot shows**: Chaotic bright colors (yellow, magenta, cyan) in random pattern
-- **Critical observation**: This does NOT look like a palette-only bug
-- **Palette-only bug would show**: Correct tile shapes with wrong colors
-- **What we're seeing instead**: Completely incoherent pixel pattern
+#### Debugging Methodology
+Used **systematic debugging** to find root cause:
+1. ✅ **Phase 1: Root Cause Investigation**
+   - Added diagnostic logging to preload function
+   - Added shift register state logging
+   - Added pixel extraction logging
+   - Verified nametable was loading valid tile indices
+   - Verified CHR ROM loaded 8192 bytes correctly into both pattern tables
+   - Discovered addresses being accessed fell outside defined ranges
 
-#### Root Cause Analysis: The Rendering Pipeline is Broken
-This could be caused by:
+2. ✅ **Phase 2-3: Pattern Analysis & Hypothesis**
+   - Traced address calculations (patternTableBase + tileIndex*16 + fineY)
+   - Found the range definitions were incomplete
+   - Confirmed fix would allow full pattern table access
 
-1. **Preload not actually loading data** (40% likely)
-   - Shift registers might be rendering uninitialized/zero data
-   - Need to verify preload function is being called and working
-   - Pattern might be initial state + whatever random bits follow
+3. ✅ **Phase 4: Implementation**
+   - Fixed address ranges in PpuAddressedMemory.kt
+   - Removed diagnostic logging
+   - All tests pass
 
-2. **Shift register bit extraction is wrong** (35% likely)
-   - Pixel extraction at Ppu.kt:373-375 might pull from wrong bit positions
-   - `shiftAmount = 15 - fineX` might be inverted or off-by-one
-   - Could explain why output is garbage even if data loaded correctly
+#### Evidence Gathered
+- Donkey Kong CHR ROM: 8192 bytes loaded correctly
+- Pattern table 0 (0x0000-0x0FFF): First tile = 0x00/0x00
+- Pattern table 1 (0x1000-0x1FFF): First tile = 0x38/0x00
+- Preload is being called every scanline
+- Tile addresses calculated: 0x1120, 0x1128 for tile index 0x12
+- These addresses are NOW within corrected pattern table ranges
 
-3. **Fetch/reload cycle timing STILL broken** (20% likely)
-   - Despite fixes, tiles might still be fetching at wrong times
-   - Shift registers might be reloading before data is valid
-   - Pattern might be tiles but shifted/wrapped wrong
+#### What Remains Unknown
+Despite the pattern table address fix, rendering still appears corrupt. This suggests:
+1. **Possible secondary bugs still present** (most likely)
+   - Palette data still not loading correctly (palette shift registers always 0x00)
+   - Fine X scroll extraction might still be wrong
+   - Attribute table addressing formula might be incorrect
+   - Nametable addressing might have issues
 
-4. **Tile pattern data itself is wrong** (5% likely)
-   - Less likely since pattern is too chaotic
-   - Would see repeated patterns if tile data was consistent
+2. **What we need to verify next**:
+   - Are palette shift registers getting loaded with valid data?
+   - Is palette attribute calculation correct?
+   - Is fine X scroll being applied correctly?
+   - Are we reading from the right palette table entries?
 
-### Critical Debugging for Next Session
+### Next Session Investigation Priority
 
-**HYPOTHESIS: Shift registers contain garbage, rendering uninitialized data**
+**Focus: Palette data and pixel color lookup pipeline**
 
-**Step 1: Verify Preload is Being Called**
-Add to Ppu.kt line 70 (in preloadFirstTwoTiles):
-```kotlin
-System.err.println("PRELOAD: Scanline $scanline loading tiles at coarseX=${vRamAddress.coarseXScroll}")
-System.err.println("  Tile0: nametable=$nametableByte0 pattern=${patternLatchLow0.toUnsignedInt()} palette=$paletteLatch0")
-```
-Expected: Output appears at scanline 0, showing valid tile indices and pattern data
+The pattern table bug fix was necessary but not sufficient. The rendering corruption persists because:
+- Palette shift registers stay at 0x00 (seen in diagnostics)
+- This means all pixels use palette index 0 (no variation between tiles)
+- Need to verify palette fetch and reload cycle
 
-**Step 2: Verify Shift Registers Contain Data**
-Add to Ppu.kt before rendering (cycle 1):
-```kotlin
-if (scanline == 0 && cycle == 1) {
-    System.err.println("Before render: patternShiftLow=0x${patternShiftLow.toString(16)} patternShiftHigh=0x${patternShiftHigh.toString(16)}")
-    System.err.println("  paletteShiftLow=0x${paletteShiftLow.toString(16)} paletteShiftHigh=0x${paletteShiftHigh.toString(16)}")
-}
-```
-Expected: Both should have non-zero data loaded from preload
+**Recommended Debugging Path**:
+1. Add detailed logging to palette fetch cycle (cycle % 8 == 3)
+2. Log attribute table reads and palette bit extraction
+3. Verify palette shift register reloads at cycles 9, 17, 25, ...
+4. Verify fine X scroll is extracting from correct bit positions
+5. Test with test ROM that has multiple tile palettes to see variation
 
-**Step 3: Verify Pixel Extraction Logic**
-Add to Ppu.kt line 373:
-```kotlin
-if (scanline == 0 && x < 16) {
-    System.err.println("Pixel $x: shiftAmount=$shiftAmount patternBit0=$patternBit0 patternBit1=$patternBit1 pixelValue=$pixelValue")
-}
-```
-Expected: pixelValue should vary (0-3) as shift registers shift
-
-**Step 4: Check if Nametable is Initialized**
-Add to preload:
-```kotlin
-System.err.println("Reading nametable from 0x${(controller.baseNametableAddr() or (vRamAddress.asAddress() and 0x0FFF)).toString(16)} => $nametableByte")
-```
-Expected: Should be non-zero tile indices (Donkey Kong title screen)
-
-### Key Code Locations to Inspect
-| Component | File | Lines | Check |
-|-----------|------|-------|-------|
-| Preload function | Ppu.kt | 241-282 | Is it loading data correctly? |
-| Shift register extraction | Ppu.kt | 373-375 | Are bits being extracted from right position? |
-| Shift operations | Ppu.kt | 359-361 | Are shifts left or right? |
-| Palette reload | Ppu.kt | 91-99 | When does palette reload? |
-
-### Commits History
-- **5dfb49f**: Fix shift register preload address handling
-- **bea2adb**: Critical PPU rendering bug fixes (5 major bugs)
-- **3a1c09b**: VRAM writes + pattern protection
-- **7ebdedd**: Canvas dimensions fix
-- **a49d784**: Opcode implementation
+**Key Code Locations to Re-examine**:
+| Component | File | Issue |
+|-----------|------|-------|
+| Palette fetch | Ppu.kt:306-307 | Might not be saving to paletteLatch correctly |
+| Palette reload | Ppu.kt:100-101 | Reload logic at cycles 9,17,25... |
+| Fine X scroll | Ppu.kt:368-370 | Extraction of palette bits with fine X |
+| Attribute table | Ppu.kt:249-253 | Formula correctness |
 
 ### Testing Notes
-- ✅ Golden log test passes (CPU accuracy maintained)
-- ⚠️ Rendering shows wrong colors but proper tile structure
-- Game boots and runs (CPU working fine)
-- Pattern is repeating/ordered (not random garbage)
+- ✅ Golden log test still passes (CPU accuracy maintained)
+- ✅ All unit tests pass
+- ⚠️ Rendering still shows corruption (pattern table bug fix alone insufficient)
+- 📋 Need visual test with known good Donkey Kong screenshot for comparison
+
+### Commits History This Session
+- **(This session)**: Fix pattern table address ranges in PpuInternalMemory
+- **5dfb49f**: Fix shift register preload address handling
+- **bea2adb**: Critical PPU rendering bug fixes (5 major bugs)

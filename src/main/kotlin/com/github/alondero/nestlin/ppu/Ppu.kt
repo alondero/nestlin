@@ -115,6 +115,7 @@ class Ppu(var memory: Memory) {
 //            }
 //        }
 
+
         cycle++
     }
 
@@ -256,8 +257,11 @@ class Ppu(var memory: Memory) {
                 val patternTableBase = controller.backgroundPatternTableAddress()
                 val tileIndex = nametableByte.toUnsignedInt()
                 val fineY = vRamAddress.fineYScroll
-                val patternLow = ppuInternalMemory[patternTableBase + (tileIndex * 16) + fineY]
-                val patternHigh = ppuInternalMemory[patternTableBase + (tileIndex * 16) + fineY + 8]
+                val patternLowAddr = patternTableBase + (tileIndex * 16) + fineY
+                val patternHighAddr = patternTableBase + (tileIndex * 16) + fineY + 8
+                val patternLow = ppuInternalMemory[patternLowAddr]
+                val patternHigh = ppuInternalMemory[patternHighAddr]
+
 
                 if (tileNum == 0) {
                     // Load tile 0 into lower 8 bits of shift registers
@@ -369,6 +373,7 @@ class Ppu(var memory: Memory) {
             val paletteBit0 = (paletteShiftLow.toInt() shr paletteShiftAmount) and 1
             val paletteBit1 = (paletteShiftHigh.toInt() shr paletteShiftAmount) and 1
             val paletteIndex = (paletteBit1 shl 1) or paletteBit0
+
 
             // Look up color in palette RAM
             var finalPixel = 0

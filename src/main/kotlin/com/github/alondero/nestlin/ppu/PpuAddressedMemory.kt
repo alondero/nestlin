@@ -309,8 +309,8 @@ class PpuInternalMemory {
     }
 
     operator fun get(addr: Int): Byte = when (addr) {
-        in 0x0000..0x0999 -> patternTable0[addr % 0x1000]
-        in 0x1000..0x1999 -> patternTable1[addr % 0x1000]
+        in 0x0000..0x0FFF -> patternTable0[addr]
+        in 0x1000..0x1FFF -> patternTable1[addr - 0x1000]
         in 0x2000..0x2FFF -> {
             val (table, offset) = mapNametableAddress(addr)
             table[offset]
