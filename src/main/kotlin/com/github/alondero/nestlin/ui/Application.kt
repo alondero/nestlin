@@ -15,6 +15,8 @@ import tornadofx.App
 import java.nio.file.Paths
 import kotlin.concurrent.thread
 
+const val DISPLAY_SCALE = 4  // 4x magnification for debugging
+
 fun main(args: Array<String>) {
     when {
         args.size == 0 -> throw IllegalStateException("Please provide a rom file as an argument")
@@ -25,24 +27,32 @@ fun main(args: Array<String>) {
 
 class NestlinApplication : FrameListener, App() {
     private lateinit var stage: Stage
-    private var canvas = Canvas(RESOLUTION_WIDTH.toDouble(), RESOLUTION_HEIGHT.toDouble())
+    private var canvas = Canvas((RESOLUTION_WIDTH * DISPLAY_SCALE).toDouble(), (RESOLUTION_HEIGHT * DISPLAY_SCALE).toDouble())
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
     private var running = false
     private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
 
     override fun start(stage: Stage) {
         this.stage = stage.apply {
-            title = "Nestlin"
+            title = "Nestlin - ${DISPLAY_SCALE}x Magnification"
             scene = Scene(StackPane().apply { children.add(canvas) })
             show()
         }
 
         object: AnimationTimer() {
             override fun handle(now: Long) {
-                val pixelWriter = canvas.graphicsContext2D.pixelWriter
+                val gc = canvas.graphicsContext2D
+
+                // Scale the graphics context for 4x magnification
+                gc.save()
+                gc.scale(DISPLAY_SCALE.toDouble(), DISPLAY_SCALE.toDouble())
+
+                val pixelWriter = gc.pixelWriter
                 val pixelFormat = PixelFormat.getByteRgbInstance()
 
                 pixelWriter.setPixels(0, 0, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, pixelFormat, nextFrame, 0, RESOLUTION_WIDTH*3)
+
+                gc.restore()
             }
 
         }.start()
