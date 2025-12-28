@@ -268,21 +268,51 @@ class PpuInternalMemory {
     private val patternTable1 = ByteArray(0x1000)
     private val nameTable0 = ByteArray(0x400)
     private val nameTable1 = ByteArray(0x400)
-    private val nameTable2 = ByteArray(0x400)
-    private val nameTable3 = ByteArray(0x400)
     private val paletteRam = PaletteRam()
 
+    var mirroring = Mirroring.HORIZONTAL
 
-//    private val backgroundNametables = Background()
-//    private val spriteNametables = Sprites()
+    enum class Mirroring {
+        HORIZONTAL, VERTICAL
+    }
+
+    private fun mapNametableAddress(addr: Int): Pair<ByteArray, Int> {
+        return when {
+            addr in 0x2000..0x23FF -> {
+                when (mirroring) {
+                    Mirroring.HORIZONTAL -> Pair(nameTable0, addr % 0x400)
+                    Mirroring.VERTICAL -> Pair(nameTable0, addr % 0x400)
+                }
+            }
+            addr in 0x2400..0x27FF -> {
+                when (mirroring) {
+                    Mirroring.HORIZONTAL -> Pair(nameTable0, addr % 0x400)  // H-mirror: maps to same as 0x2000
+                    Mirroring.VERTICAL -> Pair(nameTable1, addr % 0x400)
+                }
+            }
+            addr in 0x2800..0x2BFF -> {
+                when (mirroring) {
+                    Mirroring.HORIZONTAL -> Pair(nameTable1, addr % 0x400)
+                    Mirroring.VERTICAL -> Pair(nameTable0, addr % 0x400)  // V-mirror: maps to same as 0x2000
+                }
+            }
+            addr in 0x2C00..0x2FFF -> {
+                when (mirroring) {
+                    Mirroring.HORIZONTAL -> Pair(nameTable1, addr % 0x400)
+                    Mirroring.VERTICAL -> Pair(nameTable1, addr % 0x400)
+                }
+            }
+            else -> error("Invalid nametable address: ${addr.toString(16)}")
+        }
+    }
 
     operator fun get(addr: Int): Byte = when (addr) {
         in 0x0000..0x0999 -> patternTable0[addr % 0x1000]
         in 0x1000..0x1999 -> patternTable1[addr % 0x1000]
-        in 0x2000..0x23FF -> nameTable0[addr % 0x400]
-        in 0x2400..0x27FF -> nameTable1[addr % 0x400]
-        in 0x2800..0x2BFF -> nameTable2[addr % 0x400]
-        in 0x2C00..0x2FFF -> nameTable3[addr % 0x400]
+        in 0x2000..0x2FFF -> {
+            val (table, offset) = mapNametableAddress(addr)
+            table[offset]
+        }
         in 0x3000..0x3EFF -> this[addr - 0x1000] // Mirror of 0x2000 - 0x2EFF
         else /*in 0x3F00..0x3FFF*/ -> paletteRam[addr % 0x020]
     }
@@ -291,10 +321,10 @@ class PpuInternalMemory {
         when (addr) {
             in 0x0000..0x0999 -> patternTable0[addr % 0x1000] = value
             in 0x1000..0x1999 -> patternTable1[addr % 0x1000] = value
-            in 0x2000..0x23FF -> nameTable0[addr % 0x400] = value
-            in 0x2400..0x27FF -> nameTable1[addr % 0x400] = value
-            in 0x2800..0x2BFF -> nameTable2[addr % 0x400] = value
-            in 0x2C00..0x2FFF -> nameTable3[addr % 0x400] = value
+            in 0x2000..0x2FFF -> {
+                val (table, offset) = mapNametableAddress(addr)
+                table[offset] = value
+            }
             in 0x3000..0x3EFF -> this[addr - 0x1000] = value // Mirror of 0x2000 - 0x2EFF
             else /*in 0x3F00..0x3FFF*/ -> paletteRam[addr % 0x020] = value
         }
