@@ -32,6 +32,9 @@ class Ppu(var memory: Memory) {
     private var patternLatchHigh: Byte = 0
     private var paletteLatch: Int = 0
 
+    // Active sprites for current scanline (max 8)
+    private val activeSpriteBuffer = mutableListOf<ActiveSprite>()
+
     private var listener: FrameListener? = null
     private var vBlank = false
     private var frame = Frame()
@@ -143,6 +146,53 @@ class Ppu(var memory: Memory) {
 //        If there are less than 8 spriteNametables on the next scanline, then dummy fetches to tile $FF occur for the left-over spriteNametables, because of the dummy sprite data in the secondary OAM (see sprite evaluation). This data is then discarded, and the spriteNametables are loaded with a transparent bitmap instead.
 //
 //        In addition to this, the X positions and attributes for each sprite are loaded from the secondary OAM into their respective counters/latches. This happens during the second garbage nametable fetch, with the attribute byte loaded during the first tick and the X coordinate during the second.
+    }
+
+    /**
+     * Fetch active sprites for the current scanline.
+     * Checks all 64 sprites in OAM, adds those on current scanline to active buffer.
+     */
+    private fun fetchActiveSpriteDataForScanline(scanline: Int) {
+        activeSpriteBuffer.clear()
+
+        // Get access to PPU's ObjectAttributeMemory
+        val oam = memory.ppuAddressedMemory.objectAttributeMemory
+
+        // Check all 64 sprites in OAM
+        for (i in 0 until 64) {
+            if (activeSpriteBuffer.size >= 8) break  // Max 8 sprites per scanline
+
+            val spriteData = oam.getSprite(i)
+            val spriteY = spriteData.y
+            val spriteHeight = 8  // Minimal path: 8×8 only
+
+            // Check if sprite is visible on current scanline
+            // In the NES, Y position 0 is off-screen (renders at scanline 1)
+            if (scanline > spriteY && scanline <= (spriteY + spriteHeight)) {
+                val tileYOffset = scanline - spriteY - 1  // 0-7 within tile
+
+                // Apply vertical flip if needed
+                val tileY = if (spriteData.verticalFlip) {
+                    (spriteHeight - 1) - tileYOffset
+                } else {
+                    tileYOffset
+                }
+
+                // Fetch sprite tile data from pattern table
+                val patternBase = memory.ppuAddressedMemory.controller.spritePatternTableAddress()
+                val tileIndex = spriteData.tileIndex.toUnsignedInt()
+                val tileAddr = patternBase + (tileIndex * 16) + tileY
+
+                val tileDataLow = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr]
+                val tileDataHigh = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr + 8]
+
+                activeSpriteBuffer.add(ActiveSprite(
+                    data = spriteData,
+                    tileDataLow = tileDataLow,
+                    tileDataHigh = tileDataHigh
+                ))
+            }
+        }
     }
 
     private fun fetchData() {
