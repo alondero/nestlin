@@ -201,7 +201,7 @@ class Opcodes {
                     registers.programCounter
                 }
 
-                //  TODO: Takes 6 cycles
+                workCyclesLeft = 6
             }
         }
 
@@ -216,7 +216,7 @@ class Opcodes {
 
         // NOP - No Operation
         map[0xea] = Opcode {
-            // TODO: Takes 2 cycles
+            it.workCyclesLeft = 2
         }
 
         //  RTS - Return from Subroutine
@@ -227,8 +227,9 @@ class Opcodes {
                 it.registers.programCounter = ((lowByte and 0xff) or (highByte shl 8)).toSignedShort()
                 it.registers.programCounter++
 //                println("Returning to Program Counter ${it.registers.programCounter.toHexString()}")
+
+                workCyclesLeft = 6
             }
-            //  TODO: Takes 6 cycles
         }
 
         //  PLA - Pull A from Stack
@@ -236,7 +237,8 @@ class Opcodes {
             it.apply {
                 registers.accumulator = pop()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-                //  TODO: Takes 4 cycles
+
+                workCyclesLeft = 4
             }
         }
 
@@ -246,7 +248,8 @@ class Opcodes {
             it.apply {
                 registers.indexY = ((registers.indexY + 1) and 0xFF).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.indexY)
-                //  TODO: Takes 2 cycles
+
+                workCyclesLeft = 2
             }
         }
 
@@ -255,7 +258,8 @@ class Opcodes {
             it.apply {
                 registers.indexY = ((registers.indexY - 1) and 0xFF).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.indexY)
-                //  TODO: Takes 2 cycles
+
+                workCyclesLeft = 2
             }
         }
 
@@ -264,7 +268,8 @@ class Opcodes {
             it.apply {
                 registers.indexX = ((registers.indexX + 1) and 0xFF).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.indexX)
-                //  TODO: Takes 2 cycles
+
+                workCyclesLeft = 2
             }
         }
 
@@ -273,16 +278,17 @@ class Opcodes {
             it.apply {
                 registers.indexX = ((registers.indexX - 1) and 0xFF).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.indexX)
-                //  TODO: Takes 2 cycles
+
+                workCyclesLeft = 2
             }
         }
 
         //  PLP - Pull ProcessorStatus from Stack
         map[0x28] = Opcode {
             it.apply {
-                //  TODO: Handle some interrupt?
                 processorStatus.toFlags(pop())
-                //  TODO: Takes 4 cycles
+
+                workCyclesLeft = 4
             }
         }
 
@@ -291,7 +297,8 @@ class Opcodes {
             it.apply {
                 processorStatus.toFlags(pop())
                 registers.programCounter = (pop().toUnsignedInt() or (pop().toUnsignedInt() shl 8)).toSignedShort()
-                //  TODO: Takes 6 cycles
+
+                workCyclesLeft = 6
             }
         }
 
@@ -301,7 +308,8 @@ class Opcodes {
                 processorStatus.carry = registers.accumulator.isBitSet(0)
                 registers.accumulator = (registers.accumulator.toUnsignedInt() shr 1).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-                //  TODO: Takes 2 cycles
+
+                workCyclesLeft = 2
             }
         }
 
@@ -311,7 +319,8 @@ class Opcodes {
                 processorStatus.carry = registers.accumulator.isBitSet(7)
                 registers.accumulator = (registers.accumulator.toUnsignedInt() shl 1).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-                //  TODO: Takes 2 cycles
+
+                workCyclesLeft = 2
             }
         }
 
@@ -322,7 +331,8 @@ class Opcodes {
                 processorStatus.carry = registers.accumulator.isBitSet(0)
                 registers.accumulator = ((registers.accumulator.toUnsignedInt() shr 1) or (if (oldCarry) 0x80 else 0)).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-                //  TODO: Takes 2 cycles
+
+                workCyclesLeft = 2
             }
         }
 
@@ -333,7 +343,8 @@ class Opcodes {
                 processorStatus.carry = (newAccumulator and 0xFF00) > 0
                 registers.accumulator = (newAccumulator and 0xFF).toSignedByte()
                 processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-                //  TODO: Takes 2 cycles
+
+                workCyclesLeft = 2
             }
         }
 
