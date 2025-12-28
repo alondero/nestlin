@@ -315,63 +315,78 @@ You'll know this is working when:
 6. ✅ Shift register preload address was being restored (now stays advanced)
 
 #### What We Observe
-**Screenshot shows**: Checkerboard pattern of bright colors (yellow, magenta, cyan)
-- **Good news**: Tiles ARE rendering (not black screen or random noise)
-- **Bad news**: Colors are completely wrong (bright primary colors, not Donkey Kong palette)
-- **Pattern suggests**: Palette calculation is likely broken, not tile fetching
+**Screenshot shows**: Chaotic bright colors (yellow, magenta, cyan) in random pattern
+- **Critical observation**: This does NOT look like a palette-only bug
+- **Palette-only bug would show**: Correct tile shapes with wrong colors
+- **What we're seeing instead**: Completely incoherent pixel pattern
 
-#### Likely Root Causes (for next session)
-In order of probability:
+#### Root Cause Analysis: The Rendering Pipeline is Broken
+This could be caused by:
 
-1. **Palette attribute extraction bug** (60% likely)
-   - The formula at Ppu.kt:352 extracts 2-bit palette from attribute byte
-   - The shift calculation at Ppu.kt:353 might be wrong
-   - This would explain why colors are systematically wrong but tiles render
+1. **Preload not actually loading data** (40% likely)
+   - Shift registers might be rendering uninitialized/zero data
+   - Need to verify preload function is being called and working
+   - Pattern might be initial state + whatever random bits follow
 
-2. **Fine X scroll bug** (25% likely)
-   - Ppu.kt:366: `val shiftAmount = 15 - fineX` might be off
-   - Would cause horizontal misalignment, possibly mixing palette bits
+2. **Shift register bit extraction is wrong** (35% likely)
+   - Pixel extraction at Ppu.kt:373-375 might pull from wrong bit positions
+   - `shiftAmount = 15 - fineX` might be inverted or off-by-one
+   - Could explain why output is garbage even if data loaded correctly
 
-3. **Palette reload during preload** (10% likely)
-   - Preload doesn't use normal reload logic at cycle 9
-   - Palette might not sync correctly between preload and first fetch
+3. **Fetch/reload cycle timing STILL broken** (20% likely)
+   - Despite fixes, tiles might still be fetching at wrong times
+   - Shift registers might be reloading before data is valid
+   - Pattern might be tiles but shifted/wrapped wrong
 
-4. **Palette RAM corruption** (5% likely)
-   - Game writes wrong palette data
-   - Less likely since other emulators work with same ROM
+4. **Tile pattern data itself is wrong** (5% likely)
+   - Less likely since pattern is too chaotic
+   - Would see repeated patterns if tile data was consistent
 
-### Debugging Strategy for Next Session
+### Critical Debugging for Next Session
 
-**Step 1: Verify Basic Tile Fetching**
+**HYPOTHESIS: Shift registers contain garbage, rendering uninitialized data**
+
+**Step 1: Verify Preload is Being Called**
+Add to Ppu.kt line 70 (in preloadFirstTwoTiles):
 ```kotlin
-// Log first scanline tile/palette at cycle 9 (after first reload)
-if (scanline == 0 && cycle == 9) {
-    System.err.println("After reload: patternLow=${patternLatchLow.toUnsignedInt()} palette=$paletteLatch")
+System.err.println("PRELOAD: Scanline $scanline loading tiles at coarseX=${vRamAddress.coarseXScroll}")
+System.err.println("  Tile0: nametable=$nametableByte0 pattern=${patternLatchLow0.toUnsignedInt()} palette=$paletteLatch0")
+```
+Expected: Output appears at scanline 0, showing valid tile indices and pattern data
+
+**Step 2: Verify Shift Registers Contain Data**
+Add to Ppu.kt before rendering (cycle 1):
+```kotlin
+if (scanline == 0 && cycle == 1) {
+    System.err.println("Before render: patternShiftLow=0x${patternShiftLow.toString(16)} patternShiftHigh=0x${patternShiftHigh.toString(16)}")
+    System.err.println("  paletteShiftLow=0x${paletteShiftLow.toString(16)} paletteShiftHigh=0x${paletteShiftHigh.toString(16)}")
 }
 ```
+Expected: Both should have non-zero data loaded from preload
 
-**Step 2: Trace Palette Calculation**
+**Step 3: Verify Pixel Extraction Logic**
+Add to Ppu.kt line 373:
 ```kotlin
-// At Ppu.kt:352-353, log what palette is extracted
-val attributeAddr = 0x23C0 or (v and 0x0C00) or ((v shr 4) and 0x38) or ((v shr 2) and 0x07)
-val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
-val shift = ((v shr 4) and 4) or (v and 2)
-val extractedPalette = ((attributeByte shr shift) and 0x03)
-System.err.println("Palette calc: attributeByte=0x${attributeByte.toString(16)} shift=$shift result=$extractedPalette")
+if (scanline == 0 && x < 16) {
+    System.err.println("Pixel $x: shiftAmount=$shiftAmount patternBit0=$patternBit0 patternBit1=$patternBit1 pixelValue=$pixelValue")
+}
 ```
+Expected: pixelValue should vary (0-3) as shift registers shift
 
-**Step 3: Compare Against Reference**
-- Download emulator known to work (FCEUX, Nestopia)
-- Compare palette RAM contents after boot
-- Compare first scanline rendering
+**Step 4: Check if Nametable is Initialized**
+Add to preload:
+```kotlin
+System.err.println("Reading nametable from 0x${(controller.baseNametableAddr() or (vRamAddress.asAddress() and 0x0FFF)).toString(16)} => $nametableByte")
+```
+Expected: Should be non-zero tile indices (Donkey Kong title screen)
 
-### Key Code Locations for Debugging
-| Issue | File | Lines | Variable |
-|-------|------|-------|----------|
-| Palette extraction | Ppu.kt | 352-353 | `shift`, `paletteLatch` |
-| Fine X scroll | Ppu.kt | 366-367 | `shiftAmount`, `paletteShiftAmount` |
-| Shift register preload | Ppu.kt | 241-282 | `paletteShiftLow/High` |
-| Palette lookup | Ppu.kt | 425 | `paletteAddr` |
+### Key Code Locations to Inspect
+| Component | File | Lines | Check |
+|-----------|------|-------|-------|
+| Preload function | Ppu.kt | 241-282 | Is it loading data correctly? |
+| Shift register extraction | Ppu.kt | 373-375 | Are bits being extracted from right position? |
+| Shift operations | Ppu.kt | 359-361 | Are shifts left or right? |
+| Palette reload | Ppu.kt | 91-99 | When does palette reload? |
 
 ### Commits History
 - **5dfb49f**: Fix shift register preload address handling
