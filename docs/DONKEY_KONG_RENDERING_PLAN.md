@@ -390,3 +390,153 @@ The pattern table bug fix was necessary but not sufficient. The rendering corrup
 - **(This session)**: Fix pattern table address ranges in PpuInternalMemory
 - **5dfb49f**: Fix shift register preload address handling
 - **bea2adb**: Critical PPU rendering bug fixes (5 major bugs)
+
+---
+
+## Session Handoff: Next Steps (Phase 1.8 - Palette Bit Shift Bug Found and Fixed, But Rendering Still Corrupt)
+
+### Current Status (Session ending 2025-12-28 - Round 4)
+
+**Status: Palette bit shift bug identified and fixed using systematic debugging. Rendering still appears corrupt despite the fix, indicating another secondary bug remains.**
+
+#### What Was Fixed This Session
+1. ✅ **Palette bits were in wrong bit positions** (SECONDARY BUG)
+   - **Bug location**: Ppu.kt lines 254 (preload) and 302 (fetch cycle)
+   - **Problem**: Code used `shl 2` to shift palette bits from [1:0] to [3:2]
+   - **Root cause**: Reload logic expected palette bits at [1:0] (`paletteLatch and 0x01`, `paletteLatch and 0x02`)
+   - **Impact**: Palette shift registers always reloaded as 0x00 (all pixels use palette color 0)
+   - **Fix**: Removed `shl 2` shift - kept palette bits in [1:0] where reload logic expects them
+   - **Evidence**:
+     - Before fix: `paletteLatch` always 0x00 in reload logs
+     - After fix: Palette bits correctly extracted (0x00, 0x01, 0x02, 0x03)
+
+#### Debugging Methodology
+Used **Phase 1-4 of Systematic Debugging**:
+
+1. ✅ **Phase 1: Root Cause Investigation**
+   - Added diagnostic logging to palette fetch (cycle % 8 == 3)
+   - Added diagnostic logging to palette reload (cycle % 8 == 1)
+   - Discovered `paletteLatch` was ALWAYS 0x00 across all frames
+   - This was the needle in the haystack - uniform zeros everywhere
+
+2. ✅ **Phase 2: Pattern Analysis**
+   - Examined palette fetch code: `paletteLatch = paletteBits shl 2`
+   - Examined reload code: `(paletteLatch and 0x01)` and `(paletteLatch and 0x02)`
+   - Identified mismatch: bits shifted to [3:2], but reload checks [1:0]
+   - This is a classic data pipeline misalignment bug
+
+3. ✅ **Phase 3: Hypothesis Testing**
+   - Hypothesis: "Removing `shl 2` will fix palette loading"
+   - Test: Changed both lines 254 and 302 to remove the shift
+   - Result: Palette bits now appear in logs with correct values (0x01, 0x02)
+   - Confirmed: Hypothesis was correct
+
+4. ✅ **Phase 4: Implementation**
+   - Removed `shl 2` from preload palette extraction (line 254)
+   - Removed `shl 2` from fetch cycle palette extraction (line 302)
+   - Verified golden log test still passes (CPU accuracy maintained)
+   - Built and tested successfully
+
+#### Evidence Gathered
+- Palette fetches show `attributeByte=0x62` with `paletteDataRaw=0b10` (non-zero)
+- Before fix: All reload logs showed `paletteLatch=0x00` (0% variation)
+- After fix: Reload logs now show `paletteLatch=0x00`, `0x01`, `0x02`, `0x03`
+- Pattern: Palette bits correctly extracted from attribute table
+
+#### Critical Observation
+**Despite fixing the palette bit bug, graphics rendering is STILL CORRUPT** 🚨
+
+This proves:
+1. The `shl 2` bug was real and necessary to fix (was preventing palette bits from being used)
+2. BUT it was only part of the problem
+3. There is at least one more significant bug blocking proper rendering
+
+### What Remains Unknown
+
+The palette fix alone was insufficient. Possible remaining bugs:
+
+1. **Palette Memory Lookup Bug** (likely)
+   - Palette bits are now being loaded correctly into shift registers
+   - But colors might still be wrong (palette RAM contents issue?)
+   - Need to verify palette RAM addresses (0x3F00-0x3F1F) are populated
+
+2. **Fine X Scroll Application** (possible)
+   - Fine X extraction might be using wrong bit positions
+   - Currently: `val shiftAmount = 15 - fineX` and `7 - fineX`
+   - These might need verification
+
+3. **Shift Register Bit Extraction** (possible)
+   - Current code extracts bits at position 15 (MSB) for pattern
+   - Pattern bits might be getting shifted or masked incorrectly
+
+4. **Palette Shift Register Timing** (possible)
+   - Palette bits might be shifted at wrong times
+   - Currently shifts every pixel (lines 353-354)
+
+### Next Session Investigation Priority
+
+**CRITICAL: Use 10+ second timeout when testing ROMs to allow visual inspection**
+
+**Focus: Verify rendering is actually broken vs. just black/wrong colors**
+
+Recommended approach:
+1. Run Donkey Kong with 10+ second timeout (not 3 seconds)
+2. Visually inspect the rendered output:
+   - Is anything appearing? (expected: some tiles/sprites)
+   - Are colors completely wrong? (expected: variety of colors)
+   - Are tiles corrupted? (expected: recognizable game graphics)
+
+3. If graphics still not rendering:
+   - Add logging to pixel color lookup (line 391-429)
+   - Verify palette RAM has non-zero values (write to 0x3F00-0x3F1F)
+   - Check if sprite rendering works (separate from background)
+
+4. If graphics are rendering but wrong colors:
+   - Verify fine X scroll logic (lines 364-375)
+   - Check palette RAM contents at runtime
+   - Compare against known good Donkey Kong screenshot
+
+5. If tiles are completely invisible:
+   - Pattern table data might still be corrupted
+   - Nametable addressing might be wrong
+   - Shift register reloading might have timing issues
+
+**Key Code Locations to Re-examine**:
+| Component | File | Concern |
+|-----------|------|---------|
+| Color lookup | Ppu.kt:384-391 | Palette address calculation |
+| Fine X scroll | Ppu.kt:364-375 | Bit extraction correctness |
+| Palette RAM | PpuAddressedMemory.kt | Contents and write handling |
+| Shift register timing | Ppu.kt:93-109 | Reload cycle correctness |
+| Pixel rendering | Ppu.kt:347-433 | Visible scanline pixel output |
+
+### Testing Notes
+- ✅ Golden log test passes (CPU accuracy maintained)
+- ✅ Palette bits now load correctly (bits at [1:0] as expected)
+- ✅ Emulator runs without crashing
+- ⚠️ Graphics rendering still corrupt/invisible (secondary bug remains)
+- 📋 **IMPORTANT**: Next session, use `timeout 10` or higher when testing with ROMs
+
+### Commits History This Session
+- **(This session)**: Fix palette bit position bug (remove shl 2 shift)
+- Previous: Fix pattern table address ranges
+
+### Next Session Prompt
+
+```
+The palette bit shift bug has been fixed (removed shl 2 from lines 254 and 302).
+However, rendering is STILL CORRUPT, meaning there's at least one more bug.
+
+Before starting investigation:
+1. Build and test with: timeout 15 ./gradlew run --args="testroms/donkeykong.nes"
+2. Visually inspect the output for 10+ seconds
+3. Note: Is anything rendering? Are colors wrong? Are tiles invisible?
+
+The bug could be in:
+- Palette memory reading (palette RAM contents)
+- Fine X scroll calculation
+- Shift register timing
+- Pixel color lookup logic
+
+Use systematic debugging Phase 1-4 again to find and fix the next issue.
+```

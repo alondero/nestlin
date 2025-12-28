@@ -251,7 +251,7 @@ class Ppu(var memory: Memory) {
                 val attributeAddr = 0x23C0 or (v and 0x0C00) or ((v shr 4) and 0x38) or ((v shr 2) and 0x07)
                 val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
                 val shift = ((v shr 4) and 4) or (v and 2)
-                val paletteData = ((attributeByte shr shift) and 0x03) shl 2
+                val paletteData = ((attributeByte shr shift) and 0x03)
 
                 // Fetch pattern table data
                 val patternTableBase = controller.backgroundPatternTableAddress()
@@ -299,7 +299,7 @@ class Ppu(var memory: Memory) {
 
                 // Extract the 2-bit palette for this specific tile
                 val shift = ((v shr 4) and 4) or (v and 2)
-                paletteLatch = ((attributeByte shr shift) and 0x03) shl 2
+                paletteLatch = ((attributeByte shr shift) and 0x03)
 
                 lastAttributeTableByte = attributeByte.toSignedByte()
             }
