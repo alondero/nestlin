@@ -52,6 +52,11 @@ class Ppu(var memory: Memory) {
         }
 
         if (rendering()) {
+            // Fetch sprites for this scanline at cycle 0
+            if (cycle == 0) {
+                fetchActiveSpriteDataForScanline(scanline)
+            }
+
             //  Fetch tile data
             when (cycle) {// Idle
                 in 1..256 -> fetchData()
