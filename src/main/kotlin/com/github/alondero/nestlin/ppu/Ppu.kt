@@ -308,15 +308,54 @@ class Ppu(var memory: Memory) {
             val paletteIndex = (paletteBit1 shl 1) or paletteBit0
 
             // Look up color in palette RAM
-            // If pixel value is 0 (transparent), use universal background color
+            var finalPixel = 0
+            var finalPalette = 0
+            var usedBackground = false
+
+            // Extract background pixel
             val paletteAddr = if (pixelValue == 0) {
-                0x3F00 // Universal background color
+                0x3F00  // Universal background color
             } else {
+                usedBackground = true
                 0x3F00 + (paletteIndex shl 2) + pixelValue
             }
 
-            val nesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
-            val rgbColor = NesPalette.getRgb(nesColorIndex)
+            val bgNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
+            var rgbColor = NesPalette.getRgb(bgNesColorIndex)
+
+            // Check sprites (in order, first non-transparent sprite wins)
+            for (sprite in activeSpriteBuffer) {
+                // Calculate sprite X position relative to current pixel
+                val spritePixelX = cycle - sprite.data.x
+
+                // Skip if sprite is off-screen horizontally
+                if (spritePixelX < 0 || spritePixelX > 7) continue
+
+                // Extract sprite pixel from shift registers
+                val shiftAmount = 7 - spritePixelX
+                val spriteBit0 = (sprite.shiftLow shr shiftAmount) and 1
+                val spriteBit1 = (sprite.shiftHigh shr shiftAmount) and 1
+                val spritePixel = (spriteBit1 shl 1) or spriteBit0
+
+                // Skip transparent sprite pixels
+                if (spritePixel == 0) continue
+
+                // Sprite is visible - check priority
+                if (sprite.data.priority == 0 || !usedBackground) {
+                    // In front of background OR background is transparent
+                    finalPixel = spritePixel
+                    finalPalette = sprite.data.paletteIndex
+                    break  // First visible sprite wins
+                }
+            }
+
+            // Look up final color
+            if (finalPixel != 0) {
+                // Sprite pixel is visible
+                val spritePaletteAddr = 0x3F10 + (finalPalette shl 2) + finalPixel
+                val spriteNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[spritePaletteAddr].toUnsignedInt()
+                rgbColor = NesPalette.getRgb(spriteNesColorIndex)
+            }
 
             frame[scanline, x] = rgbColor
         }
