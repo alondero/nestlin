@@ -87,6 +87,7 @@ class PpuAddressedMemory {
                 } else {
                     tempVRamAddress.setUpper7Bits(value)
                 }
+                writeToggle = !writeToggle
             }
             else /*7*/ -> {
                 // Write to VRAM at current address, then increment
