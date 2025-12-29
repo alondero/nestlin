@@ -674,6 +674,89 @@ timeout 30 ./gradlew run --args="testroms/donkeykong.nes --ppu-diag"
 ### Commits
 - None (investigation phase only - no fixes attempted per systematic debugging discipline)
 
+---
+
+## Session 9: TDD Verification of Nametable Mirroring (2025-12-29)
+
+### 🎯 Objective
+Verify using TDD that nametable mirroring logic is correct, as identified in Priority 1 from previous investigation.
+
+### ✅ Phase 1: Test-Driven Development Cycle
+
+**RED Phase - Write Failing Tests:**
+- Created `NametableMirroringTest.kt` with comprehensive test cases
+- Tests verify horizontal mirroring: 0x2000↔0x2800 map to same NT0, 0x2400↔0x2C00 map to same NT1
+- Tests verify vertical mirroring: 0x2000↔0x2400 map to same NT0, 0x2800↔0x2C00 map to same NT1
+
+**GREEN Phase - Tests Pass:**
+- All nametable mirroring tests PASS ✓
+- Confirmed: Mirroring logic is mathematically correct per NES spec
+- Created `VramAddressTest.kt` to verify address computation
+
+**Key Finding:**
+- `VramAddress.asAddress()` correctly computes 15-bit relative addresses
+- Calling code properly ORs with 0x2000 base offset (Ppu.kt lines 277, 372)
+- Formula is correct: `(((((fineYScroll << 2) | getNameTable()) << 5) | coarseYScroll) << 5) | coarseXScroll`
+
+### 📊 Results
+
+**Mirroring Verification: PASS ✓**
+- Horizontal: NT0=0x2000-0x23FF/0x2800-0x2BFF, NT1=0x2400-0x27FF/0x2C00-0x2FFF
+- Vertical: NT0=0x2000-0x23FF/0x2400-0x27FF, NT1=0x2800-0x2BFF/0x2C00-0x2FFF
+- All write/read round-trips work correctly
+
+**VramAddress Computation: VERIFIED ✓**
+- Address components properly positioned in 15-bit register
+- NES bits 10-11 (nametable select) correctly computed
+- NES bits 12-14 (fine Y) correctly positioned
+
+### ⚠️ Critical Conclusion
+
+**The nametable mirroring logic is NOT the root cause.**
+
+Since Priority 1 (mirroring bug) is now ruled out, the actual root cause must be:
+1. **Game doesn't write to background nametable** (most likely)
+   - Donkey Kong title screen may be sprite-only
+   - Game initializes NT1 for other purposes but NT0 stays empty by design
+
+2. **Game never sets vRamAddress to point to NT1** (possible)
+   - Game writes valid data to NT1 but PPU always reads from NT0
+   - Would require investigating scroll register writes
+
+3. **Writes to NT0 are being cleared** (unlikely, but possible)
+   - Some memory clearing routine runs after writes
+   - Or writes are happening but game never finalizes scroll state
+
+### 🔄 Next Session: Focus on Game Behavior
+
+Based on the systematic debugging investigation from Session 8, **Priority 2 should be the focus:**
+
+**Investigation Steps:**
+1. Log all CPU writes to VRAM (via $2006/$2007)
+2. Trace game's scroll register initialization sequence
+3. Check if game ever writes to vRamAddress to select NT1
+4. Analyze OAM at frame 100 vs frame 300 to confirm sprite-only rendering
+
+**Key Question:**
+- Is the game TRYING to render background on title screen, or intentionally using sprites only?
+
+### Artifacts Created
+- `src/test/kotlin/com/github/alondero/nestlin/ppu/NametableMirroringTest.kt` - Comprehensive mirroring verification
+- `src/test/kotlin/com/github/alondero/nestlin/ppu/VramAddressTest.kt` - Address computation verification
+
+### Test Results
+```bash
+./gradlew test
+# All tests pass:
+# - NametableMirroringTest: 5/5 tests pass
+# - VramAddressTest: 4/4 tests pass
+# - GoldenLogTest: PASS (CPU accuracy maintained)
+```
+
+### Commits This Session
+- **5610e2d**: test: add comprehensive nametable mirroring and vram address tests
+- **c368ba6**: test: remove diagnostic test (investigation artifact)
+
 ### Key Insight
 **The problem is NOT with PPU rendering logic or PPUMASK - it's a data availability issue.**
 The game's nametable writes don't match the PPU's read addresses. Either:
