@@ -2,15 +2,19 @@ package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
+import com.github.alondero.nestlin.apu.ApuAddressedMemory
 
 class Memory {
     private val internalRam = ByteArray(0x800)
     val ppuAddressedMemory = PpuAddressedMemory()
-    private val apuIoRegisters = ByteArray(0x20)
+    val apuAddressedMemory = ApuAddressedMemory()
     private val cartridgeSpace = ByteArray(0xBFE0)
 
     val controller1 = Controller()
     val controller2 = Controller()
+
+    // Will be set by Nestlin after APU creation
+    var apu: Apu? = null
 
     fun readCartridge(data: GamePak) {
         // Load PRG ROM into CPU address space
@@ -49,7 +53,10 @@ class Memory {
                     ppuAddressedMemory.writeOamData(data)
                 }
             }
-            in 0x4000..0x401F -> apuIoRegisters[address-0x4000] = value
+            in 0x4000..0x401F -> {
+                apuAddressedMemory[address - 0x4000] = value
+                apu?.handleRegisterWrite(address - 0x4000, value)
+            }
             else -> cartridgeSpace[address-0x4020] = value
         }
     }
@@ -59,7 +66,7 @@ class Memory {
         in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
         0x4016 -> controller1.read()
         0x4017 -> controller2.read()
-        in 0x4000..0x401F -> apuIoRegisters[address - 0x4000]
+        in 0x4000..0x401F -> apuAddressedMemory[address - 0x4000]
         else /* in 0x4020..0xFFFF */ -> cartridgeSpace[address - 0x4020]
     }
 
@@ -72,7 +79,7 @@ class Memory {
 
     fun clear() {
         internalRam.fill(0xFF.toSignedByte())
-        apuIoRegisters.fill(0) // TODO: Do something better with APU Registers (when implementing audio and input)
+        apuAddressedMemory.reset()
         ppuAddressedMemory.reset()
     }
 
