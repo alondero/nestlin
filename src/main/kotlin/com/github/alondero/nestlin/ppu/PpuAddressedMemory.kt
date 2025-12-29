@@ -31,6 +31,16 @@ class PpuAddressedMemory {
     var diagnosticEndFrame = 0
     var currentFrameCount = 0
 
+    fun setVBlank() {
+        status.register = status.register.setBit(7)
+        nmiOccurred = true
+    }
+
+    fun writeOamData(value: Byte) {
+        objectAttributeMemory[oamAddress.toUnsignedInt()] = value
+        oamAddress = (oamAddress + 1).toSignedByte()
+    }
+
     fun reset() {
         controller.reset()
         mask.reset()
@@ -50,13 +60,15 @@ class PpuAddressedMemory {
             1 -> mask.register
             2 -> {
                 writeToggle = false
-                val value = status.register.letBit(7, nmiOccurred)
+                val value = status.register
                 status.clearVBlank()
-                nmiOccurred = false
+                // Reading $2002 also clears the NMI flag? 
+                // NESdev: "Reading $2002... will also acknowledge the interrupt"
+                nmiOccurred = false 
                 value
             }
             3 -> oamAddress
-            4 -> oamData
+            4 -> objectAttributeMemory[oamAddress.toUnsignedInt()]
             5 -> scroll
             6 -> address
             else /*7*/ -> {
@@ -99,7 +111,7 @@ class PpuAddressedMemory {
             1 -> mask.register = value
             2 -> status.register = value
             3 -> oamAddress = value
-            4 -> oamData = value
+            4 -> writeOamData(value)
             5 -> {
                 scroll = value
                 if (writeToggle) {

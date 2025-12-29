@@ -42,6 +42,13 @@ class Memory {
                 controller1.write(value)
                 controller2.write(value)
             }
+            0x4014 -> {
+                val base = value.toUnsignedInt() shl 8
+                for (i in 0 until 256) {
+                    val data = this[base + i]
+                    ppuAddressedMemory.writeOamData(data)
+                }
+            }
             in 0x4000..0x401F -> apuIoRegisters[address-0x4000] = value
             else -> cartridgeSpace[address-0x4020] = value
         }
