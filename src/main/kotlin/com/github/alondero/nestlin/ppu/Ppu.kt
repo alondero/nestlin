@@ -32,10 +32,10 @@ class Ppu(var memory: Memory) {
     private var patternShiftLow: Int = 0
     private var patternShiftHigh: Int = 0
 
-    // Palette attribute shift registers (8-bit, hold palette for next 8 pixels)
+    // Palette attribute shift registers (16-bit, hold palette for next 16 pixels)
     // Each bit corresponds to one bit of the 2-bit palette index
-    private var paletteShiftLow: Byte = 0
-    private var paletteShiftHigh: Byte = 0
+    private var paletteShiftLow: Int = 0
+    private var paletteShiftHigh: Int = 0
 
     // Latches hold fetched data until time to load into shift registers (every 8 cycles)
     private var patternLatchLow: Byte = 0
@@ -111,15 +111,15 @@ class Ppu(var memory: Memory) {
             if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
                 logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): BEFORE RELOAD - latchLow=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')} latchHigh=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')} shiftLow=0x${patternShiftLow.toString(16).padStart(4, '0')} shiftHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')}")
             }
-            // Load the upper 8 bits of pattern shift registers with fetched tile data
-            // Keep only lower 16 bits to prevent overflow beyond shift register capacity
-            patternShiftLow = ((patternShiftLow and 0xFF) or (patternLatchLow.toUnsignedInt() shl 8)) and 0xFFFF
-            patternShiftHigh = ((patternShiftHigh and 0xFF) or (patternLatchHigh.toUnsignedInt() shl 8)) and 0xFFFF
+            // Load the lower 8 bits of pattern shift registers with fetched tile data (Next Tile)
+            // Keep upper 8 bits (Current Tile) which have shifted from previous fetch
+            patternShiftLow = (patternShiftLow and 0xFF00) or patternLatchLow.toUnsignedInt()
+            patternShiftHigh = (patternShiftHigh and 0xFF00) or patternLatchHigh.toUnsignedInt()
 
             // Reload palette attribute shift registers
-            // Each bit represents whether that pixel uses this palette bit
-            paletteShiftLow = if ((paletteLatch and 0x01) != 0) 0xFF.toByte() else 0x00
-            paletteShiftHigh = if ((paletteLatch and 0x02) != 0) 0xFF.toByte() else 0x00
+            // Load into lower 8 bits (for next tile), keep upper 8 bits (for current tile)
+            paletteShiftLow = (paletteShiftLow and 0xFF00) or (if ((paletteLatch and 0x01) != 0) 0xFF else 0x00)
+            paletteShiftHigh = (paletteShiftHigh and 0xFF00) or (if ((paletteLatch and 0x02) != 0) 0xFF else 0x00)
 
             if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
                 logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): AFTER RELOAD - shiftLow=0x${patternShiftLow.toString(16).padStart(4, '0')} shiftHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')}")
@@ -267,16 +267,6 @@ class Ppu(var memory: Memory) {
      */
     private fun preloadFirstTwoTiles() {
         with(memory.ppuAddressedMemory) {
-            // Debug CTRL register on first render
-            if (diagnosticLogging && frameCount == 3 && scanline == 0) {
-                val ctrlReg = controller.register.toUnsignedInt()
-                val bgPatternBase = controller.backgroundPatternTableAddress()
-                logDiagnostic("=== CTRL REGISTER DEBUG ===")
-                logDiagnostic("CTRL = 0x${ctrlReg.toString(16).padStart(2, '0')} (binary: ${ctrlReg.toString(2).padStart(8, '0')})")
-                logDiagnostic("Bit 4 (BG pattern table): ${controller.register.isBitSet(4)}")
-                logDiagnostic("Background pattern table address: 0x${bgPatternBase.toString(16).padStart(4, '0')}")
-                logDiagnostic("=== END DEBUG ===")
-            }
             // Load the first two tiles (tiles 0 and 1)
             for (tileNum in 0..1) {
                 // Fetch nametable byte using vRamAddress nametable bits, not CTRL bits
@@ -287,8 +277,9 @@ class Ppu(var memory: Memory) {
                 val attributeAddr = 0x23C0 or (v and 0x0C00) or ((v shr 4) and 0x38) or ((v shr 2) and 0x07)
                 val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
                 // Extract which quadrant within the 2x2 tile block:
-                // coarseX bit 0 -> shift bit 1, coarseY bit 0 -> shift bit 2
-                val shift = ((v shr 4) and 4) or ((v shr 1) and 2)
+                // coarseX bit 1 (bit 1 of v) -> shift bit 1 (value 2)
+                // coarseY bit 1 (bit 6 of v) -> shift bit 2 (value 4)
+                val shift = ((v shr 4) and 4) or (v and 2)
                 val paletteData = ((attributeByte shr shift) and 0x03)
 
                 // Fetch pattern table data
@@ -305,17 +296,20 @@ class Ppu(var memory: Memory) {
                 }
 
                 if (tileNum == 0) {
-                    // Load tile 0 into lower 8 bits of shift registers
-                    patternShiftLow = patternLow.toUnsignedInt()
-                    patternShiftHigh = patternHigh.toUnsignedInt()
-                    // Initialize palette for first tile
-                    paletteShiftLow = if ((paletteData and 0x01) != 0) 0xFF.toByte() else 0x00
-                    paletteShiftHigh = if ((paletteData and 0x02) != 0) 0xFF.toByte() else 0x00
+                    // Load tile 0 into upper 8 bits (Current Tile)
+                    patternShiftLow = patternLow.toUnsignedInt() shl 8
+                    patternShiftHigh = patternHigh.toUnsignedInt() shl 8
+                    // Initialize palette for first tile (upper 8 bits)
+                    paletteShiftLow = if ((paletteData and 0x01) != 0) 0xFF00 else 0x00
+                    paletteShiftHigh = if ((paletteData and 0x02) != 0) 0xFF00 else 0x00
                 } else {
-                    // Load tile 1 into upper 8 bits of shift registers
-                    patternShiftLow = (patternShiftLow and 0xFF) or (patternLow.toUnsignedInt() shl 8)
-                    patternShiftHigh = (patternShiftHigh and 0xFF) or (patternHigh.toUnsignedInt() shl 8)
-                    // For tile 1, we need to have palette data ready to reload at cycle 9
+                    // Load tile 1 into lower 8 bits (Next Tile)
+                    patternShiftLow = patternShiftLow or patternLow.toUnsignedInt()
+                    patternShiftHigh = patternShiftHigh or patternHigh.toUnsignedInt()
+                    // Load palette for tile 1 into lower 8 bits
+                    paletteShiftLow = paletteShiftLow or (if ((paletteData and 0x01) != 0) 0xFF else 0x00)
+                    paletteShiftHigh = paletteShiftHigh or (if ((paletteData and 0x02) != 0) 0xFF else 0x00)
+                    // Also update latch so it's ready for the standard pipeline
                     paletteLatch = paletteData
                 }
 
@@ -393,8 +387,9 @@ class Ppu(var memory: Memory) {
                 val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
 
                 // Extract the 2-bit palette for this specific tile within the 2x2 block
-                // coarseX bit 0 -> shift bit 1, coarseY bit 0 -> shift bit 2
-                val shift = ((v shr 4) and 4) or ((v shr 1) and 2)
+                // coarseX bit 1 (bit 1 of v) -> shift bit 1 (value 2)
+                // coarseY bit 1 (bit 6 of v) -> shift bit 2 (value 4)
+                val shift = ((v shr 4) and 4) or (v and 2)
                 paletteLatch = ((attributeByte shr shift) and 0x03)
 
                 lastAttributeTableByte = attributeByte.toSignedByte()
@@ -460,40 +455,34 @@ class Ppu(var memory: Memory) {
         if (scanline < RESOLUTION_HEIGHT && cycle >= 1 && cycle <= 256) {
             val x = cycle - 1
 
-            // Shift registers every cycle to advance to next pixel
-            // Keep only lower 16 bits (shift registers are 16-bit, not 32-bit)
-            patternShiftLow = (patternShiftLow shl 1) and 0xFFFF
-            patternShiftHigh = (patternShiftHigh shl 1) and 0xFFFF
-            paletteShiftLow = (paletteShiftLow.toInt() shl 1).toByte()
-            paletteShiftHigh = (paletteShiftHigh.toInt() shl 1).toByte()
-
-            // Shift active sprite registers
-            activeSpriteBuffer.forEach { sprite ->
-                sprite.shiftLow = sprite.shiftLow shl 1
-                sprite.shiftHigh = sprite.shiftHigh shl 1
-            }
-
             // Extract pixel from shift registers
-            // Fine X scroll only applies to the first tile (pixels 0-7)
-            // After first tile, extract from bit 15 (MSB) normally
             val fineX = memory.ppuAddressedMemory.fineXScroll
-            val pixelIndexInScanline = cycle - 1  // 0-255
-
-            // For first 8 pixels, apply fine X offset; after that, extract from MSB
-            val shiftAmount = if (pixelIndexInScanline < 8) 15 - fineX else 15
-            val paletteShiftAmount = if (pixelIndexInScanline < 8) 7 - fineX else 7
+            val shiftAmount = 15 - fineX
 
             val patternBit0 = (patternShiftLow shr shiftAmount) and 1
             val patternBit1 = (patternShiftHigh shr shiftAmount) and 1
             val pixelValue = (patternBit1 shl 1) or patternBit0
 
             // Extract palette bits
-            val paletteBit0 = (paletteShiftLow.toInt() shr paletteShiftAmount) and 1
-            val paletteBit1 = (paletteShiftHigh.toInt() shr paletteShiftAmount) and 1
+            val paletteBit0 = (paletteShiftLow shr shiftAmount) and 1
+            val paletteBit1 = (paletteShiftHigh shr shiftAmount) and 1
             val paletteIndex = (paletteBit1 shl 1) or paletteBit0
 
             if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10 && x < 16) {
                 logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline) X=$x: PIXEL patternBits=$pixelValue palette=$paletteIndex shiftReg_Low=0x${patternShiftLow.toString(16).padStart(4, '0')} shiftReg_High=0x${patternShiftHigh.toString(16).padStart(4, '0')} fineX=$fineX")
+            }
+
+            // Shift registers every cycle to advance to next pixel
+            // Keep only lower 16 bits (shift registers are 16-bit, not 32-bit)
+            patternShiftLow = (patternShiftLow shl 1) and 0xFFFF
+            patternShiftHigh = (patternShiftHigh shl 1) and 0xFFFF
+            paletteShiftLow = (paletteShiftLow shl 1) and 0xFFFF
+            paletteShiftHigh = (paletteShiftHigh shl 1) and 0xFFFF
+
+            // Shift active sprite registers
+            activeSpriteBuffer.forEach { sprite ->
+                sprite.shiftLow = sprite.shiftLow shl 1
+                sprite.shiftHigh = sprite.shiftHigh shl 1
             }
 
 
@@ -512,6 +501,7 @@ class Ppu(var memory: Memory) {
 
             val bgNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
             var rgbColor = NesPalette.getRgb(bgNesColorIndex)
+
 
 
             // Check sprites (in order, first non-transparent sprite wins)
@@ -589,7 +579,13 @@ class Ppu(var memory: Memory) {
 
 
 class ObjectAttributeMemory {
+
+
     private val memory = ByteArray(0x100)
+
+
+
+
 
     operator fun get(addr: Int): Byte = memory[addr and 0xFF]
     operator fun set(addr: Int, value: Byte) {

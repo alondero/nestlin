@@ -393,17 +393,14 @@ class PpuInternalMemory {
         // For pattern table 1 ($1000-$1FFF):
         // - Mapper 0 (NROM): CHR ROM is fixed at boot, never swappable
         // - 4KB CHR: mirror to both tables (duplicate data)
-        // - 8KB CHR: entire 8KB visible, load same first 4KB to pattern table 0
-        //           (CTRL bit 4 doesn't change which bytes appear, just tile addressing)
+        // - 8KB CHR: ENTIRE 8KB ROM mirrors to both PT0 and PT1 (NROM behavior)
+        //           Load the same first 4KB to pattern table 1
+        //           (CTRL bit 4 doesn't swap banks; both tables always see same data)
         // - 16KB+: split across two pattern tables
 
-        if (chrRom.size <= 0x1000) {
-            // 4KB or less: mirror pattern table 0 data to pattern table 1
-            patternTable0.copyInto(patternTable1)
-        } else if (chrRom.size <= 0x2000) {
-            // 8KB: Entire 8KB is visible. In NROM, CTRL bit 4 doesn't swap banks.
-            // The game selects pattern table 0 or 1 via CTRL, but both see all 8KB.
-            // Mirror the first 4KB to both tables (standard NROM behavior).
+        if (chrRom.size < 0x2000) {
+            // 4KB, 8KB or less: mirror pattern table 0 data to pattern table 1
+            // The entire CHR ROM repeats across both pattern tables
             patternTable0.copyInto(patternTable1)
         } else {
             // 16KB+: load second half of CHR ROM to pattern table 1
