@@ -913,3 +913,44 @@ timeout 15 ./gradlew run --args="testroms/donkeykong.nes"
 - Diagnostic logs: /tmp/ppu_diagnostics.log (VRAM write traces, palette fetches)
 - Screenshots: Show repeating color pattern, tile data correct, palette wrong
 - Evidence: Palette shift likely still has bit extraction bug
+
+---
+
+## Session 12 (2025-12-29): PPU Pipeline & CHR ROM Fixes
+
+### 🎯 Objective
+Resolve the chaotic color cycling and missing tile issues identified in the previous session.
+
+### ✅ Major Fixes Implemented
+
+**1. 16-bit Palette Shift Registers (Ppu.kt)**
+- **Problem**: Palette registers were 8-bit, causing them to lose "next tile" data when fetching new attributes, leading to color desynchronization mid-tile.
+- **Fix**: Converted `paletteShiftLow` and `paletteShiftHigh` to `Int` (16-bit). They now correctly hold the current tile's palette (bits 0-7) and the next tile's palette (bits 8-15).
+
+**2. PPU Pipeline Timing Correction (Ppu.kt)**
+- **Problem**: Pixels were being shifted *before* extraction, causing the first pixel of every tile to be skipped.
+- **Fix**: Reordered the rendering loop to **extract pixels first**, then shift.
+- **Fix**: Implemented `preloadFirstTwoTiles` correctly to load Tile 0 into the High byte (Current) and Tile 1 into the Low byte (Next), matching the shift direction.
+
+**3. CHR ROM Mirroring Fix (CRITICAL - PpuAddressedMemory.kt)**
+- **Problem**: 8KB CHR ROMs (like Donkey Kong) were not loading the second 4KB bank of tile data. The emulator was mirroring the first 4KB bank to both pattern tables.
+- **Fix**: Removed the incorrect mirroring logic. Now, if the CHR ROM is 8KB, the second 4KB is correctly loaded into `patternTable1`. This explains why background/sprites previously had wrong tiles.
+
+**4. Fine X Scroll Application (Ppu.kt)**
+- **Fix**: Applied `fineX` scrolling to **all** pixels in the scanline, ensuring smooth sub-tile scrolling across the entire screen.
+
+**5. Attribute Decoding Formula (Ppu.kt)**
+- **Fix**: Corrected the formula to extract the 2-bit palette index using bit 1 of coarse X and bit 1 of coarse Y.
+
+### 🧹 Cleanup
+- Removed diagnostic logging code from `Ppu.kt` and `PpuAddressedMemory.kt` to keep the codebase clean.
+
+### 📊 Current Status
+- **Rendering**: The PPU rendering pipeline is now theoretically sound. The shift registers, timing, and memory loading logic are corrected.
+- **Visuals**: With the CHR ROM fix, the "wrong tiles" issue should be resolved. The color stability should be fixed by the 16-bit registers.
+- **Tests**: `GoldenLogTest` passes (CPU accuracy maintained). `NametableMirroringTest` passes.
+
+### ⏭️ Next Steps
+1. **Verify Visuals**: Confirm if the game now renders correctly.
+2. **Controller Input**: Implement $4016/$4017 handling to allow gameplay.
+3. **Gameplay Testing**: Verify player movement and game logic.
