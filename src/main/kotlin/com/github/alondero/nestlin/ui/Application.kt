@@ -64,7 +64,8 @@ class NestlinApplication : FrameListener, App() {
                                   parameters.unnamed.any { it.contains("--ppu-diag") }
                 if (hasDiagFlag) {
                     println("[APP] PPU diagnostics enabled!")
-                    enablePpuDiagnostics(0, 10)
+                    // Sample frames 300-310 to see state after game has been running
+                    enablePpuDiagnostics(300, 310)
                 }
                 load(Paths.get(parameters.unnamed[0]))
                 powerReset()

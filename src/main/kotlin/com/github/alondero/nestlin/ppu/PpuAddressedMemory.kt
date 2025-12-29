@@ -358,13 +358,22 @@ class PpuInternalMemory {
         )
 
         // For pattern table 1 ($1000-$1FFF):
-        // - If CHR ROM is 8KB or less: mirror pattern table 0 (same data)
-        // - If CHR ROM is larger: load second half
+        // - Mapper 0 (NROM): CHR ROM is fixed at boot, never swappable
+        // - 4KB CHR: mirror to both tables (duplicate data)
+        // - 8KB CHR: entire 8KB visible, load same first 4KB to pattern table 0
+        //           (CTRL bit 4 doesn't change which bytes appear, just tile addressing)
+        // - 16KB+: split across two pattern tables
+
         if (chrRom.size <= 0x1000) {
-            // Mirror: copy pattern table 0 data to pattern table 1
+            // 4KB or less: mirror pattern table 0 data to pattern table 1
+            patternTable0.copyInto(patternTable1)
+        } else if (chrRom.size <= 0x2000) {
+            // 8KB: Entire 8KB is visible. In NROM, CTRL bit 4 doesn't swap banks.
+            // The game selects pattern table 0 or 1 via CTRL, but both see all 8KB.
+            // Mirror the first 4KB to both tables (standard NROM behavior).
             patternTable0.copyInto(patternTable1)
         } else {
-            // Separate pattern tables: load second half of CHR ROM
+            // 16KB+: load second half of CHR ROM to pattern table 1
             val table1Size = minOf(0x1000, chrRom.size - 0x1000)
             chrRom.copyInto(
                 destination = patternTable1,
