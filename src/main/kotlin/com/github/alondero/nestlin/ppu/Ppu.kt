@@ -165,6 +165,7 @@ class Ppu(var memory: Memory) {
     private fun endFrame() {
         listener?.frameUpdated(frame)
         frameCount++
+        memory.ppuAddressedMemory.currentFrameCount = frameCount
 
         if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame) {
             logDiagnostic("\n=== FRAME $frameCount COMPLETE ===\n")
@@ -550,6 +551,8 @@ class Ppu(var memory: Memory) {
             diagnosticFile!!.println("[DIAGNOSTIC LOG STARTED] Logging frames $startFrame-$endFrame")
             diagnosticFile!!.flush()
             System.err.println("[PPU] Diagnostic file opened successfully")
+            // Also pass diagnostic file to PPU addressed memory for VRAM write logging
+            memory.ppuAddressedMemory.setDiagnosticFile(diagnosticFile!!, startFrame, endFrame)
         } catch (e: Exception) {
             System.err.println("[PPU] Failed to open diagnostic file: ${e.message}")
         }
