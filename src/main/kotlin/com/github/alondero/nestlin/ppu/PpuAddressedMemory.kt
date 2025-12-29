@@ -91,7 +91,10 @@ class PpuAddressedMemory {
             }
             else /*7*/ -> {
                 // Write to VRAM at current address, then increment
-                ppuInternalMemory[vRamAddress.asAddress()] = value
+                val writeAddr = vRamAddress.asAddress()
+                ppuInternalMemory[writeAddr] = value
+
+
                 vRamAddress += controller.vramAddressIncrement()
                 data = value.letBit(7, nmiOutput)
             }

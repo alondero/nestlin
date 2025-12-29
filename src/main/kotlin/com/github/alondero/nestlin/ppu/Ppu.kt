@@ -319,11 +319,62 @@ class Ppu(var memory: Memory) {
     }
 
     private fun fetchData() {
+        // Log PPUMASK state and nametable contents at start of rendering for diagnostic frames
+        if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && cycle == 1 && scanline == 0) {
+            with(memory.ppuAddressedMemory) {
+                val maskByte = mask.register.toUnsignedInt()
+                val showBg = mask.showBackground()
+                val showSprites = mask.showSprites()
+                val vAddr = vRamAddress.asAddress()
+                val ntSelect = (vAddr shr 10) and 3  // bits 10-11
+                val ntSelectName = when (ntSelect) {
+                    0 -> "NT0 (top)"
+                    1 -> "NT1 (right)"
+                    2 -> "NT2 (bottom)"
+                    3 -> "NT3 (left)"
+                    else -> "?"
+                }
+                logDiagnostic("FRAME $frameCount START: PPUMASK=0x${maskByte.toString(16).padStart(2, '0')} showBackground=$showBg showSprites=$showSprites rendering=${rendering()} vRamAddress=0x${vAddr.toString(16).padStart(4, '0')} ntSelect=$ntSelectName")
+
+                // Log nametable contents (all entries, not just first 64)
+                var nt0NonZero = 0
+                var nt1NonZero = 0
+                for (i in 0 until 0x400) {
+                    if (ppuInternalMemory[0x2000 + i].toUnsignedInt() != 0) nt0NonZero++
+                    if (ppuInternalMemory[0x2400 + i].toUnsignedInt() != 0) nt1NonZero++
+                }
+                logDiagnostic("FRAME $frameCount NT FULL: nt0 has $nt0NonZero/1024 non-zero entries, nt1 has $nt1NonZero/1024 non-zero entries")
+
+                // Show first non-zero values in each
+                if (nt0NonZero > 0) {
+                    for (i in 0 until 0x400) {
+                        val val0 = ppuInternalMemory[0x2000 + i].toUnsignedInt()
+                        if (val0 != 0) {
+                            logDiagnostic("FRAME $frameCount NT0 first non-zero: offset 0x${i.toString(16).padStart(3, '0')} value=0x${val0.toString(16).padStart(2, '0')}")
+                            break
+                        }
+                    }
+                }
+                if (nt1NonZero > 0) {
+                    for (i in 0 until 0x400) {
+                        val val1 = ppuInternalMemory[0x2400 + i].toUnsignedInt()
+                        if (val1 != 0) {
+                            logDiagnostic("FRAME $frameCount NT1 first non-zero: offset 0x${i.toString(16).padStart(3, '0')} value=0x${val1.toString(16).padStart(2, '0')}")
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
         when (cycle % 8) {
             1 -> with (memory.ppuAddressedMemory){
-                lastNametableByte = ppuInternalMemory[0x2000 or (vRamAddress.asAddress() and 0x0FFF)]
+                val ntAddr = 0x2000 or (vRamAddress.asAddress() and 0x0FFF)
+                lastNametableByte = ppuInternalMemory[ntAddr]
                 if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch NAMETABLE tileIdx=${lastNametableByte.toUnsignedInt()}")
+                    val vAddr = vRamAddress.asAddress()
+                    val ntSelect = (vAddr shr 10) and 3  // bits 10-11
+                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch NAMETABLE addr=0x${ntAddr.toString(16).padStart(4, '0')} ntSelect=$ntSelect vAddr=0x${vAddr.toString(16).padStart(4, '0')} tileIdx=${lastNametableByte.toUnsignedInt()}")
                 }
             }
             3 -> with(memory.ppuAddressedMemory){
