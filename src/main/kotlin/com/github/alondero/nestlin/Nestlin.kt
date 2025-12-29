@@ -19,7 +19,8 @@ class Nestlin {
         memory = Memory()
         cpu = Cpu(memory)
         ppu = Ppu(memory)
-        apu = Apu()
+        apu = Apu(memory)
+        memory.apu = apu
     }
 
     fun getController1() = memory.controller1
@@ -39,6 +40,8 @@ class Nestlin {
     fun enablePpuDiagnostics(startFrame: Int = 3, endFrame: Int = 8) {
         ppu.enableDiagnosticLogging(startFrame, endFrame)
     }
+
+    fun getAudioSamples(): ShortArray = apu.getAudioSamples()
 
     fun powerReset() {
         cpu.reset()
