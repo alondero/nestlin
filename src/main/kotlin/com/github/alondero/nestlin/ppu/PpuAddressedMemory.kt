@@ -24,6 +24,13 @@ class PpuAddressedMemory {
     var nmiOccurred = false
     var nmiOutput = false
 
+    // Diagnostic logging support
+    private var diagnosticFile: java.io.PrintWriter? = null
+    var diagnosticLogging = false
+    var diagnosticStartFrame = 0
+    var diagnosticEndFrame = 0
+    var currentFrameCount = 0
+
     fun reset() {
         controller.reset()
         mask.reset()
@@ -58,6 +65,20 @@ class PpuAddressedMemory {
 
     }
 
+    fun setDiagnosticFile(file: java.io.PrintWriter, startFrame: Int, endFrame: Int) {
+        diagnosticFile = file
+        diagnosticStartFrame = startFrame
+        diagnosticEndFrame = endFrame
+        diagnosticLogging = true
+    }
+
+    private fun logDiagnostic(msg: String) {
+        if (diagnosticLogging && currentFrameCount in diagnosticStartFrame until diagnosticEndFrame && diagnosticFile != null) {
+            diagnosticFile!!.println("[VRAM-TRACE] Frame $currentFrameCount: $msg")
+            diagnosticFile!!.flush()
+        }
+    }
+
     operator fun set(addr: Int, value: Byte) {
 //        println("Setting PPU Addressed data ${addr.toHexString()}, with ${value.toHexString()}")
         when (addr) {
@@ -74,9 +95,11 @@ class PpuAddressedMemory {
                 if (writeToggle) {
                     tempVRamAddress.coarseYScroll = (value.toUnsignedInt() shr 3) and 0x1F
                     tempVRamAddress.fineYScroll = value.toUnsignedInt() and 0x07
+                    logDiagnostic("SCROLL_Y write: ${value.toHexString()}, coarseY=${tempVRamAddress.coarseYScroll}, fineY=${tempVRamAddress.fineYScroll}")
                 } else {
                     tempVRamAddress.coarseXScroll = (value.toUnsignedInt() shr 3) and 0x1F
                     fineXScroll = value.toUnsignedInt() and 0x07
+                    logDiagnostic("SCROLL_X write: ${value.toHexString()}, coarseX=${tempVRamAddress.coarseXScroll}, fineX=$fineXScroll")
                 }
                 writeToggle = !writeToggle
             }
@@ -84,14 +107,19 @@ class PpuAddressedMemory {
                 address = value
                 if (writeToggle) {
                     tempVRamAddress.setLowerByte(value)
+                    logDiagnostic("VRAM_ADDR low byte: ${value.toHexString()}, vRamAddr after=${tempVRamAddress.asAddress().toString(16)}, NT=${tempVRamAddress.getNameTableNum()}")
                 } else {
                     tempVRamAddress.setUpper7Bits(value)
+                    logDiagnostic("VRAM_ADDR high byte: ${value.toHexString()}, vRamAddr after=${tempVRamAddress.asAddress().toString(16)}, NT=${tempVRamAddress.getNameTableNum()}")
                 }
                 writeToggle = !writeToggle
             }
             else /*7*/ -> {
                 // Write to VRAM at current address, then increment
-                val writeAddr = vRamAddress.asAddress()
+                // vRamAddress.asAddress() returns 15-bit relative offset (0x0000-0x3FFF)
+                // Add 0x2000 base to get absolute VRAM address (0x2000-0x3FFF, which covers nametables + palette)
+                val writeAddr = 0x2000 or vRamAddress.asAddress()
+                logDiagnostic("VRAM_DATA write: addr=${writeAddr.toString(16)}, data=${value.toHexString()}, NT=${vRamAddress.getNameTableNum()}, coarseX=${vRamAddress.coarseXScroll}, coarseY=${vRamAddress.coarseYScroll}")
                 ppuInternalMemory[writeAddr] = value
 
 
@@ -138,6 +166,8 @@ class VramAddress {
     }
 
     private fun getNameTable() = (if (verticalNameTable) 2 else 0) + (if (horizontalNameTable) 1 else 0)
+
+    fun getNameTableNum() = getNameTable()
 
     fun incrementVerticalPosition() {
         fineYScroll++

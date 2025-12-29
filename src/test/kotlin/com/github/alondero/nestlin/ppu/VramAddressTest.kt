@@ -64,13 +64,15 @@ class VramAddressTest {
         addr.horizontalNameTable = false
         addr.verticalNameTable = false
         addr.coarseXScroll = 31
-        assertThat(addr.asAddress(), equalTo(0x201F))
+        // asAddress() returns 15-bit relative address (0x001F for column 31)
+        assertThat(addr.asAddress(), equalTo(0x001F))
 
         // Increment horizontally - should wrap to NT1
         addr.incrementHorizontalPosition()
         assertThat(addr.horizontalNameTable, equalTo(true))  // Now in NT1
         assertThat(addr.coarseXScroll, equalTo(0))
-        assertThat(addr.asAddress(), equalTo(0x2400))  // NT1 at column 0
+        // NT1 with column 0: bit 10 = 1 (nametable selector), so 0x0400
+        assertThat(addr.asAddress(), equalTo(0x0400))  // NT1 at column 0
     }
 
     @Test
