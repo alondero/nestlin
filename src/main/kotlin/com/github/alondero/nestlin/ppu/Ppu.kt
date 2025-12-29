@@ -177,7 +177,10 @@ class Ppu(var memory: Memory) {
             logDiagnostic("\n=== FRAME $frameCount COMPLETE ===\n")
         }
 
-        //  What to do here?
+        //  Create a fresh frame for the next frame to prevent pixel corruption
+        //  from unrendered pixels retaining values from previous frames
+        frame = Frame()
+
         scanline = 0
         vBlank = false
     }
