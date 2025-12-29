@@ -954,3 +954,35 @@ Resolve the chaotic color cycling and missing tile issues identified in the prev
 1. **Verify Visuals**: Confirm if the game now renders correctly.
 2. **Controller Input**: Implement $4016/$4017 handling to allow gameplay.
 3. **Gameplay Testing**: Verify player movement and game logic.
+
+---
+
+## Session 13 (2025-12-29): Failed Attempts at Further CHR ROM Fixes
+
+### ❌ Failed Attempt: Changing CHR ROM Size Comparison
+
+**Attempted Fix:**
+Changed the CHR ROM loading condition from `<` to `<=`:
+```kotlin
+// ATTEMPTED (doesn't work):
+if (chrRom.size <= 0x2000) {  // Includes exactly 0x2000
+    patternTable0.copyInto(patternTable1)
+}
+```
+
+**Rationale:**
+- 8KB Donkey Kong ROM is exactly 0x2000 bytes
+- Thought `<` was excluding 8KB ROMs, making them use split logic instead of mirror
+- `<=` should include 8KB in the mirror path
+
+**Result:**
+❌ Made rendering WORSE - reverted immediately
+
+**Why It Didn't Work:**
+Unknown. The rendering looked better with the original `<` condition, even though mathematically `<=` should be correct for 8KB ROMs. This suggests:
+1. The CHR ROM logic may not be the actual issue
+2. Other factors are affecting rendering more significantly
+3. Further investigation needed with different approach
+
+**Lesson Learned:**
+Do NOT change the CHR ROM size comparison to `<=`. The current `<` condition works better, even if counterintuitive.
