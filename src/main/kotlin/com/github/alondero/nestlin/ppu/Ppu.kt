@@ -273,8 +273,8 @@ class Ppu(var memory: Memory) {
             }
             // Load the first two tiles (tiles 0 and 1)
             for (tileNum in 0..1) {
-                // Fetch nametable byte
-                val nametableByte = ppuInternalMemory[controller.baseNametableAddr() or (vRamAddress.asAddress() and 0x0FFF)]
+                // Fetch nametable byte using vRamAddress nametable bits, not CTRL bits
+                val nametableByte = ppuInternalMemory[0x2000 or (vRamAddress.asAddress() and 0x0FFF)]
 
                 // Fetch attribute table byte
                 val v = vRamAddress.asAddress()
@@ -321,7 +321,7 @@ class Ppu(var memory: Memory) {
     private fun fetchData() {
         when (cycle % 8) {
             1 -> with (memory.ppuAddressedMemory){
-                lastNametableByte = ppuInternalMemory[controller.baseNametableAddr() or (vRamAddress.asAddress() and 0x0FFF)]
+                lastNametableByte = ppuInternalMemory[0x2000 or (vRamAddress.asAddress() and 0x0FFF)]
                 if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
                     logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch NAMETABLE tileIdx=${lastNametableByte.toUnsignedInt()}")
                 }
