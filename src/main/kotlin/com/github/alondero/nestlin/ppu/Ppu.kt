@@ -281,7 +281,9 @@ class Ppu(var memory: Memory) {
                 val v = vRamAddress.asAddress()
                 val attributeAddr = 0x23C0 or (v and 0x0C00) or ((v shr 4) and 0x38) or ((v shr 2) and 0x07)
                 val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
-                val shift = ((v shr 4) and 4) or (v and 2)
+                // Extract which quadrant within the 2x2 tile block:
+                // coarseX bit 0 -> shift bit 1, coarseY bit 0 -> shift bit 2
+                val shift = ((v shr 4) and 4) or ((v shr 1) and 2)
                 val paletteData = ((attributeByte shr shift) and 0x03)
 
                 // Fetch pattern table data
@@ -385,8 +387,9 @@ class Ppu(var memory: Memory) {
                 val attributeAddr = 0x23C0 or (v and 0x0C00) or ((v shr 4) and 0x38) or ((v shr 2) and 0x07)
                 val attributeByte = ppuInternalMemory[attributeAddr].toUnsignedInt()
 
-                // Extract the 2-bit palette for this specific tile
-                val shift = ((v shr 4) and 4) or (v and 2)
+                // Extract the 2-bit palette for this specific tile within the 2x2 block
+                // coarseX bit 0 -> shift bit 1, coarseY bit 0 -> shift bit 2
+                val shift = ((v shr 4) and 4) or ((v shr 1) and 2)
                 paletteLatch = ((attributeByte shr shift) and 0x03)
 
                 lastAttributeTableByte = attributeByte.toSignedByte()
