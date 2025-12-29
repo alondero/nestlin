@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.ui
 
 import com.github.alondero.nestlin.Nestlin
+import com.github.alondero.nestlin.Controller
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
 import com.github.alondero.nestlin.ppu.RESOLUTION_WIDTH
@@ -39,6 +40,10 @@ class NestlinApplication : FrameListener, App() {
         this.stage = stage.apply {
             title = "Nestlin - ${DISPLAY_SCALE}x Magnification"
             scene = Scene(StackPane().apply { children.add(canvas) })
+            
+            scene.setOnKeyPressed { event -> handleInput(event.code, true) }
+            scene.setOnKeyReleased { event -> handleInput(event.code, false) }
+            
             show()
         }
 
@@ -100,6 +105,21 @@ class NestlinApplication : FrameListener, App() {
                     }
                 }
             }
+        }
+    }
+
+    private fun handleInput(code: javafx.scene.input.KeyCode, pressed: Boolean) {
+        val controller = nestlin.getController1()
+        when (code) {
+            javafx.scene.input.KeyCode.Z -> controller.setButton(Controller.Button.A, pressed)
+            javafx.scene.input.KeyCode.X -> controller.setButton(Controller.Button.B, pressed)
+            javafx.scene.input.KeyCode.SPACE -> controller.setButton(Controller.Button.SELECT, pressed)
+            javafx.scene.input.KeyCode.ENTER -> controller.setButton(Controller.Button.START, pressed)
+            javafx.scene.input.KeyCode.UP -> controller.setButton(Controller.Button.UP, pressed)
+            javafx.scene.input.KeyCode.DOWN -> controller.setButton(Controller.Button.DOWN, pressed)
+            javafx.scene.input.KeyCode.LEFT -> controller.setButton(Controller.Button.LEFT, pressed)
+            javafx.scene.input.KeyCode.RIGHT -> controller.setButton(Controller.Button.RIGHT, pressed)
+            else -> {}
         }
     }
 }
