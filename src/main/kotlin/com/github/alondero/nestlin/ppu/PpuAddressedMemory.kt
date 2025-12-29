@@ -352,12 +352,12 @@ class PpuInternalMemory {
         val normalizedAddr = (addr - 0x2000) % 0x1000
         val tableIndex = when (mirroring) {
             Mirroring.HORIZONTAL -> {
-                // Horizontal mirroring: $2000 mirrors $2400 (NT0), $2800 mirrors $2C00 (NT1)
-                // This means CIRAM A10 = PPU A11
-                if (normalizedAddr < 0x800) 0 else 1
+                // Horizontal mirroring: $2000/$2800 -> NT0, $2400/$2C00 -> NT1
+                // Check bit 10 of normalized address (the 0x400 bit)
+                if ((normalizedAddr and 0x400) != 0) 1 else 0
             }
             Mirroring.VERTICAL -> {
-                // Vertical mirroring: $2000 mirrors $2800 (NT0), $2400 mirrors $2C00 (NT1)
+                // Vertical mirroring: $2000/$2400 -> NT0, $2800/$2C00 -> NT1
                 // This means CIRAM A10 = PPU A10
                 (normalizedAddr / 0x400) % 2
             }
