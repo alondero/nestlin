@@ -763,3 +763,153 @@ The game's nametable writes don't match the PPU's read addresses. Either:
 1. Writes go to the wrong place (mirroring bug)
 2. Reads happen from the wrong place (scroll initialization bug)
 3. Game intentionally uses sprites without background (unusual but possible)
+
+---
+
+## Session 10-11: Systematic Debugging - VRAM & Palette Bug Fixes (2025-12-29)
+
+### 🎯 Objective
+Fix rendering bugs causing chaotic colors in background tiles. Tiles are rendering but with completely wrong palette colors.
+
+### ✅ Bug #1: VRAM Write Address (FIXED - Commit b5d603f)
+
+**Root Cause Investigation:**
+- Added diagnostic logging to trace VRAM writes
+- Found game writes 0x24 to 1024 nametable addresses in Frame 1
+- But nametable diagnostics showed NT0 as completely empty (0/1024 entries)
+- CONTRADICTION: Writes logged but data wasn't persisting
+
+**Root Cause Found:**
+- `vRamAddress.asAddress()` returns 15-bit relative offset (0x0000-0x3FFF)
+- Code was using offset directly instead of adding 0x2000 base
+- Result: Writes went to pattern table (read-only) instead of nametable
+
+**Fix Applied:**
+```kotlin
+// BEFORE (buggy):
+val writeAddr = vRamAddress.asAddress()
+
+// AFTER (fixed):
+val writeAddr = 0x2000 or vRamAddress.asAddress()
+```
+
+**Verification:**
+- Before: NT0 = 0/1024 entries
+- After: NT0 = 1024/1024 entries ✅
+
+### ⚠️ Bug #2: Palette Shift Formula (PARTIALLY FIXED - Commit 03d2e9b)
+
+**Problem Identified:**
+- Background tiles now rendering with data (not blank)
+- But colors are chaotic - repeating pattern of wrong colors
+- Suggests palette index calculation is still incorrect
+
+**Investigation:**
+- Attribute table contains four 2-bit palette values per byte
+- Which value to use depends on tile's position in 2×2 block
+- Position determined by coarseX bit 0 and coarseY bit 0
+- Original formula: `((v >> 4) & 4) | (v & 2)` ← WRONG
+- Attempted fix: `((v >> 4) & 4) | ((v >> 1) & 2)` ← MAY STILL BE WRONG
+
+**Evidence of Remaining Issue:**
+- Screenshots show repeating color pattern across entire screen
+- Every 8 pixels seems to use same palette (cycling through all 4)
+- Tile data patterns look correct, only colors are wrong
+- This cyclic behavior suggests palette shift formula still incorrect
+
+**Root Cause Still Unknown:**
+The attribute table formula needs deeper investigation:
+```
+Attribute byte layout (bits 7-0):
+Q11 palette | Q10 palette | Q01 palette | Q00 palette
+  (bits)     (bits)        (bits)        (bits)
+   7-6        5-4           3-2           1-0
+
+Where Q = quadrant in 2×2 tile block
+Q00 = coarseX[0]=0, coarseY[0]=0
+Q10 = coarseX[0]=1, coarseY[0]=0
+Q01 = coarseX[0]=0, coarseY[0]=1
+Q11 = coarseX[0]=1, coarseY[0]=1
+```
+
+The shift to select correct 2-bit pair should be:
+- shift = (coarseY[0] << 2) | (coarseX[0] << 1)
+
+In terms of vRamAddress.asAddress():
+- coarseX is bits 4-0, coarseX[0] at bit 0
+- coarseY is bits 9-5, coarseY[0] at bit 5
+
+**Current Formula Analysis:**
+Need to verify if the fix properly extracts these bits. The cyclic pattern in screenshots suggests the palette shift might be:
+- Always using same palette pair for all tiles in a scanline
+- OR using palette in wrong order (e.g., rotated or inverted)
+- OR not updating paletteLatch between tile fetches
+
+### Current Status (End of Session 11)
+
+**✅ FIXED:**
+- VRAM write address calculation (nametable data now persists)
+- Nametable content fully populated (1024/1024 entries)
+- Pattern table data loading correctly
+- Canvas rendering displaying frames
+
+**⚠️ RENDERING OUTPUT:**
+- Tiles render with correct patterns (not blank)
+- Colors completely wrong and repeating
+- Background shows chaotic but structured color cycling
+- No sprites visible (may be behind wrong-colored background)
+
+### 📊 Next Session Investigation Priority
+
+**CRITICAL: Palette Color Selection Bug**
+
+The palette shift formula needs systematic verification:
+
+1. **Trace Palette Bit Extraction:**
+   - Add diagnostic logging for palette shift calculation
+   - Log attribute byte value and calculated shift at each tile
+   - Verify which quadrant position each palette fetch covers
+   - Compare expected vs. actual shift values
+
+2. **Verify Palette Shift Register Loading:**
+   - Check if paletteShiftLow/High are properly loaded from paletteLatch
+   - Verify they maintain correct values during 8-cycle tile period
+   - Log shift register state at pixel rendering time
+
+3. **Test Palette RAM Initialization:**
+   - Verify palette RAM contains expected default colors
+   - Check if game writes correct palette data to 0x3F00-0x3F1F
+   - Confirm palette lookups use correct indices
+
+4. **Manual Calculation Verification:**
+   - Pick a specific tile position (e.g., x=0, y=0)
+   - Manually calculate what coarseX[0] and coarseY[0] should be
+   - Verify shift formula produces expected value
+   - Write unit test to validate formula
+
+5. **Cross-Reference Against Real NES:**
+   - Compare screenshot against known Donkey Kong rendering
+   - Identify exact color pattern that should appear
+   - Determine if issue is systematic (all colors wrong by same offset) or chaotic
+
+**Alternative Hypotheses to Rule Out:**
+- Palette RAM not initialized to default colors
+- Game doesn't write palette data (using all uninitialized values)
+- Shift register loading timing is off (palette loads at wrong time)
+- Fine X scroll affecting palette bits (shouldn't but verify)
+
+### Testing Command
+```bash
+./gradlew build
+./gradlew test --tests GoldenLogTest
+timeout 15 ./gradlew run --args="testroms/donkeykong.nes"
+```
+
+### Commits This Session
+- **b5d603f**: fix: correct VRAM write address calculation in PPU data register
+- **03d2e9b**: fix: correct palette shift calculation for attribute table bit extraction
+
+### Key Artifacts
+- Diagnostic logs: /tmp/ppu_diagnostics.log (VRAM write traces, palette fetches)
+- Screenshots: Show repeating color pattern, tile data correct, palette wrong
+- Evidence: Palette shift likely still has bit extraction bug
