@@ -12,14 +12,17 @@ class Nestlin {
     private var cpu: Cpu
     private var ppu: Ppu
     private val apu: Apu
+    private val memory: Memory
     private var running = false
 
     init {
-        val memory = Memory()
+        memory = Memory()
         cpu = Cpu(memory)
         ppu = Ppu(memory)
         apu = Apu()
     }
+
+    fun getController1() = memory.controller1
 
     fun load(romPath: Path) {
         cpu.currentGame = romPath.load()?.let(::GamePak)

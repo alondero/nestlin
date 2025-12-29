@@ -9,6 +9,9 @@ class Memory {
     private val apuIoRegisters = ByteArray(0x20)
     private val cartridgeSpace = ByteArray(0xBFE0)
 
+    val controller1 = Controller()
+    val controller2 = Controller()
+
     fun readCartridge(data: GamePak) {
         // Load PRG ROM into CPU address space
         data.programRom.copyOfRange(0, 16384).withIndex().forEach {
@@ -35,6 +38,10 @@ class Memory {
         when (address) {
             in 0x0000..0x1FFF -> internalRam[address%0x800] = value
             in 0x2000..0x3FFF -> ppuAddressedMemory[address%8] = value
+            0x4016 -> {
+                controller1.write(value)
+                controller2.write(value)
+            }
             in 0x4000..0x401F -> apuIoRegisters[address-0x4000] = value
             else -> cartridgeSpace[address-0x4020] = value
         }
@@ -43,6 +50,8 @@ class Memory {
     operator fun get(address: Int) = when (address) {
         in 0x0000..0x1FFF -> internalRam[address % 0x800]
         in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
+        0x4016 -> controller1.read()
+        0x4017 -> controller2.read()
         in 0x4000..0x401F -> apuIoRegisters[address - 0x4000]
         else /* in 0x4020..0xFFFF */ -> cartridgeSpace[address - 0x4020]
     }
