@@ -109,16 +109,21 @@ class Ppu(var memory: Memory) {
         // Reload happens after fetching is complete (at start of next tile's nametable fetch)
         if (cycle % 8 == 1 && cycle > 1 && ((cycle <= 256) || (cycle >= 321 && cycle <= 336))) {
             if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): RELOAD shift registers low=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')} high=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')} palette=$paletteLatch")
+                logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): BEFORE RELOAD - latchLow=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')} latchHigh=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')} shiftLow=0x${patternShiftLow.toString(16).padStart(4, '0')} shiftHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')}")
             }
             // Load the upper 8 bits of pattern shift registers with fetched tile data
-            patternShiftLow = (patternShiftLow and 0xFF) or (patternLatchLow.toUnsignedInt() shl 8)
-            patternShiftHigh = (patternShiftHigh and 0xFF) or (patternLatchHigh.toUnsignedInt() shl 8)
+            // Keep only lower 16 bits to prevent overflow beyond shift register capacity
+            patternShiftLow = ((patternShiftLow and 0xFF) or (patternLatchLow.toUnsignedInt() shl 8)) and 0xFFFF
+            patternShiftHigh = ((patternShiftHigh and 0xFF) or (patternLatchHigh.toUnsignedInt() shl 8)) and 0xFFFF
 
             // Reload palette attribute shift registers
             // Each bit represents whether that pixel uses this palette bit
             paletteShiftLow = if ((paletteLatch and 0x01) != 0) 0xFF.toByte() else 0x00
             paletteShiftHigh = if ((paletteLatch and 0x02) != 0) 0xFF.toByte() else 0x00
+
+            if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
+                logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): AFTER RELOAD - shiftLow=0x${patternShiftLow.toString(16).padStart(4, '0')} shiftHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')}")
+            }
         }
 
         //  Every cycle a bit is fetched from the 4 backgroundNametables shift registers in order to create a pixel on screen
@@ -403,9 +408,13 @@ class Ppu(var memory: Memory) {
                 val tileIndex = lastNametableByte.toUnsignedInt()
                 val fineY = vRamAddress.fineYScroll
                 val address = patternTableBase + (tileIndex * 16) + fineY
+                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
+                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): BEFORE pattern-low fetch: patternLatchLow=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')}")
+                }
                 patternLatchLow = ppuInternalMemory[address]
                 if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
                     logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch PATTERN-LOW tileIdx=$tileIndex addr=0x${address.toString(16).padStart(4, '0')} data=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')}")
+                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): AFTER pattern-low fetch: patternLatchLow=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')}")
                 }
             }
             7 -> with(memory.ppuAddressedMemory) {
@@ -414,9 +423,13 @@ class Ppu(var memory: Memory) {
                 val tileIndex = lastNametableByte.toUnsignedInt()
                 val fineY = vRamAddress.fineYScroll
                 val address = patternTableBase + (tileIndex * 16) + fineY + 8
+                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
+                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): BEFORE pattern-high fetch: patternLatchHigh=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')}")
+                }
                 patternLatchHigh = ppuInternalMemory[address]
                 if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
                     logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch PATTERN-HIGH tileIdx=$tileIndex addr=0x${address.toString(16).padStart(4, '0')} data=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')}")
+                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): AFTER pattern-high fetch: patternLatchHigh=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')}")
                 }
             }
         }
@@ -448,8 +461,9 @@ class Ppu(var memory: Memory) {
             val x = cycle - 1
 
             // Shift registers every cycle to advance to next pixel
-            patternShiftLow = patternShiftLow shl 1
-            patternShiftHigh = patternShiftHigh shl 1
+            // Keep only lower 16 bits (shift registers are 16-bit, not 32-bit)
+            patternShiftLow = (patternShiftLow shl 1) and 0xFFFF
+            patternShiftHigh = (patternShiftHigh shl 1) and 0xFFFF
             paletteShiftLow = (paletteShiftLow.toInt() shl 1).toByte()
             paletteShiftHigh = (paletteShiftHigh.toInt() shl 1).toByte()
 
