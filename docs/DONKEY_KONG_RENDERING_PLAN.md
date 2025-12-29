@@ -576,3 +576,107 @@ grep "NAMETABLE" /tmp/ppu_diagnostics.log | head -20
 - PpuAddressedMemory.kt: Clarified CHR ROM mirroring logic (lines 367-374)
 - Application.kt: Updated diagnostic logging range (frame 300-310)
 ```
+
+---
+
+## Session 8: Systematic Root Cause Investigation Complete (2025-12-29)
+
+### 🔍 Investigation Methodology
+Used **Systematic Debugging** skill to conduct Phase 1-3 root cause analysis WITHOUT attempting fixes.
+
+### ✅ Phase 1: Root Cause Evidence Gathered
+
+**Finding 1: PPUMASK is ENABLED**
+- Frame 300+ shows: PPUMASK=0x1e with bit 3 (background enable) = true
+- Rendering: true (both background AND sprites enabled)
+- Conclusion: Background rendering is NOT disabled
+
+**Finding 2: Nametable Content Discrepancy**
+- **nameTable0**: 0/1024 entries non-zero (completely EMPTY)
+- **nameTable1**: 195/1024 entries non-zero (has valid tile indices!)
+- **PPU scroll state**: Always points to NT0 (bits 10-11 = 00)
+- **Result**: PPU renders from empty NT0 while game data sits unused in NT1
+
+**Finding 3: Game Write Distribution**
+- 17 writes to address range 0x2800-0x2BFF (should mirror to NT0)
+- 18 writes to address range 0x2C00-0x2FFF (should mirror to NT1)
+- 0 writes to direct NT0/NT1 ranges (0x2000-0x27FF)
+- **Problem**: Writes to NT0's mirror range but NT0 stays empty!
+
+### ⚠️ Phase 2: Pattern Analysis - Critical Discrepancy
+
+**The Mystery:**
+```
+Game writes:  0x2800+ range (17 entries) → should go to NT0
+Game reality: NT0 is completely empty (0 entries)
+             NT1 has 195 entries (from 18 writes to 0x2C00+ range)
+```
+
+**Most Likely Root Cause:**
+Nametable mirroring logic bug in `mapNametableAddress()` function:
+- Addresses 0x2800-0x2BFF should map to NT0 via horizontal mirror
+- But something is routing them differently or writes aren't persisting
+- Detailed trace shows writes happen but data doesn't appear in NT0
+
+**Secondary Hypothesis:**
+- Game initializes NT1 with 195 entries
+- Game has scroll bug or initialization issue keeping vRamAddress at NT0
+- This would be a game bug, not emulator bug
+
+### 📋 Phase 3: Hypothesis Formation
+
+**Root Cause Candidates** (ranked by probability):
+1. **Nametable mirroring bug** (HIGH) - mapNametableAddress() incorrectly routes 0x2800+ writes
+2. **Mirror address calculation bug** (HIGH) - `addr % 0x400` may produce wrong offsets
+3. **Game scroll initialization** (MEDIUM) - vRamAddress bits 10-11 stay at 00 unintentionally
+4. **Sprite-only rendering** (LOW) - Game deliberately uses only sprites, ignores background
+
+### 🎯 What We Know for CERTAIN
+✅ Pattern table data loads correctly (both LOW and HIGH bytes)
+✅ Nametable addressing calculation is mathematically correct
+✅ PPUMASK is enabled (background should render if data exists)
+✅ Game writes to nametable memory (35 total writes across frames 0-10)
+❌ NT0 receives writes to mirror addresses but data doesn't persist
+❌ PPU reads from NT0 which is empty, so blank background renders
+
+### Next Session: Implement Root Cause Fix
+
+**Priority 1: Verify Nametable Mirroring**
+1. Add unit test for `mapNametableAddress()`:
+   - Verify 0x2000 → nameTable0[0]
+   - Verify 0x2400 → nameTable1[0]
+   - Verify 0x2800 → nameTable0[0] (should be SAME as 0x2000!)
+   - Verify 0x2C00 → nameTable1[0] (should be SAME as 0x2400!)
+2. If test fails: Fix mirroring logic
+3. If test passes: Investigate game scroll/initialization (Priority 2)
+
+**Priority 2: Trace vRamAddress Initialization**
+- Log vRamAddress at frame 0-10 at each PPU cycle
+- Check if game ever sets bits 10-11 to non-zero
+- Verify scroll write sequence in game code
+
+**Testing Command:**
+```bash
+./gradlew build
+./gradlew test --tests GoldenLogTest
+timeout 30 ./gradlew run --args="testroms/donkeykong.nes --ppu-diag"
+```
+
+**Evidence Artifacts:**
+- `/tmp/ppu_diagnostics.log` - Contains frame-by-frame nametable state
+- Emulator source - Diagnostic logging infrastructure in place (Ppu.kt lines 323-368)
+
+### Files Modified This Session (Investigation Only - No Fixes)
+- Ppu.kt: Added enhanced diagnostic logging for PPUMASK and nametable contents (lines 323-368)
+- Application.kt: Adjusted diagnostics range to frames 3-12 for early-game analysis
+- PpuAddressedMemory.kt: Temporarily added write logging (removed - clean state restored)
+
+### Commits
+- None (investigation phase only - no fixes attempted per systematic debugging discipline)
+
+### Key Insight
+**The problem is NOT with PPU rendering logic or PPUMASK - it's a data availability issue.**
+The game's nametable writes don't match the PPU's read addresses. Either:
+1. Writes go to the wrong place (mirroring bug)
+2. Reads happen from the wrong place (scroll initialization bug)
+3. Game intentionally uses sprites without background (unusual but possible)
