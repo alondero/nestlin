@@ -155,6 +155,7 @@ class Ppu(var memory: Memory) {
             with (memory.ppuAddressedMemory) {
                 vRamAddress.coarseYScroll = tempVRamAddress.coarseYScroll
                 vRamAddress.verticalNameTable = tempVRamAddress.verticalNameTable
+                vRamAddress.fineYScroll = tempVRamAddress.fineYScroll
             }
         }
     }

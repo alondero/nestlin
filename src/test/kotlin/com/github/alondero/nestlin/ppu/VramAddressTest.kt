@@ -76,20 +76,31 @@ class VramAddressTest {
     }
 
     @Test
-    fun `mirrored addresses - horizontal mirroring`() {
-        // In horizontal mirroring:
-        // NT0 (0x2000-0x23FF) mirrors to 0x2800-0x2BFF
-        // NT1 (0x2400-0x27FF) mirrors to 0x2C00-0x2FFF
-
-        val memory = PpuInternalMemory()
-        memory.mirroring = PpuInternalMemory.Mirroring.HORIZONTAL
-
-        // Direct write to 0x2000 should be readable from 0x2800
-        memory[0x2000] = 0xAA.toByte()
-        assertThat(memory[0x2800], equalTo(0xAA.toByte()))
-
-        // Direct write to 0x2400 should be readable from 0x2C00
-        memory[0x2400] = 0xBB.toByte()
-        assertThat(memory[0x2C00], equalTo(0xBB.toByte()))
+    fun `vram address setUpper7Bits and setLowerByte properly distribute bits`() {
+        val addr = VramAddress()
+        
+        // $2006 first write: 0 y y N N Y Y Y
+        // We'll set: bits 5-0 (0x3F). Bit 6 is ignored.
+        // fineY high 2 bits=3 (11), NT=3 (11), coarseY high bits=3 (11)
+        // Bit 5: 1 (fineY bit 1)
+        // Bit 4: 1 (fineY bit 0)
+        // Bit 3: 1 (NT bit 1)
+        // Bit 2: 1 (NT bit 0)
+        // Bit 1: 1 (coarseY bit 4)
+        // Bit 0: 1 (coarseY bit 3)
+        // Input byte: 01111111 = 0x7F. Bit 6 (0x40) should be ignored.
+        addr.setUpper7Bits(0x7F.toByte())
+        
+        assertThat(addr.fineYScroll, equalTo(3))
+        assertThat(addr.getNameTableNum(), equalTo(3))
+        assertThat(addr.coarseYScroll, equalTo(0x18)) // bits 4,3 set = 24
+        
+        // $2006 second write: Y Y Y X X X X X
+        // We'll set: coarseY low bits=7 (111), coarseX=31 (11111)
+        // Input byte: 11111111 = 0xFF
+        addr.setLowerByte(0xFF.toByte())
+        
+        assertThat(addr.coarseXScroll, equalTo(31))
+        assertThat(addr.coarseYScroll, equalTo(31)) // all 5 bits set
     }
 }

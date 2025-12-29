@@ -44,7 +44,8 @@ class PpuAddressedMemory {
         writeToggle = false
     }
 
-    operator fun get(addr: Int) = when (addr) {
+    operator fun get(addr: Int): Byte {
+        return when (addr) {
             0 -> controller.register
             1 -> mask.register
             2 -> {
@@ -59,10 +60,19 @@ class PpuAddressedMemory {
             5 -> scroll
             6 -> address
             else /*7*/ -> {
-                vRamAddress += controller.vramAddressIncrement()
-                data
-            }
+                val addr = vRamAddress.asAddress() and 0x3FFF
+                val result = data
+                data = ppuInternalMemory[addr]
+                vRamAddress.increment(controller.vramAddressIncrement())
 
+                // Palette reads are not buffered, they return immediately.
+                // However, they still update the buffer with mirrored nametable data (handled above).
+                if (addr >= 0x3F00) {
+                    return data
+                }
+                result
+            }
+        }
     }
 
     fun setDiagnosticFile(file: java.io.PrintWriter, startFrame: Int, endFrame: Int) {
@@ -107,6 +117,7 @@ class PpuAddressedMemory {
                 address = value
                 if (writeToggle) {
                     tempVRamAddress.setLowerByte(value)
+                    vRamAddress.setFrom(tempVRamAddress)
                     logDiagnostic("VRAM_ADDR low byte: ${value.toHexString()}, vRamAddr after=${tempVRamAddress.asAddress().toString(16)}, NT=${tempVRamAddress.getNameTableNum()}")
                 } else {
                     tempVRamAddress.setUpper7Bits(value)
@@ -116,15 +127,11 @@ class PpuAddressedMemory {
             }
             else /*7*/ -> {
                 // Write to VRAM at current address, then increment
-                // vRamAddress.asAddress() returns 15-bit relative offset (0x0000-0x3FFF)
-                // Add 0x2000 base to get absolute VRAM address (0x2000-0x3FFF, which covers nametables + palette)
-                val writeAddr = 0x2000 or vRamAddress.asAddress()
+                val writeAddr = vRamAddress.asAddress() and 0x3FFF
                 logDiagnostic("VRAM_DATA write: addr=${writeAddr.toString(16)}, data=${value.toHexString()}, NT=${vRamAddress.getNameTableNum()}, coarseX=${vRamAddress.coarseXScroll}, coarseY=${vRamAddress.coarseYScroll}")
                 ppuInternalMemory[writeAddr] = value
 
-
-                vRamAddress += controller.vramAddressIncrement()
-                data = value.letBit(7, nmiOutput)
+                vRamAddress.increment(controller.vramAddressIncrement())
             }
         }
     }
@@ -156,6 +163,14 @@ class VramAddress {
     fun setLowerByte(byte: Byte) {
         coarseXScroll = byte.toUnsignedInt() and 0x1F
         coarseYScroll = (coarseYScroll and 0x18) or ((byte.toUnsignedInt()) shr 5)
+    }
+
+    fun setFrom(other: VramAddress) {
+        coarseXScroll = other.coarseXScroll
+        coarseYScroll = other.coarseYScroll
+        horizontalNameTable = other.horizontalNameTable
+        verticalNameTable = other.verticalNameTable
+        fineYScroll = other.fineYScroll
     }
 
     fun updateNameTable(nameTable: Int) {
@@ -197,12 +212,21 @@ class VramAddress {
         }
     }
 
+    fun increment(amount: Int) {
+        // Simple 14-bit increment for $2007 access
+        var addr = asAddress()
+        addr = (addr + amount) and 0x3FFF
+        
+        // Decompose back into fields
+        coarseXScroll = addr and 0x1F
+        coarseYScroll = (addr shr 5) and 0x1F
+        horizontalNameTable = (addr shr 10).isBitSet(0)
+        verticalNameTable = (addr shr 10).isBitSet(1)
+        fineYScroll = (addr shr 12) and 0x07
+    }
+
     infix operator fun plusAssign(vramAddressIncrement: Int) {
-        if (vramAddressIncrement == 32) {
-            coarseYScroll++
-        } else {
-            coarseXScroll++
-        }
+        increment(vramAddressIncrement)
     }
 
     fun asAddress() = (((((fineYScroll shl 2) or getNameTable()) shl 5) or coarseYScroll) shl 5) or coarseXScroll
@@ -313,33 +337,21 @@ class PpuInternalMemory {
     }
 
     private fun mapNametableAddress(addr: Int): Pair<ByteArray, Int> {
-        return when {
-            addr in 0x2000..0x23FF -> {
-                when (mirroring) {
-                    Mirroring.HORIZONTAL -> Pair(nameTable0, addr % 0x400)
-                    Mirroring.VERTICAL -> Pair(nameTable0, addr % 0x400)
-                }
+        val normalizedAddr = (addr - 0x2000) % 0x1000
+        val tableIndex = when (mirroring) {
+            Mirroring.HORIZONTAL -> {
+                // Horizontal mirroring: $2000 mirrors $2400 (NT0), $2800 mirrors $2C00 (NT1)
+                // This means CIRAM A10 = PPU A11
+                if (normalizedAddr < 0x800) 0 else 1
             }
-            addr in 0x2400..0x27FF -> {
-                when (mirroring) {
-                    Mirroring.HORIZONTAL -> Pair(nameTable1, addr % 0x400)  // H-mirror: left/right, so 0x2400 = NT1
-                    Mirroring.VERTICAL -> Pair(nameTable0, addr % 0x400)    // V-mirror: top/bottom, so 0x2400 = NT0
-                }
+            Mirroring.VERTICAL -> {
+                // Vertical mirroring: $2000 mirrors $2800 (NT0), $2400 mirrors $2C00 (NT1)
+                // This means CIRAM A10 = PPU A10
+                (normalizedAddr / 0x400) % 2
             }
-            addr in 0x2800..0x2BFF -> {
-                when (mirroring) {
-                    Mirroring.HORIZONTAL -> Pair(nameTable0, addr % 0x400)  // H-mirror: 0x2800 same as 0x2000 (NT0)
-                    Mirroring.VERTICAL -> Pair(nameTable1, addr % 0x400)    // V-mirror: 0x2800 = NT1
-                }
-            }
-            addr in 0x2C00..0x2FFF -> {
-                when (mirroring) {
-                    Mirroring.HORIZONTAL -> Pair(nameTable1, addr % 0x400)  // H-mirror: 0x2C00 same as 0x2400 (NT1)
-                    Mirroring.VERTICAL -> Pair(nameTable1, addr % 0x400)    // V-mirror: 0x2C00 same as 0x2800 (NT1)
-                }
-            }
-            else -> error("Invalid nametable address: ${addr.toString(16)}")
         }
+        val table = if (tableIndex == 0) nameTable0 else nameTable1
+        return Pair(table, addr % 0x400)
     }
 
     operator fun get(addr: Int): Byte = when (addr) {
