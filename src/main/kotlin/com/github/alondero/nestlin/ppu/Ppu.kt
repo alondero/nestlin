@@ -238,7 +238,8 @@ class Ppu(var memory: Memory) {
                 val activeSprite = ActiveSprite(
                     data = spriteData,
                     tileDataLow = tileDataLow,
-                    tileDataHigh = tileDataHigh
+                    tileDataHigh = tileDataHigh,
+                    xCounter = spriteData.x  // Initialize counter to sprite's X position
                 )
 
                 // Initialize shift registers with tile data, apply horizontal flip
@@ -480,10 +481,22 @@ class Ppu(var memory: Memory) {
             paletteShiftLow = (paletteShiftLow shl 1) and 0xFFFF
             paletteShiftHigh = (paletteShiftHigh shl 1) and 0xFFFF
 
-            // Shift active sprite registers
+            // Update sprite X counters and shift only active sprites
+            // On NES hardware, each sprite has an X position counter that counts down each cycle.
+            // When counter reaches 0, the sprite becomes "active" and its shift registers output pixels.
             activeSpriteBuffer.forEach { sprite ->
-                sprite.shiftLow = sprite.shiftLow shl 1
-                sprite.shiftHigh = sprite.shiftHigh shl 1
+                if (sprite.xCounter > 0) {
+                    // Counter not yet zero, decrement it
+                    sprite.xCounter--
+                    if (sprite.xCounter == 0) {
+                        // Counter reached 0, sprite is now active
+                        sprite.isActive = true
+                    }
+                } else {
+                    // Sprite is active (counter already at 0), shift its registers
+                    sprite.shiftLow = (sprite.shiftLow shl 1) and 0xFF
+                    sprite.shiftHigh = (sprite.shiftHigh shl 1) and 0xFF
+                }
             }
 
 
@@ -511,22 +524,18 @@ class Ppu(var memory: Memory) {
             // Check sprites (in order, first non-transparent sprite wins)
             val showSpritesLeft = memory.ppuAddressedMemory.mask.spritesInLeftmost8px()
             for (sprite in activeSpriteBuffer) {
-                // Current rendering X position (0-255)
-                val pixelX = cycle - 1
-
                 // Skip if clipping leftmost 8px
+                val pixelX = cycle - 1
                 if (pixelX < 8 && !showSpritesLeft) continue
 
-                // Calculate sprite X position relative to current pixel
-                val spritePixelX = pixelX - sprite.data.x
+                // Only render sprites that are actively outputting pixels
+                // (xCounter reached 0 and we're within the 8-pixel output window)
+                if (!sprite.isActive) continue
 
-                // Skip if sprite is off-screen horizontally
-                if (spritePixelX < 0 || spritePixelX > 7) continue
-
-                // Extract sprite pixel from shift registers
-                val shiftAmount = 7 - spritePixelX
-                val spriteBit0 = (sprite.shiftLow shr shiftAmount) and 1
-                val spriteBit1 = (sprite.shiftHigh shr shiftAmount) and 1
+                // Extract sprite pixel from shift register MSB
+                // Since shift registers shift left, the MSB (bit 7) is the current pixel
+                val spriteBit0 = (sprite.shiftLow shr 7) and 1
+                val spriteBit1 = (sprite.shiftHigh shr 7) and 1
                 val spritePixel = (spriteBit1 shl 1) or spriteBit0
 
                 // Skip transparent sprite pixels
@@ -662,6 +671,8 @@ data class ActiveSprite(
     val tileDataLow: Byte,    // Pattern table low byte (bit 0 plane)
     val tileDataHigh: Byte,   // Pattern table high byte (bit 1 plane)
     var shiftLow: Int = 0,    // 8-bit shift register, bits 7-0 = pixels 7-0
-    var shiftHigh: Int = 0    // 8-bit shift register
+    var shiftHigh: Int = 0,   // 8-bit shift register
+    var xCounter: Int = 0,    // Counts down from sprite X position to 0
+    var isActive: Boolean = false  // True when xCounter reaches 0 (sprite is rendering)
 )
 
