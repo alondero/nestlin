@@ -5,7 +5,7 @@ import com.github.alondero.nestlin.ui.FrameListener
 import java.util.*
 
 const val RESOLUTION_WIDTH = 256
-const val RESOLUTION_HEIGHT = 224
+const val RESOLUTION_HEIGHT = 240
 const val NTSC_SCANLINES = 262
 
 const val IDLE_SCANLINE = 0
@@ -97,10 +97,10 @@ class Ppu(var memory: Memory) {
 
         }
 
-        // VBlank is set at scanline 241, cycle 0 (0-indexed)
-        if (scanline == 241 && cycle == 0) {
+        // VBlank is set at scanline 241, cycle 1 (NESdev: dot 1)
+        if (scanline == 241 && cycle == 1) {
             vBlank = true
-            memory.ppuAddressedMemory.nmiOccurred = true
+            memory.ppuAddressedMemory.setVBlank()
         }
 
         if (scanline == PRE_RENDER_SCANLINE && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
@@ -144,7 +144,7 @@ class Ppu(var memory: Memory) {
         cycle++
     }
 
-    private fun rendering() = with (memory.ppuAddressedMemory.mask) { showBackground() && showSprites() }
+    private fun rendering() = with (memory.ppuAddressedMemory.mask) { showBackground() || showSprites() }
 
     private fun checkAndSetVerticalAndHorizontalData() {
         when (cycle) {
@@ -493,11 +493,14 @@ class Ppu(var memory: Memory) {
             var usedBackground = false
 
             // Extract background pixel
-            val paletteAddr = if (pixelValue == 0) {
+            val showBgLeft = memory.ppuAddressedMemory.mask.backgroundInLeftmost8px()
+            val pixelValueVisible = if (x < 8 && !showBgLeft) 0 else pixelValue
+
+            val paletteAddr = if (pixelValueVisible == 0) {
                 0x3F00  // Universal background color
             } else {
                 usedBackground = true
-                0x3F00 + (paletteIndex shl 2) + pixelValue
+                0x3F00 + (paletteIndex shl 2) + pixelValueVisible
             }
 
             val bgNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
@@ -506,9 +509,13 @@ class Ppu(var memory: Memory) {
 
 
             // Check sprites (in order, first non-transparent sprite wins)
+            val showSpritesLeft = memory.ppuAddressedMemory.mask.spritesInLeftmost8px()
             for (sprite in activeSpriteBuffer) {
                 // Current rendering X position (0-255)
                 val pixelX = cycle - 1
+
+                // Skip if clipping leftmost 8px
+                if (pixelX < 8 && !showSpritesLeft) continue
 
                 // Calculate sprite X position relative to current pixel
                 val spritePixelX = pixelX - sprite.data.x
@@ -525,13 +532,30 @@ class Ppu(var memory: Memory) {
                 // Skip transparent sprite pixels
                 if (spritePixel == 0) continue
 
-                // Sprite is visible - check priority
+                // Sprite 0 Hit detection
+                if (sprite.data.index == 0 && usedBackground && pixelX < 255) {
+                    val mask = memory.ppuAddressedMemory.mask
+                    var canHit = true
+                    if (pixelX < 8) {
+                        if (!mask.backgroundInLeftmost8px() || !mask.spritesInLeftmost8px()) {
+                            canHit = false
+                        }
+                    }
+                    if (canHit) {
+                        memory.ppuAddressedMemory.status.register = 
+                            memory.ppuAddressedMemory.status.register.setBit(6)
+                    }
+                }
+
+                // First non-transparent sprite in OAM order always wins the sprite-sprite priority contest
                 if (sprite.data.priority == 0 || !usedBackground) {
                     // In front of background OR background is transparent
                     finalPixel = spritePixel
                     finalPalette = sprite.data.paletteIndex
-                    break  // First visible sprite wins
                 }
+                
+                // Even if hidden by background, this sprite blocks lower-indexed sprites
+                break 
             }
 
             // Look up final color
@@ -600,6 +624,7 @@ class ObjectAttributeMemory {
     fun getSprite(index: Int): SpriteData {
         val base = (index and 0x3F) * 4  // 64 sprites max, wrap at boundary
         return SpriteData(
+            index = index,
             y = memory[base].toUnsignedInt(),
             tileIndex = memory[base + 1],
             attributes = memory[base + 2],
@@ -617,6 +642,7 @@ class ObjectAttributeMemory {
  * P = palette index (0-3)
  */
 data class SpriteData(
+    val index: Int,       // 0-63, OAM index
     val y: Int,           // 0-255, sprite Y position
     val tileIndex: Byte,  // Tile index in pattern table
     val attributes: Byte, // VPHP0000
