@@ -34,6 +34,8 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.natpryce:hamkrest:1.8.0.1")
+    testImplementation("org.jetbrains.kotlin:kotlin-test:1.9.22")
+    testImplementation("com.github.romankh3:image-comparison:4.4.0")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
