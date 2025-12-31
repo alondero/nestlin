@@ -13,6 +13,7 @@ import javafx.scene.image.PixelFormat
 import javafx.scene.layout.StackPane
 import javafx.stage.Stage
 import tornadofx.App
+import java.io.IOException
 import java.nio.file.Paths
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
@@ -37,6 +38,8 @@ class NestlinApplication : FrameListener, App() {
     private var canvas = Canvas(scaledWidth.toDouble(), scaledHeight.toDouble())
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
     private var running = false
+    // Frame buffer synchronization for thread-safe screenshot capture
+    private val frameBufferLock = Any()
     // 4x larger buffer to hold magnified pixels
     private var nextFrame = ByteArray(scaledHeight * scaledWidth * 3)
 
@@ -64,8 +67,10 @@ class NestlinApplication : FrameListener, App() {
                 val pixelWriter = canvas.graphicsContext2D.pixelWriter
                 val pixelFormat = PixelFormat.getByteRgbInstance()
 
-                // Write the full magnified buffer to the canvas
-                pixelWriter.setPixels(0, 0, scaledWidth, scaledHeight, pixelFormat, nextFrame, 0, scaledWidth*3)
+                // Thread-safe read of frame buffer
+                synchronized(frameBufferLock) {
+                    pixelWriter.setPixels(0, 0, scaledWidth, scaledHeight, pixelFormat, nextFrame, 0, scaledWidth*3)
+                }
             }
 
         }.start()
@@ -215,22 +220,24 @@ class NestlinApplication : FrameListener, App() {
     }
 
     override fun frameUpdated(frame: Frame) {
-        // Replicate each pixel DISPLAY_SCALE times in both X and Y dimensions
-        frame.scanlines.withIndex().forEach { (y, scanline) ->
-            scanline.withIndex().forEach { (x, pixel) ->
-                val r = (pixel shr 16).toByte()
-                val g = (pixel shr 8).toByte()
-                val b = pixel.toByte()
+        synchronized(frameBufferLock) {
+            // Replicate each pixel DISPLAY_SCALE times in both X and Y dimensions
+            frame.scanlines.withIndex().forEach { (y, scanline) ->
+                scanline.withIndex().forEach { (x, pixel) ->
+                    val r = (pixel shr 16).toByte()
+                    val g = (pixel shr 8).toByte()
+                    val b = pixel.toByte()
 
-                // Write this pixel DISPLAY_SCALE x DISPLAY_SCALE times
-                for (dy in 0 until DISPLAY_SCALE) {
-                    for (dx in 0 until DISPLAY_SCALE) {
-                        val scaledX = x * DISPLAY_SCALE + dx
-                        val scaledY = y * DISPLAY_SCALE + dy
-                        val pixIdx = (scaledY * scaledWidth + scaledX) * 3
-                        nextFrame[pixIdx] = r
-                        nextFrame[pixIdx + 1] = g
-                        nextFrame[pixIdx + 2] = b
+                    // Write this pixel DISPLAY_SCALE x DISPLAY_SCALE times
+                    for (dy in 0 until DISPLAY_SCALE) {
+                        for (dx in 0 until DISPLAY_SCALE) {
+                            val scaledX = x * DISPLAY_SCALE + dx
+                            val scaledY = y * DISPLAY_SCALE + dy
+                            val pixIdx = (scaledY * scaledWidth + scaledX) * 3
+                            nextFrame[pixIdx] = r
+                            nextFrame[pixIdx + 1] = g
+                            nextFrame[pixIdx + 2] = b
+                        }
                     }
                 }
             }
@@ -253,13 +260,31 @@ class NestlinApplication : FrameListener, App() {
         }
     }
 
+    /**
+     * Captures the current screen buffer and saves it as a PNG file.
+     * Thread-safe: Creates a copy of the frame buffer before file I/O.
+     * Non-blocking: File write happens on background thread.
+     * Triggered by pressing the 'S' key.
+     */
     private fun captureScreenshot() {
-        try {
-            val path = screenshotManager.saveScreenshot(nextFrame, scaledWidth, scaledHeight)
-            println("[SCREENSHOT] Saved to: $path")
-        } catch (e: Exception) {
-            println("[SCREENSHOT] Failed to save screenshot: ${e.message}")
-            e.printStackTrace()
+        // Get a thread-safe copy of the frame buffer
+        val frameData = synchronized(frameBufferLock) {
+            nextFrame.copyOf()
+        }
+
+        // Run file I/O on background thread to avoid blocking the UI
+        thread {
+            try {
+                val path = screenshotManager.saveScreenshot(frameData, scaledWidth, scaledHeight)
+                println("[SCREENSHOT] Saved to: $path")
+            } catch (e: IOException) {
+                println("[SCREENSHOT] File I/O error: ${e.message}")
+            } catch (e: IllegalArgumentException) {
+                println("[SCREENSHOT] Invalid parameters: ${e.message}")
+            } catch (e: Exception) {
+                println("[SCREENSHOT] Unexpected error: ${e.message}")
+                e.printStackTrace()
+            }
         }
     }
 }
