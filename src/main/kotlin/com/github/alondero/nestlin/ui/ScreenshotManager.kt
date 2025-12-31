@@ -23,7 +23,25 @@ class ScreenshotManager(private val screenshotsDir: Path) {
         return "screenshot-$timestamp.png"
     }
 
+    /**
+     * Saves a screenshot from a frame buffer to a PNG file.
+     *
+     * @param frameBuffer RGB byte array (3 bytes per pixel: R, G, B)
+     * @param width Image width in pixels
+     * @param height Image height in pixels
+     * @return Path to the saved PNG file
+     * @throws IllegalArgumentException if parameters are invalid
+     * @throws IOException if file write fails
+     */
     fun saveScreenshot(frameBuffer: ByteArray, width: Int, height: Int): Path {
+        // Validate parameters
+        require(width > 0 && height > 0) {
+            "Width and height must be positive, got width=$width, height=$height"
+        }
+        require(frameBuffer.size == width * height * 3) {
+            "Frame buffer size (${frameBuffer.size}) must equal width × height × 3 (${width * height * 3})"
+        }
+
         // Create a BufferedImage from the frame buffer
         val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
 

@@ -6,6 +6,7 @@ import org.junit.Test
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
+import javax.imageio.ImageIO
 
 class ScreenshotManagerTest {
     @get:Rule
@@ -60,6 +61,52 @@ class ScreenshotManagerTest {
 
         val savedPath = manager.saveScreenshot(testFrame, width = 4, height = 4)
 
+        // Verify file exists
         assertThat(Files.exists(savedPath), equalTo(true))
+
+        // Verify file is a valid PNG and has correct dimensions
+        val readImage = ImageIO.read(savedPath.toFile())
+        assertThat(readImage.width, equalTo(4))
+        assertThat(readImage.height, equalTo(4))
+
+        // Verify pixel data: first pixel should be red (0xFFFF0000)
+        val pixelColor = readImage.getRGB(0, 0)
+        assertThat(pixelColor, equalTo(0xFFFF0000.toInt()))
+    }
+
+    @Test
+    fun `should throw exception for invalid dimensions`() {
+        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val manager = ScreenshotManager(screenshotsDir)
+
+        val testFrame = ByteArray(12)  // 2x2x3 bytes
+
+        val exception = try {
+            manager.saveScreenshot(testFrame, width = 0, height = 2)
+            null
+        } catch (e: IllegalArgumentException) {
+            e
+        }
+
+        assert(exception != null)
+        assert(exception!!.message?.contains("positive") == true)
+    }
+
+    @Test
+    fun `should throw exception for mismatched buffer size`() {
+        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val manager = ScreenshotManager(screenshotsDir)
+
+        val testFrame = ByteArray(12)  // 12 bytes, but we're claiming 4x4 (should be 48)
+
+        val exception = try {
+            manager.saveScreenshot(testFrame, width = 4, height = 4)
+            null
+        } catch (e: IllegalArgumentException) {
+            e
+        }
+
+        assert(exception != null)
+        assert(exception!!.message?.contains("width × height × 3") == true)
     }
 }
