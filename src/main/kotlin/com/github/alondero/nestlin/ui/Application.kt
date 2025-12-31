@@ -5,6 +5,8 @@ import com.github.alondero.nestlin.Controller
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
 import com.github.alondero.nestlin.ppu.RESOLUTION_WIDTH
+import fm2.Fm2Parser
+import fm2.InputReplayer
 import javafx.animation.AnimationTimer
 import javafx.application.Application
 import javafx.scene.Scene
@@ -13,6 +15,7 @@ import javafx.scene.image.PixelFormat
 import javafx.scene.layout.StackPane
 import javafx.stage.Stage
 import tornadofx.App
+import java.io.File
 import java.io.IOException
 import java.nio.file.Paths
 import javax.sound.sampled.AudioFormat
@@ -50,6 +53,41 @@ class NestlinApplication : FrameListener, App() {
 
     // Screenshot management
     private val screenshotManager = ScreenshotManager(Paths.get("screenshots"))
+
+    // Replay mode
+    private var replayPath: String? = null
+
+    init {
+        val args = parameters.raw
+        var romPath: String? = null
+
+        var i = 0
+        while (i < args.size) {
+            when {
+                args[i] == "--replay" && i + 1 < args.size -> replayPath = args[++i]
+                !args[i].startsWith("--") -> romPath = args[i]
+            }
+            i++
+        }
+
+        if (romPath != null) {
+            nestlin.load(Paths.get(romPath))
+
+            // Initialize with replay if provided
+            if (replayPath != null) {
+                try {
+                    val fm2Content = File(replayPath!!).readText()
+                    val movie = Fm2Parser.parse(fm2Content)
+                    val replayer = InputReplayer(movie.frames)
+                    nestlin.setInputReplayer(replayer)
+                    println("[APP] Loaded FM2 replay: $replayPath (${movie.frames.size} frames)")
+                } catch (e: Exception) {
+                    println("[APP] Failed to load replay: ${e.message}")
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
 
     override fun start(stage: Stage) {
         this.stage = stage.apply {
