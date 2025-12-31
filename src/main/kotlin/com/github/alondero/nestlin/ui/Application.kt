@@ -45,6 +45,9 @@ class NestlinApplication : FrameListener, App() {
     private var audioEnabled = true
     private var audioThread: Thread? = null
 
+    // Screenshot management
+    private val screenshotManager = ScreenshotManager(Paths.get("screenshots"))
+
     override fun start(stage: Stage) {
         this.stage = stage.apply {
             title = "Nestlin - ${DISPLAY_SCALE}x Magnification"
@@ -245,7 +248,18 @@ class NestlinApplication : FrameListener, App() {
             javafx.scene.input.KeyCode.DOWN -> controller.setButton(Controller.Button.DOWN, pressed)
             javafx.scene.input.KeyCode.LEFT -> controller.setButton(Controller.Button.LEFT, pressed)
             javafx.scene.input.KeyCode.RIGHT -> controller.setButton(Controller.Button.RIGHT, pressed)
+            javafx.scene.input.KeyCode.S -> if (pressed) captureScreenshot()
             else -> {}
+        }
+    }
+
+    private fun captureScreenshot() {
+        try {
+            val path = screenshotManager.saveScreenshot(nextFrame, scaledWidth, scaledHeight)
+            println("[SCREENSHOT] Saved to: $path")
+        } catch (e: Exception) {
+            println("[SCREENSHOT] Failed to save screenshot: ${e.message}")
+            e.printStackTrace()
         }
     }
 }
