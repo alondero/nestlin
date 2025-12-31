@@ -56,8 +56,10 @@ class NestlinApplication : FrameListener, App() {
 
     // Replay mode
     private var replayPath: String? = null
+    private var romPathArg: String? = null
 
-    init {
+    override fun start(stage: Stage) {
+        // Parse command line arguments
         val args = parameters.raw
         var romPath: String? = null
 
@@ -87,9 +89,7 @@ class NestlinApplication : FrameListener, App() {
                 }
             }
         }
-    }
 
-    override fun start(stage: Stage) {
         this.stage = stage.apply {
             title = "Nestlin - ${DISPLAY_SCALE}x Magnification"
 
