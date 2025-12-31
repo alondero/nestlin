@@ -33,4 +33,14 @@ class ScreenshotManagerTest {
 
         assertThat(Files.exists(screenshotsDir), equalTo(true))
     }
+
+    @Test
+    fun `should generate screenshot filename with timestamp`() {
+        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val manager = ScreenshotManager(screenshotsDir)
+
+        val filename = manager.generateScreenshotFilename()
+        assert(filename.contains("screenshot-"))
+        assert(filename.contains(".png"))
+    }
 }
