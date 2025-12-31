@@ -43,4 +43,23 @@ class ScreenshotManagerTest {
         assert(filename.contains("screenshot-"))
         assert(filename.contains(".png"))
     }
+
+    @Test
+    fun `should save frame buffer as PNG file`() {
+        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val manager = ScreenshotManager(screenshotsDir)
+
+        // Create a simple test frame buffer: 4x4 pixels, RGB (3 bytes per pixel)
+        // All red: R=255, G=0, B=0
+        val testFrame = ByteArray(4 * 4 * 3) { i ->
+            when (i % 3) {
+                0 -> 255.toByte()  // R channel
+                else -> 0.toByte() // G and B channels
+            }
+        }
+
+        val savedPath = manager.saveScreenshot(testFrame, width = 4, height = 4)
+
+        assertThat(Files.exists(savedPath), equalTo(true))
+    }
 }
