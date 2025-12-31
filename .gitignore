@@ -17,3 +17,6 @@ hs_err_pid*
 
 # Claude local settings
 .claude/settings.local.json
+
+# Screenshot directory (generated at runtime)
+screenshots/
