@@ -65,35 +65,38 @@ class Nestlin {
 
         try {
             while (running) {
-                // Check if replay is active and finished
-                if (inputReplayer != null && inputReplayer!!.isFinished()) {
-                    replayFinished = true
-                    running = false
-                    continue
-                }
-
-                // Get current frame input if replaying
-                val replayFrame = inputReplayer?.nextFrame()
-                if (replayFrame != null) {
-                    // Apply replay commands (soft reset, hard reset, etc)
-                    if ((replayFrame.commands and 0x01) != 0) {
-                        // Soft reset - just reset CPU
-                        cpu.reset()
-                    }
-                    if ((replayFrame.commands and 0x02) != 0) {
-                        // Hard reset - reset everything
-                        powerReset()
-                    }
-                    // Pass controller state to emulation
-                    updateControllerFromReplay(replayFrame)
-                }
-
                 (1..3).forEach { ppu.tick() }
                 apu.tick()
                 cpu.tick()
 
-                // Check if frame completed and throttle if needed
+                // Check if frame completed
                 if (ppu.frameJustCompleted()) {
+                    // Advance replay only once per emulation frame
+                    if (inputReplayer != null) {
+                        // Check if replay is finished
+                        if (inputReplayer!!.isFinished()) {
+                            replayFinished = true
+                            running = false
+                            continue
+                        }
+
+                        // Get next frame input if replaying
+                        val replayFrame = inputReplayer!!.nextFrame()
+                        if (replayFrame != null) {
+                            // Apply replay commands (soft reset, hard reset, etc)
+                            if ((replayFrame.commands and 0x01) != 0) {
+                                // Soft reset - just reset CPU
+                                cpu.reset()
+                            }
+                            if ((replayFrame.commands and 0x02) != 0) {
+                                // Hard reset - reset everything
+                                powerReset()
+                            }
+                            // Pass controller state to emulation
+                            updateControllerFromReplay(replayFrame)
+                        }
+                    }
+
                     throttleIfEnabled()
                 }
             }
