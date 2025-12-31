@@ -61,6 +61,10 @@ class Ppu(var memory: Memory) {
     private var diagnosticEndFrame = 10  // Log first 10 frames
     private var diagnosticFile: java.io.PrintWriter? = null
 
+    // Frame completion tracking for throttling
+    private var frameCompletedThisTick = false
+    private var frameCompletionListener: (() -> Unit)? = null
+
     fun tick() {
 
 //       println("Rendering ($cycle, $scanline)")
@@ -172,6 +176,10 @@ class Ppu(var memory: Memory) {
         listener?.frameUpdated(frame)
         frameCount++
         memory.ppuAddressedMemory.currentFrameCount = frameCount
+
+        // Signal frame completion for throttling
+        frameCompletedThisTick = true
+        frameCompletionListener?.invoke()
 
         if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame) {
             logDiagnostic("\n=== FRAME $frameCount COMPLETE ===\n")
@@ -581,6 +589,25 @@ class Ppu(var memory: Memory) {
 
     fun addFrameListener(listener: FrameListener) {
         this.listener = listener
+    }
+
+    /**
+     * Check if a frame just completed on the last tick.
+     * This is a one-shot flag that clears after being read.
+     * Used for frame rate throttling.
+     */
+    fun frameJustCompleted(): Boolean {
+        val result = frameCompletedThisTick
+        frameCompletedThisTick = false
+        return result
+    }
+
+    /**
+     * Add a listener to be notified when a frame completes.
+     * Used for frame rate throttling and timing.
+     */
+    fun addFrameCompletionListener(listener: () -> Unit) {
+        frameCompletionListener = listener
     }
 
     fun enableDiagnosticLogging(startFrame: Int = 3, endFrame: Int = 8) {

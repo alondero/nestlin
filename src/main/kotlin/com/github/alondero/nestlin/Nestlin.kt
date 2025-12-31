@@ -9,11 +9,13 @@ import java.nio.file.Path
 
 class Nestlin {
 
+    val config = EmulatorConfig()  // Public for UI access
     private var cpu: Cpu
     private var ppu: Ppu
     private val apu: Apu
     private val memory: Memory
     private var running = false
+    private var lastFrameTimeNanos: Long = 0
 
     init {
         memory = Memory()
@@ -49,18 +51,49 @@ class Nestlin {
 
     fun start() {
         running = true
+        lastFrameTimeNanos = System.nanoTime()
 
         try {
             while (running) {
                 (1..3).forEach { ppu.tick() }
                 apu.tick()
                 cpu.tick()
+
+                // Check if frame completed and throttle if needed
+                if (ppu.frameJustCompleted()) {
+                    throttleIfEnabled()
+                }
             }
         } finally {
             // TODO: Development-only feature - Remove undocumented opcode dumping once emulator stability is proven
             // Always dump undocumented opcodes, even if emulation crashes
             cpu.dumpUndocumentedOpcodes()
         }
+    }
+
+    /**
+     * Throttle emulation speed to match target frame rate.
+     * Uses high-precision timing to sleep until the next frame should start.
+     * Only throttles if speedThrottlingEnabled is true.
+     */
+    private fun throttleIfEnabled() {
+        if (!config.speedThrottlingEnabled) return
+
+        val currentTime = System.nanoTime()
+        val elapsedNanos = currentTime - lastFrameTimeNanos
+        val targetNanos = config.targetFrameTimeNanos
+
+        if (elapsedNanos < targetNanos) {
+            val sleepNanos = targetNanos - elapsedNanos
+            val sleepMillis = sleepNanos / 1_000_000
+            val remainderNanos = (sleepNanos % 1_000_000).toInt()
+
+            if (sleepMillis > 0 || remainderNanos > 0) {
+                Thread.sleep(sleepMillis, remainderNanos)
+            }
+        }
+
+        lastFrameTimeNanos = System.nanoTime()
     }
 
     fun stop() {running = false}

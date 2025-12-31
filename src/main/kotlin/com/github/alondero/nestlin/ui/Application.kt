@@ -54,11 +54,40 @@ class NestlinApplication : FrameListener, App() {
     override fun start(stage: Stage) {
         this.stage = stage.apply {
             title = "Nestlin - ${DISPLAY_SCALE}x Magnification"
-            scene = Scene(StackPane().apply { children.add(canvas) })
-            
-            scene.setOnKeyPressed { event -> handleInput(event.code, true) }
+
+            // Create menu bar
+            val menuBar = javafx.scene.control.MenuBar()
+            val settingsMenu = javafx.scene.control.Menu("Settings")
+
+            val throttleMenuItem = javafx.scene.control.CheckMenuItem("Speed Throttling (60 FPS)")
+            throttleMenuItem.isSelected = nestlin.config.speedThrottlingEnabled
+            throttleMenuItem.setOnAction {
+                nestlin.config.speedThrottlingEnabled = throttleMenuItem.isSelected
+                println("[APP] Speed throttling ${if (throttleMenuItem.isSelected) "enabled" else "disabled"}")
+            }
+
+            settingsMenu.items.add(throttleMenuItem)
+            menuBar.menus.add(settingsMenu)
+
+            // Create layout with menu bar and canvas
+            val root = javafx.scene.layout.VBox()
+            root.children.addAll(menuBar, canvas)
+
+            scene = Scene(root)
+
+            scene.setOnKeyPressed { event ->
+                // Check for Ctrl+T keyboard shortcut to toggle throttling
+                if (event.code == javafx.scene.input.KeyCode.T && event.isControlDown) {
+                    nestlin.config.speedThrottlingEnabled = !nestlin.config.speedThrottlingEnabled
+                    throttleMenuItem.isSelected = nestlin.config.speedThrottlingEnabled
+                    println("[APP] Speed throttling ${if (nestlin.config.speedThrottlingEnabled) "enabled" else "disabled"}")
+                    event.consume()
+                } else {
+                    handleInput(event.code, true)
+                }
+            }
             scene.setOnKeyReleased { event -> handleInput(event.code, false) }
-            
+
             show()
         }
 
