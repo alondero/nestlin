@@ -24,13 +24,6 @@ class PpuAddressedMemory {
     var nmiOccurred = false
     var nmiOutput = false
 
-    // Diagnostic logging support
-    private var diagnosticFile: java.io.PrintWriter? = null
-    var diagnosticLogging = false
-    var diagnosticStartFrame = 0
-    var diagnosticEndFrame = 0
-    var currentFrameCount = 0
-
     fun setVBlank() {
         status.register = status.register.setBit(7)
         nmiOccurred = true
@@ -87,20 +80,6 @@ class PpuAddressedMemory {
         }
     }
 
-    fun setDiagnosticFile(file: java.io.PrintWriter, startFrame: Int, endFrame: Int) {
-        diagnosticFile = file
-        diagnosticStartFrame = startFrame
-        diagnosticEndFrame = endFrame
-        diagnosticLogging = true
-    }
-
-    private fun logDiagnostic(msg: String) {
-        if (diagnosticLogging && currentFrameCount in diagnosticStartFrame until diagnosticEndFrame && diagnosticFile != null) {
-            diagnosticFile!!.println("[VRAM-TRACE] Frame $currentFrameCount: $msg")
-            diagnosticFile!!.flush()
-        }
-    }
-
     operator fun set(addr: Int, value: Byte) {
 //        println("Setting PPU Addressed data ${addr.toHexString()}, with ${value.toHexString()}")
         when (addr) {
@@ -117,11 +96,9 @@ class PpuAddressedMemory {
                 if (writeToggle) {
                     tempVRamAddress.coarseYScroll = (value.toUnsignedInt() shr 3) and 0x1F
                     tempVRamAddress.fineYScroll = value.toUnsignedInt() and 0x07
-                    logDiagnostic("SCROLL_Y write: ${value.toHexString()}, coarseY=${tempVRamAddress.coarseYScroll}, fineY=${tempVRamAddress.fineYScroll}")
                 } else {
                     tempVRamAddress.coarseXScroll = (value.toUnsignedInt() shr 3) and 0x1F
                     fineXScroll = value.toUnsignedInt() and 0x07
-                    logDiagnostic("SCROLL_X write: ${value.toHexString()}, coarseX=${tempVRamAddress.coarseXScroll}, fineX=$fineXScroll")
                 }
                 writeToggle = !writeToggle
             }
@@ -130,17 +107,14 @@ class PpuAddressedMemory {
                 if (writeToggle) {
                     tempVRamAddress.setLowerByte(value)
                     vRamAddress.setFrom(tempVRamAddress)
-                    logDiagnostic("VRAM_ADDR low byte: ${value.toHexString()}, vRamAddr after=${tempVRamAddress.asAddress().toString(16)}, NT=${tempVRamAddress.getNameTableNum()}")
                 } else {
                     tempVRamAddress.setUpper7Bits(value)
-                    logDiagnostic("VRAM_ADDR high byte: ${value.toHexString()}, vRamAddr after=${tempVRamAddress.asAddress().toString(16)}, NT=${tempVRamAddress.getNameTableNum()}")
                 }
                 writeToggle = !writeToggle
             }
             else /*7*/ -> {
                 // Write to VRAM at current address, then increment
                 val writeAddr = vRamAddress.asAddress() and 0x3FFF
-                logDiagnostic("VRAM_DATA write: addr=${writeAddr.toString(16)}, data=${value.toHexString()}, NT=${vRamAddress.getNameTableNum()}, coarseX=${vRamAddress.coarseXScroll}, coarseY=${vRamAddress.coarseYScroll}")
                 ppuInternalMemory[writeAddr] = value
 
                 vRamAddress.increment(controller.vramAddressIncrement())
@@ -166,7 +140,7 @@ class VramAddress {
     var fineYScroll = 0 // 3 bits so maximum value is 7 - wraps to coarseY if overflows
 
     fun setUpper7Bits(bits: Byte) {
-        fineYScroll = (bits.toUnsignedInt() shr 4) and 0x03
+        fineYScroll = (fineYScroll and 0x04) or ((bits.toUnsignedInt() shr 4) and 0x03)
         horizontalNameTable = bits.isBitSet(2)
         verticalNameTable = bits.isBitSet(3)
         coarseYScroll = (coarseYScroll and 0x07) or ((bits.toUnsignedInt() and 0x03) shl 3)
@@ -352,9 +326,9 @@ class PpuInternalMemory {
         val normalizedAddr = (addr - 0x2000) % 0x1000
         val tableIndex = when (mirroring) {
             Mirroring.HORIZONTAL -> {
-                // Horizontal mirroring: $2000/$2800 -> NT0, $2400/$2C00 -> NT1
-                // Check bit 10 of normalized address (the 0x400 bit)
-                if ((normalizedAddr and 0x400) != 0) 1 else 0
+                // Horizontal mirroring: $2000/$2400 -> NT0, $2800/$2C00 -> NT1
+                // Check bit 11 of normalized address (the 0x800 bit)
+                if ((normalizedAddr and 0x800) != 0) 1 else 0
             }
             Mirroring.VERTICAL -> {
                 // Vertical mirroring: $2000/$2400 -> NT0, $2800/$2C00 -> NT1
