@@ -168,13 +168,8 @@ class Ppu(var memory: Memory) {
 private fun endFrame() {
     listener?.frameUpdated(frame)
     frameCount++
-    memory.ppuAddressedMemory.currentFrameCount = frameCount
     frameCompletedThisTick = true  // ADD THIS
     frameCompletionListener?.invoke()  // ADD THIS
-
-    if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame) {
-        logDiagnostic("\n=== FRAME $frameCount COMPLETE ===\n")
-    }
 
     scanline = 0
     vBlank = false

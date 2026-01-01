@@ -115,6 +115,16 @@ class PpuAddressedMemoryTest {
     }
 
     @Test
+    fun `setUpper7Bits preserves fine Y high bit`() {
+        addressedMemory.tempVRamAddress.fineYScroll = 0b100
+
+        // High byte write should update fineY low bits but preserve bit 2.
+        addressedMemory[6] = 0b00110000.toSignedByte()
+
+        assertThat(addressedMemory.tempVRamAddress.fineYScroll, equalTo(0b111))
+    }
+
+    @Test
     fun setLowerByteOn2006CallWhenToggleOn() {
         setToggleOn()
         addressedMemory[6] = 0xFF.toSignedByte()
@@ -133,4 +143,3 @@ class PpuAddressedMemoryTest {
         addressedMemory[5] = 0
     }
 }
-

@@ -2,7 +2,6 @@ package com.github.alondero.nestlin.ppu
 
 import com.github.alondero.nestlin.*
 import com.github.alondero.nestlin.ui.FrameListener
-import java.util.*
 
 const val RESOLUTION_WIDTH = 256
 const val RESOLUTION_HEIGHT = 240
@@ -50,16 +49,7 @@ class Ppu(var memory: Memory) {
     private var frame = Frame()
     private var frameCount = 0
 
-    private val rand = Random()
-
     private var lastNametableByte: Byte = 0
-    private var lastAttributeTableByte: Byte = 0
-
-    // Diagnostic logging control
-    private var diagnosticLogging = false
-    private var diagnosticStartFrame = 0
-    private var diagnosticEndFrame = 10  // Log first 10 frames
-    private var diagnosticFile: java.io.PrintWriter? = null
 
     // Frame completion tracking for throttling
     private var frameCompletedThisTick = false
@@ -74,7 +64,10 @@ class Ppu(var memory: Memory) {
         }
 
 
-        if (rendering()) {
+        val renderingEnabled = rendering()
+        val renderingActive = renderingEnabled && (scanline in 0 until RESOLUTION_HEIGHT || scanline == PRE_RENDER_SCANLINE)
+
+        if (renderingActive) {
             // Fetch sprites for this scanline at cycle 0
             if (cycle == 0) {
                 // Copy horizontal scroll from temp register BEFORE preloading
@@ -111,10 +104,7 @@ class Ppu(var memory: Memory) {
 
         // Load shift registers every 8 cycles (at cycles 9, 17, 25, ..., 249, 257, 329, 337)
         // Reload happens after fetching is complete (at start of next tile's nametable fetch)
-        if (cycle % 8 == 1 && cycle > 1 && ((cycle <= 256) || (cycle >= 321 && cycle <= 336))) {
-            if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): BEFORE RELOAD - latchLow=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')} latchHigh=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')} shiftLow=0x${patternShiftLow.toString(16).padStart(4, '0')} shiftHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')}")
-            }
+        if (renderingActive && cycle % 8 == 1 && cycle > 1 && ((cycle <= 256) || (cycle >= 321 && cycle <= 336))) {
             // Load the lower 8 bits of pattern shift registers with fetched tile data (Next Tile)
             // Keep upper 8 bits (Current Tile) which have shifted from previous fetch
             patternShiftLow = (patternShiftLow and 0xFF00) or patternLatchLow.toUnsignedInt()
@@ -124,10 +114,6 @@ class Ppu(var memory: Memory) {
             // Load into lower 8 bits (for next tile), keep upper 8 bits (for current tile)
             paletteShiftLow = (paletteShiftLow and 0xFF00) or (if ((paletteLatch and 0x01) != 0) 0xFF else 0x00)
             paletteShiftHigh = (paletteShiftHigh and 0xFF00) or (if ((paletteLatch and 0x02) != 0) 0xFF else 0x00)
-
-            if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): AFTER RELOAD - shiftLow=0x${patternShiftLow.toString(16).padStart(4, '0')} shiftHigh=0x${patternShiftHigh.toString(16).padStart(4, '0')}")
-            }
         }
 
         //  Every cycle a bit is fetched from the 4 backgroundNametables shift registers in order to create a pixel on screen
@@ -175,15 +161,10 @@ class Ppu(var memory: Memory) {
     private fun endFrame() {
         listener?.frameUpdated(frame)
         frameCount++
-        memory.ppuAddressedMemory.currentFrameCount = frameCount
 
         // Signal frame completion for throttling
         frameCompletedThisTick = true
         frameCompletionListener?.invoke()
-
-        if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame) {
-            logDiagnostic("\n=== FRAME $frameCount COMPLETE ===\n")
-        }
 
         //  What to do here?
         scanline = 0
@@ -220,7 +201,8 @@ class Ppu(var memory: Memory) {
 
             val spriteData = oam.getSprite(i)
             val spriteY = spriteData.y
-            val spriteHeight = 8  // Minimal path: 8×8 only
+            val spriteSize = memory.ppuAddressedMemory.controller.spriteSize()
+            val spriteHeight = if (spriteSize == Control.SpriteSize.X_8_16) 16 else 8
 
             // Check if sprite is visible on current scanline
             // In the NES, Y position 0 is off-screen (renders at scanline 1)
@@ -235,9 +217,17 @@ class Ppu(var memory: Memory) {
                 }
 
                 // Fetch sprite tile data from pattern table
-                val patternBase = memory.ppuAddressedMemory.controller.spritePatternTableAddress()
                 val tileIndex = spriteData.tileIndex.toUnsignedInt()
-                val tileAddr = patternBase + (tileIndex * 16) + tileY
+                val (patternBase, tileNumber, tileRow) = if (spriteSize == Control.SpriteSize.X_8_16) {
+                    val base = (tileIndex and 0x01) * 0x1000
+                    val tileBase = tileIndex and 0xFE
+                    val tileOffset = if (tileY >= 8) 1 else 0
+                    Triple(base, tileBase + tileOffset, tileY and 0x07)
+                } else {
+                    val base = memory.ppuAddressedMemory.controller.spritePatternTableAddress()
+                    Triple(base, tileIndex, tileY)
+                }
+                val tileAddr = patternBase + (tileNumber * 16) + tileRow
 
                 val tileDataLow = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr]
                 val tileDataHigh = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr + 8]
@@ -301,10 +291,6 @@ class Ppu(var memory: Memory) {
                 val patternLow = ppuInternalMemory[patternLowAddr]
                 val patternHigh = ppuInternalMemory[patternHighAddr]
 
-                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                    logDiagnostic("FRAME $frameCount PRELOAD Tile $tileNum (scanline $scanline): nametable=0x${nametableByte.toUnsignedInt().toString(16).padStart(2, '0')} tileIdx=$tileIndex patternAddr=0x${patternLowAddr.toString(16).padStart(4, '0')} patternLow=0x${patternLow.toUnsignedInt().toString(16).padStart(2, '0')} patternHigh=0x${patternHigh.toUnsignedInt().toString(16).padStart(2, '0')} palette=$paletteData")
-                }
-
                 if (tileNum == 0) {
                     // Load tile 0 into upper 8 bits (Current Tile)
                     patternShiftLow = patternLow.toUnsignedInt() shl 8
@@ -331,63 +317,10 @@ class Ppu(var memory: Memory) {
     }
 
     private fun fetchData() {
-        // Log PPUMASK state and nametable contents at start of rendering for diagnostic frames
-        if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && cycle == 1 && scanline == 0) {
-            with(memory.ppuAddressedMemory) {
-                val maskByte = mask.register.toUnsignedInt()
-                val showBg = mask.showBackground()
-                val showSprites = mask.showSprites()
-                val vAddr = vRamAddress.asAddress()
-                val ntSelect = (vAddr shr 10) and 3  // bits 10-11
-                val ntSelectName = when (ntSelect) {
-                    0 -> "NT0 (top)"
-                    1 -> "NT1 (right)"
-                    2 -> "NT2 (bottom)"
-                    3 -> "NT3 (left)"
-                    else -> "?"
-                }
-                logDiagnostic("FRAME $frameCount START: PPUMASK=0x${maskByte.toString(16).padStart(2, '0')} showBackground=$showBg showSprites=$showSprites rendering=${rendering()} vRamAddress=0x${vAddr.toString(16).padStart(4, '0')} ntSelect=$ntSelectName")
-
-                // Log nametable contents (all entries, not just first 64)
-                var nt0NonZero = 0
-                var nt1NonZero = 0
-                for (i in 0 until 0x400) {
-                    if (ppuInternalMemory[0x2000 + i].toUnsignedInt() != 0) nt0NonZero++
-                    if (ppuInternalMemory[0x2400 + i].toUnsignedInt() != 0) nt1NonZero++
-                }
-                logDiagnostic("FRAME $frameCount NT FULL: nt0 has $nt0NonZero/1024 non-zero entries, nt1 has $nt1NonZero/1024 non-zero entries")
-
-                // Show first non-zero values in each
-                if (nt0NonZero > 0) {
-                    for (i in 0 until 0x400) {
-                        val val0 = ppuInternalMemory[0x2000 + i].toUnsignedInt()
-                        if (val0 != 0) {
-                            logDiagnostic("FRAME $frameCount NT0 first non-zero: offset 0x${i.toString(16).padStart(3, '0')} value=0x${val0.toString(16).padStart(2, '0')}")
-                            break
-                        }
-                    }
-                }
-                if (nt1NonZero > 0) {
-                    for (i in 0 until 0x400) {
-                        val val1 = ppuInternalMemory[0x2400 + i].toUnsignedInt()
-                        if (val1 != 0) {
-                            logDiagnostic("FRAME $frameCount NT1 first non-zero: offset 0x${i.toString(16).padStart(3, '0')} value=0x${val1.toString(16).padStart(2, '0')}")
-                            break
-                        }
-                    }
-                }
-            }
-        }
-
         when (cycle % 8) {
             1 -> with (memory.ppuAddressedMemory){
                 val ntAddr = 0x2000 or (vRamAddress.asAddress() and 0x0FFF)
                 lastNametableByte = ppuInternalMemory[ntAddr]
-                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                    val vAddr = vRamAddress.asAddress()
-                    val ntSelect = (vAddr shr 10) and 3  // bits 10-11
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch NAMETABLE addr=0x${ntAddr.toString(16).padStart(4, '0')} ntSelect=$ntSelect vAddr=0x${vAddr.toString(16).padStart(4, '0')} tileIdx=${lastNametableByte.toUnsignedInt()}")
-                }
             }
             3 -> with(memory.ppuAddressedMemory){
                 // Fetch Attribute Table Byte
@@ -402,10 +335,6 @@ class Ppu(var memory: Memory) {
                 val shift = ((v shr 4) and 4) or (v and 2)
                 paletteLatch = ((attributeByte shr shift) and 0x03)
 
-                lastAttributeTableByte = attributeByte.toSignedByte()
-                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch ATTRIBUTE palette=$paletteLatch")
-                }
             }
             5 -> with(memory.ppuAddressedMemory) {
                 //  Fetch Low Tile Byte (bit 0 of each pixel)
@@ -413,14 +342,7 @@ class Ppu(var memory: Memory) {
                 val tileIndex = lastNametableByte.toUnsignedInt()
                 val fineY = vRamAddress.fineYScroll
                 val address = patternTableBase + (tileIndex * 16) + fineY
-                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): BEFORE pattern-low fetch: patternLatchLow=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')}")
-                }
                 patternLatchLow = ppuInternalMemory[address]
-                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch PATTERN-LOW tileIdx=$tileIndex addr=0x${address.toString(16).padStart(4, '0')} data=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')}")
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): AFTER pattern-low fetch: patternLatchLow=0x${patternLatchLow.toUnsignedInt().toString(16).padStart(2, '0')}")
-                }
             }
             7 -> with(memory.ppuAddressedMemory) {
                 //  Fetch High Tile Byte (bit 1 of each pixel, 8 bytes after low byte)
@@ -428,14 +350,7 @@ class Ppu(var memory: Memory) {
                 val tileIndex = lastNametableByte.toUnsignedInt()
                 val fineY = vRamAddress.fineYScroll
                 val address = patternTableBase + (tileIndex * 16) + fineY + 8
-                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): BEFORE pattern-high fetch: patternLatchHigh=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')}")
-                }
                 patternLatchHigh = ppuInternalMemory[address]
-                if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10) {
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): Fetch PATTERN-HIGH tileIdx=$tileIndex addr=0x${address.toString(16).padStart(4, '0')} data=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')}")
-                    logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline): AFTER pattern-high fetch: patternLatchHigh=0x${patternLatchHigh.toUnsignedInt().toString(16).padStart(2, '0')}")
-                }
             }
         }
 
@@ -477,10 +392,6 @@ class Ppu(var memory: Memory) {
             val paletteBit0 = (paletteShiftLow shr shiftAmount) and 1
             val paletteBit1 = (paletteShiftHigh shr shiftAmount) and 1
             val paletteIndex = (paletteBit1 shl 1) or paletteBit0
-
-            if (diagnosticLogging && frameCount in diagnosticStartFrame until diagnosticEndFrame && scanline < 10 && x < 16) {
-                logDiagnostic("FRAME $frameCount Cycle $cycle (SL $scanline) X=$x: PIXEL patternBits=$pixelValue palette=$paletteIndex shiftReg_Low=0x${patternShiftLow.toString(16).padStart(4, '0')} shiftReg_High=0x${patternShiftHigh.toString(16).padStart(4, '0')} fineX=$fineX")
-            }
 
             // Shift registers every cycle to advance to next pixel
             // Keep only lower 16 bits (shift registers are 16-bit, not 32-bit)
@@ -609,33 +520,6 @@ class Ppu(var memory: Memory) {
     fun addFrameCompletionListener(listener: () -> Unit) {
         frameCompletionListener = listener
     }
-
-    fun enableDiagnosticLogging(startFrame: Int = 3, endFrame: Int = 8) {
-        diagnosticLogging = true
-        diagnosticStartFrame = startFrame
-        diagnosticEndFrame = endFrame
-        try {
-            diagnosticFile = java.io.PrintWriter(java.io.FileWriter("/tmp/ppu_diagnostics.log"))
-            diagnosticFile!!.println("[DIAGNOSTIC LOG STARTED] Logging frames $startFrame-$endFrame")
-            diagnosticFile!!.flush()
-            System.err.println("[PPU] Diagnostic file opened successfully")
-            // Also pass diagnostic file to PPU addressed memory for VRAM write logging
-            memory.ppuAddressedMemory.setDiagnosticFile(diagnosticFile!!, startFrame, endFrame)
-        } catch (e: Exception) {
-            System.err.println("[PPU] Failed to open diagnostic file: ${e.message}")
-        }
-    }
-
-    private fun logDiagnostic(msg: String) {
-        if (diagnosticLogging && diagnosticFile != null) {
-            try {
-                diagnosticFile!!.println(msg)
-                diagnosticFile!!.flush()
-            } catch (e: Exception) {
-                System.err.println("[PPU] Error writing diagnostic: ${e.message}")
-            }
-        }
-    }
 }
 
 
@@ -702,4 +586,3 @@ data class ActiveSprite(
     var xCounter: Int = 0,    // Counts down from sprite X position to 0
     var isActive: Boolean = false  // True when xCounter reaches 0 (sprite is rendering)
 )
-

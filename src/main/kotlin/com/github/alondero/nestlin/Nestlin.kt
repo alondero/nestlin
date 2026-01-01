@@ -39,10 +39,6 @@ class Nestlin {
         cpu.enableLogging()
     }
 
-    fun enablePpuDiagnostics(startFrame: Int = 3, endFrame: Int = 8) {
-        ppu.enableDiagnosticLogging(startFrame, endFrame)
-    }
-
     fun getAudioSamples(): ShortArray = apu.getAudioSamples()
 
     fun powerReset() {

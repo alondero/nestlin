@@ -24,8 +24,7 @@ Your emulator has a solid foundation:
 13. **Pattern Table Protection**: ✅ Pattern tables now read-only in NROM mode, preventing tile data corruption (Commit: 3a1c09b)
 14. **CHR ROM Mirroring**: ✅ Small cartridges (8KB CHR) now correctly mirror data across both pattern tables (Commits: a551003, a24076a)
 15. **Nametable Address Calculation**: ✅ PPU now uses vRamAddress bits instead of CTRL bits for nametable selection (Commit: 06218b5)
-16. **PPU Diagnostics**: ✅ Comprehensive --ppu-diag logging for tracing tile fetches, pattern data, and pixel output
-17. **Controller Input**: ✅ Implemented $4016 read/write and keyboard integration (Session 2025-12-29)
+16. **Controller Input**: ✅ Implemented $4016 read/write and keyboard integration (Session 2025-12-29)
 
 ---
 
