@@ -46,6 +46,11 @@ class Cpu(var memory: Memory)
                 return
             }
 
+            if (checkAndHandleIrq()) {
+                workCyclesLeft--
+                return
+            }
+
             val initialPC = registers.programCounter
             val opcodeVal = readByteAtPC().toUnsignedInt()
             opcodes[opcodeVal]?.also {
@@ -113,6 +118,32 @@ class Cpu(var memory: Memory)
         }
 
         return false
+    }
+
+    private fun checkAndHandleIrq(): Boolean {
+        if (processorStatus.interruptDisable) return false
+        if (memory.apu?.isIrqPending() != true) return false
+
+        // Push PC (high byte first, then low byte)
+        val pc = registers.programCounter.toUnsignedInt()
+        push((pc shr 8).toSignedByte())
+        push((pc and 0xFF).toSignedByte())
+
+        // Push processor status (with B flag clear for interrupts)
+        val statusByte = processorStatus.asByte().toUnsignedInt()
+        val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
+        push(statusForInterrupt)
+
+        // Set interrupt disable flag
+        processorStatus.interruptDisable = true
+
+        // Load PC from IRQ/BRK vector at $FFFE-$FFFF
+        registers.programCounter = memory[0xFFFE, 0xFFFF]
+
+        // IRQ takes 7 cycles
+        workCyclesLeft = 7
+
+        return true
     }
 
     fun push(value: Byte) { memory[0x100 + ((registers.stackPointer--).toUnsignedInt())] = value }
@@ -198,4 +229,3 @@ data class ProcessorStatus(
         negative = (result.toUnsignedInt() and 0xFF).toSignedByte().isBitSet(7)
     }
 }
-

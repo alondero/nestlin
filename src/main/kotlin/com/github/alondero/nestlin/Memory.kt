@@ -66,7 +66,7 @@ class Memory {
         in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
         0x4016 -> controller1.read()
         0x4017 -> controller2.read()
-        in 0x4000..0x401F -> apuAddressedMemory[address - 0x4000]
+        in 0x4000..0x401F -> apu?.handleRegisterRead(address - 0x4000) ?: apuAddressedMemory[address - 0x4000]
         else /* in 0x4020..0xFFFF */ -> cartridgeSpace[address - 0x4020]
     }
 

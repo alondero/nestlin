@@ -7,6 +7,7 @@ import com.github.alondero.nestlin.toUnsignedInt
 class DmcChannel(val memory: Memory) {
     var isEnabled: Boolean = false
     var irqEnabled: Boolean = false
+    var irqPending: Boolean = false
     var loop: Boolean = false
     var rateIndex: Int = 0
     var outputLevel: Int = 0  // 7 bits (0-127)
@@ -33,7 +34,7 @@ class DmcChannel(val memory: Memory) {
         rateIndex = value.toUnsignedInt() and 0x0F
 
         if (!irqEnabled) {
-            // Clear DMC IRQ flag
+            irqPending = false
         }
     }
 
@@ -55,12 +56,15 @@ class DmcChannel(val memory: Memory) {
     }
 
     fun clockTimer() {
+        if (isEnabled) {
+            refillSampleBuffer()
+        }
+
         if (timerCounter > 0) {
             timerCounter--
         } else {
             timerCounter = dmcRateTable[rateIndex]
-
-            // Clock output unit (stub - full implementation in Phase 5)
+            clockOutputUnit()
         }
     }
 
@@ -71,7 +75,79 @@ class DmcChannel(val memory: Memory) {
     fun disableChannel() {
         isEnabled = false
         remainingBytes = 0
+        bitsRemaining = 0
+        sampleBuffer = null
+        silenceFlag = true
+        irqPending = false
     }
 
     fun getBytesRemaining(): Int = remainingBytes
+
+    fun clearIrq() {
+        irqPending = false
+    }
+
+    fun setChannelEnabled(enabled: Boolean) {
+        if (enabled) {
+            if (!isEnabled) {
+                isEnabled = true
+            }
+            if (remainingBytes == 0) {
+                restartSample()
+            }
+        } else {
+            disableChannel()
+        }
+    }
+
+    private fun restartSample() {
+        if (sampleLength <= 0) return
+        currentAddress = sampleAddress
+        remainingBytes = sampleLength
+    }
+
+    private fun refillSampleBuffer() {
+        if (sampleBuffer != null || remainingBytes == 0) return
+
+        sampleBuffer = memory[currentAddress]
+        currentAddress = (currentAddress + 1) and 0xFFFF
+        if (currentAddress < 0x8000) {
+            currentAddress = 0x8000
+        }
+
+        remainingBytes--
+        if (remainingBytes == 0) {
+            if (loop) {
+                restartSample()
+            } else if (irqEnabled) {
+                irqPending = true
+            }
+        }
+    }
+
+    private fun clockOutputUnit() {
+        if (bitsRemaining == 0) {
+            if (sampleBuffer != null) {
+                shiftRegister = sampleBuffer!!.toUnsignedInt()
+                sampleBuffer = null
+                bitsRemaining = 8
+                silenceFlag = false
+            } else {
+                silenceFlag = true
+            }
+        }
+
+        if (!silenceFlag) {
+            if ((shiftRegister and 1) == 1) {
+                if (outputLevel <= 125) outputLevel += 2
+            } else {
+                if (outputLevel >= 2) outputLevel -= 2
+            }
+        }
+
+        if (bitsRemaining > 0) {
+            shiftRegister = shiftRegister shr 1
+            bitsRemaining--
+        }
+    }
 }
