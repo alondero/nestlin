@@ -104,6 +104,13 @@ class NestlinApplication : FrameListener, App() {
 
         }.start()
 
+        running = true
+
+        if (!parameters.named["no-audio"].isNullOrEmpty()) {
+            audioEnabled = false
+            println("[APP] Audio disabled")
+        }
+
         // Initialize audio playback
         initAudio()
 
@@ -113,16 +120,11 @@ class NestlinApplication : FrameListener, App() {
                 if (!parameters.named["debug"].isNullOrEmpty()) {
                     enableLogging()
                 }
-                if (!parameters.named["no-audio"].isNullOrEmpty()) {
-                    audioEnabled = false
-                    println("[APP] Audio disabled")
-                }
                 load(Paths.get(parameters.unnamed[0]))
                 powerReset()
                 start()
             }
         }
-        running = true
     }
 
     override fun stop() {
@@ -136,6 +138,8 @@ class NestlinApplication : FrameListener, App() {
     }
 
     private fun initAudio() {
+        if (!audioEnabled) return
+
         try {
             // Try multiple audio format configurations (most to least compatible)
             val formats = listOf(
@@ -192,39 +196,49 @@ class NestlinApplication : FrameListener, App() {
 
     private fun audioPlaybackLoop(format: AudioFormat) {
         val buffer = ByteArray(2048)
+        val bytesPerSample = if (format.sampleSizeInBits == 16) 2 else 1
+        val maxSamplesPerWrite = buffer.size / bytesPerSample
+        var exitReason = "stopped"
 
         while (running && audioEnabled) {
             try {
                 val samples = nestlin.getAudioSamples()
 
                 if (samples.isNotEmpty()) {
-                    when {
-                        format.sampleSizeInBits == 16 -> {
-                            // Convert shorts to bytes
-                            if (format.isBigEndian) {
-                                // Big-endian: MSB first
-                                for (i in samples.indices) {
-                                    buffer[i * 2] = (samples[i].toInt() shr 8).toByte()
-                                    buffer[i * 2 + 1] = (samples[i].toInt() and 0xFF).toByte()
+                    var offset = 0
+                    while (offset < samples.size) {
+                        val count = minOf(maxSamplesPerWrite, samples.size - offset)
+                        when {
+                            format.sampleSizeInBits == 16 -> {
+                                // Convert shorts to bytes
+                                if (format.isBigEndian) {
+                                    // Big-endian: MSB first
+                                    for (i in 0 until count) {
+                                        val sample = samples[offset + i].toInt()
+                                        buffer[i * 2] = (sample shr 8).toByte()
+                                        buffer[i * 2 + 1] = (sample and 0xFF).toByte()
+                                    }
+                                } else {
+                                    // Little-endian: LSB first
+                                    for (i in 0 until count) {
+                                        val sample = samples[offset + i].toInt()
+                                        buffer[i * 2] = (sample and 0xFF).toByte()
+                                        buffer[i * 2 + 1] = (sample shr 8).toByte()
+                                    }
                                 }
-                            } else {
-                                // Little-endian: LSB first
-                                for (i in samples.indices) {
-                                    buffer[i * 2] = (samples[i].toInt() and 0xFF).toByte()
-                                    buffer[i * 2 + 1] = (samples[i].toInt() shr 8).toByte()
+                                audioLine?.write(buffer, 0, count * 2)
+                            }
+                            format.sampleSizeInBits == 8 -> {
+                                // Convert shorts to 8-bit unsigned
+                                for (i in 0 until count) {
+                                    // Scale from -32768..32767 to 0..255
+                                    val scaledValue = ((samples[offset + i].toInt() + 32768) shr 8).toByte()
+                                    buffer[i] = scaledValue
                                 }
+                                audioLine?.write(buffer, 0, count)
                             }
-                            audioLine?.write(buffer, 0, samples.size * 2)
                         }
-                        format.sampleSizeInBits == 8 -> {
-                            // Convert shorts to 8-bit unsigned
-                            for (i in samples.indices) {
-                                // Scale from -32768..32767 to 0..255
-                                val scaledValue = ((samples[i].toInt() + 32768) shr 8).toByte()
-                                buffer[i] = scaledValue
-                            }
-                            audioLine?.write(buffer, 0, samples.size)
-                        }
+                        offset += count
                     }
                 } else {
                     Thread.sleep(1)  // Avoid busy-waiting
@@ -233,11 +247,15 @@ class NestlinApplication : FrameListener, App() {
                 if (running && audioEnabled) {
                     println("[AUDIO] Error in audio playback: ${e.message}")
                 }
+                exitReason = "error"
                 break
             }
         }
 
-        println("[AUDIO] Audio thread terminated")
+        if (exitReason != "error") {
+            exitReason = if (!running) "stopped" else "disabled"
+        }
+        println("[AUDIO] Audio thread terminated (${exitReason})")
     }
 
     override fun frameUpdated(frame: Frame) {

@@ -17,6 +17,7 @@ class Apu(val memory: Memory) {
 
     private var cycleAccumulator = 0.0
     private var cpuCycleCounter = 0
+    private var frameIrq = false
 
     // NES APU CPU frequency (1.789773 MHz)
     private val CPU_FREQ = 1789773.0
@@ -26,27 +27,23 @@ class Apu(val memory: Memory) {
         cpuCycleCounter++
 
         // Check frame counter sequencing (~7,457 cycles per quarter frame)
-        val (quarterFrameClock, halfFrameClock) = frameCounter.tick(cpuCycleCounter)
+        val frameResult = frameCounter.tick(cpuCycleCounter)
 
-        if (quarterFrameClock) {
-            pulse1.clockEnvelope()
-            pulse2.clockEnvelope()
-            triangle.clockLinearCounter()
-            noise.clockEnvelope()
+        if (frameResult.quarterFrame) clockQuarterFrame()
+
+        if (frameResult.halfFrame) clockHalfFrame()
+
+        if (frameResult.irq) {
+            frameIrq = true
         }
 
-        if (halfFrameClock) {
-            pulse1.clockLengthAndSweep()
-            pulse2.clockLengthAndSweep()
-            triangle.clockLength()
-            noise.clockLength()
+        // Clock channel timers (pulse/noise on APU clock, triangle/DMC on CPU clock)
+        if (cpuCycleCounter % 2 == 0) {
+            pulse1.clockTimer()
+            pulse2.clockTimer()
+            noise.clockTimer()
         }
-
-        // Clock all channel timers at APU rate
-        pulse1.clockTimer()
-        pulse2.clockTimer()
         triangle.clockTimer()
-        noise.clockTimer()
         dmc.clockTimer()
 
         // Mix audio at 44.1 kHz sampling rate
@@ -57,7 +54,7 @@ class Apu(val memory: Memory) {
         }
 
         // Reset CPU cycle counter at end of frame
-        if (cpuCycleCounter >= 29830) {
+        if (cpuCycleCounter >= frameCounter.maxCycles()) {
             cpuCycleCounter = 0
         }
     }
@@ -139,7 +136,16 @@ class Apu(val memory: Memory) {
             0x12 -> dmc.write4012(value)
             0x13 -> dmc.write4013(value)
             0x15 -> handleStatusWrite(value)
-            0x17 -> frameCounter.write4017(value)
+            0x17 -> {
+                val immediateClock = frameCounter.write4017(value)
+                if (value.isBitSet(6)) {
+                    frameIrq = false
+                }
+                if (immediateClock) {
+                    clockQuarterFrame()
+                    clockHalfFrame()
+                }
+            }
         }
     }
 
@@ -178,11 +184,7 @@ class Apu(val memory: Memory) {
             noise.isEnabled = true
         }
 
-        if (!value.isBitSet(4)) {
-            dmc.disableChannel()
-        } else {
-            dmc.isEnabled = true
-        }
+        dmc.setChannelEnabled(value.isBitSet(4))
     }
 
     private fun handleStatusRead(): Byte {
@@ -195,10 +197,31 @@ class Apu(val memory: Memory) {
         if (noise.getLengthCounterValue() > 0) status = status.setBit(3)
         if (dmc.getBytesRemaining() > 0) status = status.setBit(4)
 
-        // Bits 5-6: IRQ flags (not implemented yet)
-        // Bit 7: Unused
+        // Bit 6: Frame IRQ, Bit 7: DMC IRQ
+        if (frameIrq) status = status.setBit(6)
+        if (dmc.irqPending) status = status.setBit(7)
+
+        // Reading $4015 clears IRQ flags
+        frameIrq = false
+        dmc.clearIrq()
 
         return status
+    }
+
+    fun isIrqPending(): Boolean = frameIrq || dmc.irqPending
+
+    private fun clockQuarterFrame() {
+        pulse1.clockEnvelope()
+        pulse2.clockEnvelope()
+        triangle.clockLinearCounter()
+        noise.clockEnvelope()
+    }
+
+    private fun clockHalfFrame() {
+        pulse1.clockLengthAndSweep()
+        pulse2.clockLengthAndSweep()
+        triangle.clockLength()
+        noise.clockLength()
     }
 
 }

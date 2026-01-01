@@ -20,3 +20,7 @@ hs_err_pid*
 
 # Screenshot directory (generated at runtime)
 screenshots/
+
+# Roms (except nestest rom)
+testroms/
+!testroms/nestest.*

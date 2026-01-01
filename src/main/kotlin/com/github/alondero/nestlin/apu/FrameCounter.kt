@@ -17,9 +17,12 @@ class FrameCounter {
     private val fourStepSequence = intArrayOf(7457, 14913, 22371, 29829)
     private val fiveStepSequence = intArrayOf(7457, 14913, 22371, 29829, 37281)
 
-    fun tick(cpuCycles: Int): Pair<Boolean, Boolean> {
+    data class Result(val quarterFrame: Boolean, val halfFrame: Boolean, val irq: Boolean)
+
+    fun tick(cpuCycles: Int): Result {
         var quarterFrameClock = false
         var halfFrameClock = false
+        var irq = false
 
         val sequence = if (mode == Mode.FOUR_STEP) fourStepSequence else fiveStepSequence
 
@@ -43,6 +46,9 @@ class FrameCounter {
                     // Step 3: End of frame (quarter & half frame)
                     quarterFrameClock = true
                     halfFrameClock = true
+                    if (mode == Mode.FOUR_STEP && !irqInhibit) {
+                        irq = true
+                    }
                 }
                 4 -> {
                     // Step 4: 5-step mode only - clock everything
@@ -54,15 +60,15 @@ class FrameCounter {
         }
 
         // Reset at end of sequence
-        val maxCycles = if (mode == Mode.FOUR_STEP) 29830 else 37282
+        val maxCycles = maxCycles()
         if (cpuCycles >= maxCycles) {
             step = 0
         }
 
-        return Pair(quarterFrameClock, halfFrameClock)
+        return Result(quarterFrameClock, halfFrameClock, irq)
     }
 
-    fun write4017(value: Byte) {
+    fun write4017(value: Byte): Boolean {
         mode = if (value.isBitSet(7)) Mode.FIVE_STEP else Mode.FOUR_STEP
         irqInhibit = value.isBitSet(6)
         step = 0
@@ -70,10 +76,13 @@ class FrameCounter {
 
         // If 5-step mode, immediately clock quarter and half frame
         // (This is simplified; actual hardware has more complex timing)
+        return mode == Mode.FIVE_STEP
     }
 
     fun reset() {
         step = 0
         cyclesSinceReset = 0
     }
+
+    fun maxCycles(): Int = if (mode == Mode.FOUR_STEP) 29830 else 37282
 }
