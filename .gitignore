@@ -24,3 +24,12 @@ screenshots/
 # Roms (except nestest rom)
 testroms/
 !testroms/nestest.*
+
+# Replays
+replays/
+
+# Plans
+docs/plans/
+
+# Undocumented Opcodes (generated at runtime)
+undocumented_opcodes.txt

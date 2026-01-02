@@ -2,6 +2,8 @@ package com.github.alondero.nestlin.ui
 
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Controller
+import com.github.alondero.nestlin.input.GamepadInput
+import com.github.alondero.nestlin.input.InputConfig
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
 import com.github.alondero.nestlin.ppu.RESOLUTION_WIDTH
@@ -51,6 +53,10 @@ class NestlinApplication : FrameListener, App() {
     // Screenshot management
     private val screenshotManager = ScreenshotManager(Paths.get("screenshots"))
 
+    // Input configuration and gamepad support
+    private val inputConfig = InputConfig.load()
+    private lateinit var gamepadInput: GamepadInput
+
     override fun start(stage: Stage) {
         this.stage = stage.apply {
             title = "Nestlin - ${DISPLAY_SCALE}x Magnification"
@@ -91,8 +97,18 @@ class NestlinApplication : FrameListener, App() {
             show()
         }
 
+        // Initialize gamepad input
+        gamepadInput = GamepadInput(nestlin.getController1(), inputConfig.gamepad)
+        gamepadInput.initialize()
+
+        // Create default config file for user reference
+        InputConfig.createDefaultIfMissing()
+
         object: AnimationTimer() {
             override fun handle(now: Long) {
+                // Poll gamepad input
+                gamepadInput.poll()
+
                 val pixelWriter = canvas.graphicsContext2D.pixelWriter
                 val pixelFormat = PixelFormat.getByteRgbInstance()
 
@@ -130,6 +146,9 @@ class NestlinApplication : FrameListener, App() {
     override fun stop() {
         nestlin.stop()
         running = false
+
+        // Clean up gamepad
+        gamepadInput.shutdown()
 
         // Clean up audio
         audioLine?.stop()
@@ -284,18 +303,16 @@ class NestlinApplication : FrameListener, App() {
     }
 
     private fun handleInput(code: javafx.scene.input.KeyCode, pressed: Boolean) {
+        // Handle screenshot separately (always S key)
+        if (code == javafx.scene.input.KeyCode.S && pressed) {
+            captureScreenshot()
+            return
+        }
+
+        // Use configurable keyboard mapping
         val controller = nestlin.getController1()
-        when (code) {
-            javafx.scene.input.KeyCode.Z -> controller.setButton(Controller.Button.A, pressed)
-            javafx.scene.input.KeyCode.X -> controller.setButton(Controller.Button.B, pressed)
-            javafx.scene.input.KeyCode.SPACE -> controller.setButton(Controller.Button.SELECT, pressed)
-            javafx.scene.input.KeyCode.ENTER -> controller.setButton(Controller.Button.START, pressed)
-            javafx.scene.input.KeyCode.UP -> controller.setButton(Controller.Button.UP, pressed)
-            javafx.scene.input.KeyCode.DOWN -> controller.setButton(Controller.Button.DOWN, pressed)
-            javafx.scene.input.KeyCode.LEFT -> controller.setButton(Controller.Button.LEFT, pressed)
-            javafx.scene.input.KeyCode.RIGHT -> controller.setButton(Controller.Button.RIGHT, pressed)
-            javafx.scene.input.KeyCode.S -> if (pressed) captureScreenshot()
-            else -> {}
+        inputConfig.getButtonForKey(code)?.let { button ->
+            controller.setButton(button, pressed)
         }
     }
 
