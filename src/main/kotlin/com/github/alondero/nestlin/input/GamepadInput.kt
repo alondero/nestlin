@@ -26,6 +26,7 @@ class GamepadInput(
      */
     fun initialize() {
         try {
+            JInputNatives.prepare()
             initialized = true
             println("[GAMEPAD] Controller manager initialized")
             refreshControllers()
