@@ -32,6 +32,13 @@ dependencies {
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
     }
 
+    // Gamepad/controller support (JInput)
+    implementation("net.java.jinput:jinput:2.0.10")
+    runtimeOnly("net.java.jinput:jinput:2.0.10:natives-all")
+
+    // JSON parsing for config files
+    implementation("com.google.code.gson:gson:2.10.1")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.natpryce:hamkrest:1.8.0.1")
 }
