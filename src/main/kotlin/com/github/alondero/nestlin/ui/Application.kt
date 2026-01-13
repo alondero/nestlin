@@ -2,6 +2,7 @@ package com.github.alondero.nestlin.ui
 
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Controller
+import com.github.alondero.nestlin.apu.AudioResampler
 import com.github.alondero.nestlin.input.GamepadInput
 import com.github.alondero.nestlin.input.InputConfig
 import com.github.alondero.nestlin.ppu.Frame
@@ -217,49 +218,55 @@ class NestlinApplication : FrameListener, App() {
         val buffer = ByteArray(2048)
         val bytesPerSample = if (format.sampleSizeInBits == 16) 2 else 1
         val maxSamplesPerWrite = buffer.size / bytesPerSample
+        val resampler = AudioResampler(nestlin.getAudioSampleRateHz(), format.sampleRate.toDouble())
+        val outputSamples = ShortArray(maxSamplesPerWrite)
         var exitReason = "stopped"
 
         while (running && audioEnabled) {
             try {
-                val samples = nestlin.getAudioSamples()
+                val inputSamples = nestlin.getAudioSamples()
+                if (inputSamples.isNotEmpty()) {
+                    resampler.push(inputSamples)
+                }
 
-                if (samples.isNotEmpty()) {
-                    var offset = 0
-                    while (offset < samples.size) {
-                        val count = minOf(maxSamplesPerWrite, samples.size - offset)
-                        when {
-                            format.sampleSizeInBits == 16 -> {
-                                // Convert shorts to bytes
-                                if (format.isBigEndian) {
-                                    // Big-endian: MSB first
-                                    for (i in 0 until count) {
-                                        val sample = samples[offset + i].toInt()
-                                        buffer[i * 2] = (sample shr 8).toByte()
-                                        buffer[i * 2 + 1] = (sample and 0xFF).toByte()
-                                    }
-                                } else {
-                                    // Little-endian: LSB first
-                                    for (i in 0 until count) {
-                                        val sample = samples[offset + i].toInt()
-                                        buffer[i * 2] = (sample and 0xFF).toByte()
-                                        buffer[i * 2 + 1] = (sample shr 8).toByte()
-                                    }
+                var produced = resampler.resample(outputSamples, maxSamplesPerWrite)
+                var wrote = false
+                while (produced > 0) {
+                    wrote = true
+                    when {
+                        format.sampleSizeInBits == 16 -> {
+                            // Convert shorts to bytes
+                            if (format.isBigEndian) {
+                                // Big-endian: MSB first
+                                for (i in 0 until produced) {
+                                    val sample = outputSamples[i].toInt()
+                                    buffer[i * 2] = (sample shr 8).toByte()
+                                    buffer[i * 2 + 1] = (sample and 0xFF).toByte()
                                 }
-                                audioLine?.write(buffer, 0, count * 2)
-                            }
-                            format.sampleSizeInBits == 8 -> {
-                                // Convert shorts to 8-bit unsigned
-                                for (i in 0 until count) {
-                                    // Scale from -32768..32767 to 0..255
-                                    val scaledValue = ((samples[offset + i].toInt() + 32768) shr 8).toByte()
-                                    buffer[i] = scaledValue
+                            } else {
+                                // Little-endian: LSB first
+                                for (i in 0 until produced) {
+                                    val sample = outputSamples[i].toInt()
+                                    buffer[i * 2] = (sample and 0xFF).toByte()
+                                    buffer[i * 2 + 1] = (sample shr 8).toByte()
                                 }
-                                audioLine?.write(buffer, 0, count)
                             }
+                            audioLine?.write(buffer, 0, produced * 2)
                         }
-                        offset += count
+                        format.sampleSizeInBits == 8 -> {
+                            // Convert shorts to 8-bit unsigned
+                            for (i in 0 until produced) {
+                                // Scale from -32768..32767 to 0..255
+                                val scaledValue = ((outputSamples[i].toInt() + 32768) shr 8).toByte()
+                                buffer[i] = scaledValue
+                            }
+                            audioLine?.write(buffer, 0, produced)
+                        }
                     }
-                } else {
+                    produced = resampler.resample(outputSamples, maxSamplesPerWrite)
+                }
+
+                if (!wrote) {
                     Thread.sleep(1)  // Avoid busy-waiting
                 }
             } catch (e: Exception) {

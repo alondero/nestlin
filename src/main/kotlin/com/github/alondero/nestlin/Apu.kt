@@ -23,6 +23,8 @@ class Apu(val memory: Memory) {
     private val CPU_FREQ = 1789773.0
     private val SAMPLE_RATE = 44100.0
 
+    fun outputSampleRateHz(): Double = SAMPLE_RATE
+
     fun tick() {
         cpuCycleCounter++
 

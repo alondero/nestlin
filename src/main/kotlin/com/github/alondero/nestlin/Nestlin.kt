@@ -40,6 +40,7 @@ class Nestlin {
     }
 
     fun getAudioSamples(): ShortArray = apu.getAudioSamples()
+    fun getAudioSampleRateHz(): Double = apu.outputSampleRateHz()
 
     fun powerReset() {
         cpu.reset()
