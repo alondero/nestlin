@@ -30,15 +30,32 @@ An NES emulator written in Kotlin for learning purposes. The emulator simulates 
 ### Core Components
 - **Nestlin.kt** - Main emulator orchestration (CPU:PPU:APU tick ratio is 1:3:1)
 - **cpu/Cpu.kt** - 6502 CPU implementation with registers and processor status
-- **cpu/Opcodes.kt** - All 6502 opcode implementations (~90 opcodes, ~592 lines)
-- **ppu/Ppu.kt** - Picture Processing Unit (scanline/cycle renderer)
+- **cpu/Opcodes.kt** - 6502 opcode implementations (151 opcodes including unofficial, 604 lines)
+- **ppu/Ppu.kt** - Picture Processing Unit with full background/sprite rendering (~590 lines)
 - **ppu/PpuAddressedMemory.kt** - PPU registers ($2000-$2007) and VRAM addressing
 - **Memory.kt** - CPU memory map with proper mirroring
 - **gamepak/GamePak.kt** - ROM loading and iNES format parsing
-- **Apu.kt** - Audio (currently a stub)
+- **Apu.kt** - Audio Processing Unit with 5 channels (Pulse×2, Triangle, Noise, DMC)
+
+### Audio Channels (apu/)
+- **PulseChannel.kt** - Pulse wave generator (×2 channels)
+- **TriangleChannel.kt** - Triangle wave generator
+- **NoiseChannel.kt** - Pseudo-random noise generator
+- **DmcChannel.kt** - Delta modulation channel
+- **FrameCounter.kt** - APU frame sequencer
+- **Envelope.kt** - Volume envelope generator
+- **Sweep.kt** - Pulse sweep unit
+- **LengthCounter.kt** - Sound length counter
+- **AudioBuffer.kt** - Circular audio sample buffer
+- **AudioResampler.kt** - Linear resampling for consistent audio rate
+
+### Input (input/)
+- **GamepadInput.kt** - Gamepad/controller input handling
+- **InputConfig.kt** - Input configuration
+- **JInputNatives.kt** - JInput native library loader for controller support
 
 ### UI & Testing
-- **ui/Application.kt** - JavaFX UI with 256x224 canvas
+- **ui/Application.kt** - JavaFX UI with 256×240 canvas
 - **GoldenLogTest.kt** - Validates CPU execution against nestest.log golden output
 - **testroms/** - Test ROMs (nestest.nes for CPU validation)
 
@@ -109,21 +126,21 @@ Kotlin doesn't have unsigned primitives (pre-1.3), so use extension functions:
 ## Current Implementation Status
 
 ### ✅ Working
-- CPU: ~90 opcodes implemented with proper addressing modes
-- Memory system with correct mirroring
+- CPU: 151 opcodes implemented (including unofficial opcodes) with proper addressing modes
+- Memory system with correct mirroring and open-bus behavior
 - ROM loading (iNES format, mapper 0)
 - Golden log test framework (validates CPU execution)
-- Basic PPU timing/cycle tracking
-- VRAM address register logic
+- **Full PPU rendering**: Background with shift registers, attribute tables, palette indexing
+- **Full sprite rendering**: Sprite evaluation, 8-sprite-per-scanline limit, sprite 0 hit detection
+- **Full APU audio**: 5 channels (2 Pulse, Triangle, Noise, DMC) with proper mixing formulas
+- **Controller input**: $4016/$4017 implemented with strobe functionality
+- **Frame rate throttling**: Configurable speed throttling with toggle
+- **Screenshot capture**: PNG screenshot saving with timestamp
 
 ### ⚠️ Incomplete / Known Issues
-- **PPU rendering is stubbed**: Currently renders random pixels (Ppu.kt:179-181)
-- **Tile fetching incomplete**: fetchData() doesn't populate shift registers
-- **No sprite rendering**: Structures exist but not used
-- **CPU cycle timing inaccurate**: Many "TODO: Takes X cycles" comments
-- **APU empty**: Just a stub
-- **No controller input**: $4016/$4017 not implemented
-- **Only mapper 0**: No support for MMC1, MMC3, etc.
+- **Only mapper 0**: No support for MMC1, MMC3, or other mappers
+- **CPU cycle timing**: Some opcodes may not have exact cycle counts
+- **JInput controller support**: Native libraries need platform-specific setup
 
 ## Testing Procedures
 
@@ -167,15 +184,17 @@ When adding significant features (like PPU rendering):
 
 ## Important Warnings
 
-### PPU Implementation Gotchas
+### PPU Implementation Details
 - **Shift registers shift every cycle**, but reload every 8 cycles
-- **Attribute table addressing is complex** - see comment at Ppu.kt:152
+- **Attribute table addressing**: Uses coarse X/Y scroll to select 2×2 tile quadrant
 - **Cycle timing is critical** - off-by-one errors cause visual glitches
 - **V-blank flag** must be set at exact cycle (241, cycle 1)
+- **Sprite evaluation** happens during cycles 257-320 for next scanline
+- **Pre-loading**: First two tiles pre-loaded at cycle 0 before rendering begins
 
 ### CPU Edge Cases
 - **BRK vs IRQ**: B flag handling differs (see ProcessorStatus.asByte())
-- **JMP indirect bug**: 6502 has page boundary bug (implemented at Opcodes.kt:212)
+- **JMP indirect bug**: 6502 has page boundary bug (see Opcodes.kt JMP indirect implementation)
 - **RTS increments PC**: Returns to address+1, not exact return address
 - **Decimal mode**: NES CPU ignores this flag (no BCD arithmetic)
 
