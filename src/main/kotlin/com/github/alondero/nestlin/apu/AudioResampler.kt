@@ -57,10 +57,12 @@ class AudioResampler(
             head = 0
             position = 0.0
         } else {
-            val drop = position.toInt()
-            if (drop > 0) {
-                discard(drop)
-                position -= drop
+            // The CORRECT formula: we consumed `produced` input samples (each output consumes `ratio` samples).
+            // So we should discard `produced` samples, not floor(position).
+            // Note: `produced` is the count of outputs we just generated.
+            if (produced > 0) {
+                discard(produced)
+                position -= produced
             }
         }
 
