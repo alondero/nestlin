@@ -29,6 +29,7 @@ class Apu(val memory: Memory) {
     fun frameCounterMaxCycles(): Int = frameCounter.maxCycles()
     fun audioBufferAvailableSamples(): Int = audioBuffer.availableSamples()
     fun audioBufferCapacity(): Int = 8192
+    fun cycleAccumulatorValue(): Double = cycleAccumulator
 
     // Expose channel outputs for benchmarking
     fun pulse1Output(): Int = pulse1.output()
@@ -70,7 +71,9 @@ class Apu(val memory: Memory) {
         // Reset CPU cycle counter at end of frame
         if (cpuCycleCounter >= frameCounter.maxCycles()) {
             cpuCycleCounter = 0
-            cycleAccumulator = 0.0
+            // Don't reset cycleAccumulator to 0 - preserve fractional samples
+            // that have been accumulated since the last sample was produced.
+            // This prevents losing partial sample contributions at frame boundaries.
         }
     }
 

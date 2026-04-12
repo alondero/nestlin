@@ -50,6 +50,7 @@ class AudioDropoutBenchmark {
                 val dmcSnapshot = nestlin.apu.dmcOutput()
                 val cpuPc = cpu.getCurrentPc().toInt()
                 val bufferAvail = nestlin.apu.audioBufferAvailableSamples()
+                val cycleAcc = nestlin.apu.cycleAccumulatorValue()
 
                 val samples = nestlin.getAudioSamples()
                 samplesByFrame[frameNum] = samples
@@ -65,6 +66,7 @@ class AudioDropoutBenchmark {
                     cpuPc = cpuPc,
                     frameCounterStep = nestlin.apu.frameCounterStep(),
                     frameCounterMaxCycles = nestlin.apu.frameCounterMaxCycles(),
+                    cycleAccumulator = cycleAcc,
                     pulse1Out = pulse1Snapshot,
                     pulse2Out = pulse2Snapshot,
                     triangleOut = triangleSnapshot,
@@ -136,6 +138,7 @@ class AudioDropoutBenchmark {
         val cpuPc: Int,
         val frameCounterStep: Int,
         val frameCounterMaxCycles: Int,
+        val cycleAccumulator: Double,
         val pulse1Out: Int,
         val pulse2Out: Int,
         val triangleOut: Int,
