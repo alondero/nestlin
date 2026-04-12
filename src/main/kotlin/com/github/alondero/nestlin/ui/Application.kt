@@ -222,11 +222,17 @@ class NestlinApplication : FrameListener, App() {
         val outputSamples = ShortArray(maxSamplesPerWrite)
         var exitReason = "stopped"
 
+        // Debug: track underrun events
+        var totalUnderrunEvents = 0
+        var totalSilentReads = 0
+
         while (running && audioEnabled) {
             try {
                 val inputSamples = nestlin.getAudioSamples()
                 if (inputSamples.isNotEmpty()) {
                     resampler.push(inputSamples)
+                } else {
+                    totalSilentReads++
                 }
 
                 var produced = resampler.resample(outputSamples, maxSamplesPerWrite)
@@ -267,6 +273,7 @@ class NestlinApplication : FrameListener, App() {
                 }
 
                 if (!wrote) {
+                    totalUnderrunEvents++
                     Thread.sleep(1)  // Avoid busy-waiting
                 }
             } catch (e: Exception) {
@@ -278,10 +285,8 @@ class NestlinApplication : FrameListener, App() {
             }
         }
 
-        if (exitReason != "error") {
-            exitReason = if (!running) "stopped" else "disabled"
-        }
         println("[AUDIO] Audio thread terminated (${exitReason})")
+        println("[AUDIO] Debug: silent reads=${totalSilentReads}, underrun events=${totalUnderrunEvents}")
     }
 
     override fun frameUpdated(frame: Frame) {
