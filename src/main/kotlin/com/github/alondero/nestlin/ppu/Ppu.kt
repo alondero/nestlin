@@ -102,9 +102,10 @@ class Ppu(var memory: Memory) {
 
         if (scanline == PRE_RENDER_SCANLINE && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
 
-        // Load shift registers every 8 cycles (at cycles 9, 17, 25, ..., 249, 257, 329, 337)
-        // Reload happens after fetching is complete (at start of next tile's nametable fetch)
-        if (renderingActive && cycle % 8 == 1 && cycle > 1 && ((cycle <= 256) || (cycle >= 321 && cycle <= 336))) {
+        // Load shift registers every 8 cycles (at cycles 9, 17, 25, ..., 249, 329, 337)
+        // Note: NES reloads at 329 and 337 for post-render (cycles 321-340), NOT at 321
+        // Visible reloads: cycles 1-256 at 9, 17, 25, ..., 249 (NOT at 257 which is sprite eval)
+        if (renderingActive && cycle % 8 == 1 && cycle > 1 && ((cycle <= 256) || (cycle >= 329 && cycle <= 337))) {
             // Load the lower 8 bits of pattern shift registers with fetched tile data (Next Tile)
             // Keep upper 8 bits (Current Tile) which have shifted from previous fetch
             patternShiftLow = (patternShiftLow and 0xFF00) or patternLatchLow.toUnsignedInt()
@@ -376,9 +377,11 @@ class Ppu(var memory: Memory) {
 //
 //        While all of this is going on, sprite evaluation for the next scanline is taking place as a seperate process, independent to what's happening here.
 
-        // Render pixel during visible scanline and cycles 1-256
-        if (scanline < RESOLUTION_HEIGHT && cycle >= 1 && cycle <= 256) {
-            val x = cycle - 1
+        // Render pixel during visible scanline and cycles 2-257
+        // NES renders first pixel at cycle 10 (not cycle 1), so we shift our rendering by 1 cycle
+        // Our cycle 2 corresponds to NES cycle 10 where first pixel is rendered
+        if (scanline < RESOLUTION_HEIGHT && cycle >= 2 && cycle <= 257) {
+            val x = cycle - 2
 
             // Extract pixel from shift registers
             val fineX = memory.ppuAddressedMemory.fineXScroll

@@ -25,9 +25,10 @@ class AudioResampler(
                 buffer[tail] = sample
                 tail = (tail + 1) % buffer.size
                 head = (head + 1) % buffer.size
-                if (position > 0.0) {
-                    position = maxOf(0.0, position - 1.0)
-                }
+                // Decrement position to account for dropped sample.
+                // Position can go negative when position < 1, which is OK -
+                // the next resample() call will properly discard samples based on floor(position).
+                position -= 1.0
             }
         }
     }
@@ -49,10 +50,17 @@ class AudioResampler(
             position += ratio
         }
 
-        val drop = position.toInt()
-        if (drop > 0) {
-            discard(drop)
-            position -= drop
+        // Discard consumed samples from buffer
+        // Note: position can be negative if we dropped samples when position < 1
+        // In that case, clamp to 0 since we've consumed beyond the buffer start
+        if (position < 0) {
+            position = 0.0
+        } else {
+            val drop = position.toInt()
+            if (drop > 0) {
+                discard(drop)
+                position -= drop
+            }
         }
 
         return produced
