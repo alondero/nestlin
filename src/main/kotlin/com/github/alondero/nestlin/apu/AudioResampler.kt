@@ -18,13 +18,13 @@ class AudioResampler(
         for (sample in samples) {
             if (size < buffer.size) {
                 buffer[tail] = sample
-                tail = (tail + 1) % buffer.size
+                tail = ((tail + 1) % buffer.size + buffer.size) % buffer.size
                 size++
             } else {
                 // Drop oldest sample to avoid unbounded growth.
                 buffer[tail] = sample
-                tail = (tail + 1) % buffer.size
-                head = (head + 1) % buffer.size
+                tail = ((tail + 1) % buffer.size + buffer.size) % buffer.size
+                head = ((head + 1) % buffer.size + buffer.size) % buffer.size
                 // Decrement position to account for dropped sample.
                 // Position can go negative when position < 1, which is OK -
                 // the next resample() call will properly discard samples based on floor(position).
@@ -54,6 +54,7 @@ class AudioResampler(
         // Note: position can be negative if we dropped samples when position < 1
         // In that case, clamp to 0 since we've consumed beyond the buffer start
         if (position < 0) {
+            head = 0
             position = 0.0
         } else {
             val drop = position.toInt()
@@ -74,14 +75,15 @@ class AudioResampler(
     }
 
     private fun sampleAt(offset: Int): Short {
-        val index = (head + offset) % buffer.size
+        // Ensure positive index by using proper modulo for potentially negative values
+        val index = ((head + offset) % buffer.size + buffer.size) % buffer.size
         return buffer[index]
     }
 
     private fun discard(count: Int) {
         val toDrop = minOf(count, size)
         if (toDrop <= 0) return
-        head = (head + toDrop) % buffer.size
+        head = ((head + toDrop) % buffer.size + buffer.size) % buffer.size
         size -= toDrop
     }
 }

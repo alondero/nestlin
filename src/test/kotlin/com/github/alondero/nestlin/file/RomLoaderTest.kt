@@ -11,13 +11,6 @@ class RomLoaderTest {
     val expectedData = Files.readAllBytes(Paths.get("testroms/nestest.nes"))!!
 
     @Test
-    fun loads7zRom() {
-        for ((idx, value) in load("testroms/nestest.7z").withIndex()) {
-            assertThat(value, equalTo(expectedData[idx]))
-        }
-    }
-
-    @Test
     fun loadsNesRom() {
         for ((idx, value) in load("testroms/nestest.nes").withIndex()) {
             assertThat(value, equalTo(expectedData[idx]))

@@ -7,7 +7,7 @@ import com.github.alondero.nestlin.setBit
 class Apu(val memory: Memory) {
     private val apuMemory = ApuAddressedMemory()
     private val frameCounter = FrameCounter()
-    private val audioBuffer = AudioBuffer(sampleRate = 44100, bufferSize = 4096)
+    private val audioBuffer = AudioBuffer(sampleRate = 44100, bufferSize = 8192)
 
     val pulse1 = PulseChannel(channelId = 1)
     val pulse2 = PulseChannel(channelId = 2)
@@ -58,6 +58,7 @@ class Apu(val memory: Memory) {
         // Reset CPU cycle counter at end of frame
         if (cpuCycleCounter >= frameCounter.maxCycles()) {
             cpuCycleCounter = 0
+            cycleAccumulator = 0.0
         }
     }
 
