@@ -24,6 +24,18 @@ class Apu(val memory: Memory) {
     private val SAMPLE_RATE = 44100.0
 
     fun outputSampleRateHz(): Double = SAMPLE_RATE
+    fun cpuCycles(): Int = cpuCycleCounter
+    fun frameCounterStep(): Int = frameCounter.step
+    fun frameCounterMaxCycles(): Int = frameCounter.maxCycles()
+    fun audioBufferAvailableSamples(): Int = audioBuffer.availableSamples()
+    fun audioBufferCapacity(): Int = 8192
+
+    // Expose channel outputs for benchmarking
+    fun pulse1Output(): Int = pulse1.output()
+    fun pulse2Output(): Int = pulse2.output()
+    fun triangleOutput(): Int = triangle.output()
+    fun noiseOutput(): Int = noise.output()
+    fun dmcOutput(): Int = dmc.output()
 
     fun tick() {
         cpuCycleCounter++

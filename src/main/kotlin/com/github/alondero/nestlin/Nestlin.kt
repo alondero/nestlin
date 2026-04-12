@@ -10,9 +10,9 @@ import java.nio.file.Path
 class Nestlin {
 
     val config = EmulatorConfig()  // Public for UI access
-    private var cpu: Cpu
-    private var ppu: Ppu
-    private val apu: Apu
+    val cpu: Cpu
+    val ppu: Ppu
+    val apu: Apu
     private val memory: Memory
     private var running = false
     private var lastFrameTimeNanos: Long = 0

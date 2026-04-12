@@ -62,7 +62,7 @@ class AudioResampler(
             // Note: `produced` is the count of outputs we just generated.
             if (produced > 0) {
                 discard(produced)
-                position -= produced
+                position -= produced * ratio
             }
         }
 

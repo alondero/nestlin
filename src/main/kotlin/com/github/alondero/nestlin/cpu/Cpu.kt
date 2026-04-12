@@ -16,6 +16,8 @@ class Cpu(var memory: Memory)
     var idle = false
     private var logger: Logger? = null
     private val opcodes = Opcodes()
+
+    fun getCurrentPc(): Short = registers.programCounter
     // TODO: Development-only feature - Remove undocumented opcode logging once emulator stability is proven
     // This allows us to identify missing opcodes without crashing, useful for game compatibility debugging
     private val undocumentedOpcodes = mutableSetOf<Int>()
