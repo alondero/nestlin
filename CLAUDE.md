@@ -227,3 +227,27 @@ IntelliJ IDEA recommended:
 - Import as Gradle project
 - Kotlin plugin should auto-configure
 - Run configurations: point to Application.kt main()
+
+## Documentation Approach
+
+### Permanent Documentation (CLAUDE.md)
+Contains stable, enduring information:
+- Architecture and file locations
+- Code conventions and patterns
+- Build commands and environment setup
+- NES hardware fundamentals
+
+### Ephemeral Status (todo.md, knowledge/)
+Contains transient session state:
+- **todo.md** - Current focus, what's been tried, hypotheses, next steps
+- **knowledge/** - Novel discoveries and debugging findings
+
+**Rule:** Don't put transient status in CLAUDE.md. It bloat every session's context window. Use todo.md or knowledge/ instead.
+
+### Mapper Support (MAPPER_SUPPORT.md)
+Documents mapper compatibility status:
+- What mappers are implemented
+- Known issues per mapper
+- Test ROMs for each mapper
+
+When adding a new mapper, update MAPPER_SUPPORT.md.

@@ -1,4 +1,31 @@
-# NES Emulator Debugging Tasks
+# NES Emulator - Current Focus & Status
+
+## Current Status (2026-04-14)
+
+**Main Issue:** Mapper 1 games (Tetris, Lolo 1, Chip 'n Dale) show black screens
+
+**What's Working:**
+- Donkey Kong (Mapper 0) runs correctly
+- GoldenLogTest passes (CPU is correct)
+- PPU rendering infrastructure is in place
+
+**What Has Been Tried:**
+1. Fixed Mapper 1 PRG banking offset calculation (was causing wrong reset vector reads)
+2. Added PPU warm-up tracking infrastructure (disabled - breaks VBlank wait loops)
+3. Added CHR write notification system
+4. PPUMASK stays at 0 - PPU never receives initialization writes
+
+**Current Hypothesis:**
+Games may be waiting for VBlank during initialization, and our VBlank timing may not match real NES behavior. The first ~15 seconds of frames may be empty.
+
+**Next Steps:**
+1. Instrument PPU register writes (trace $2000-$2007)
+2. Compare frame output between working (Donkey Kong) and broken (Tetris)
+3. Investigate why Donkey Kong takes ~15s to produce valid screenshots
+
+---
+
+# Detailed Debugging Notes
 
 ## Priority: Resolve Mapper 1 Black Screen Issue
 
@@ -37,10 +64,3 @@ The PPU never receives initialization writes because either:
 - `tetris.nes`: Mapper 1, 32KB PRG, 16KB CHR ROM, reset at $FF00
 - `lolo1.nes`: Mapper 1 (user confirmed)
 - `chipndale.nes`: Mapper 1 (user confirmed)
-
-## Status: In Progress
-
-Last session ended with:
-- PRG banking fixed (reset vector now correct at PC=0xFF00)
-- But still black screen for Mapper 1 games
-- GoldenLogTest passes (no regression)
