@@ -134,10 +134,19 @@ class NestlinApplication : FrameListener, App() {
         thread {
             with(nestlin) {
                 println("[APP] Parameters: named=${parameters.named}, unnamed=${parameters.unnamed}")
-                if (!parameters.named["debug"].isNullOrEmpty()) {
-                    enableLogging()
+                // Reconstruct the ROM path from parameters that were split on spaces.
+                // Filter out any parameter that looks like a named flag (starts with --)
+                // since those should be handled by parameters.named, not as part of the path.
+                val nonFlagParams = parameters.unnamed.filter { !it.startsWith("--") }
+                val debugEnabled = !parameters.named["debug"].isNullOrEmpty() ||
+                        parameters.unnamed.any { it.startsWith("--debug") }
+                if (debugEnabled) enableLogging()
+                val romPath = if (nonFlagParams.size > 1) {
+                    nonFlagParams.joinToString(" ")
+                } else {
+                    nonFlagParams[0]
                 }
-                load(Paths.get(parameters.unnamed[0]))
+                load(Paths.get(romPath))
                 powerReset()
                 start()
             }
