@@ -20,6 +20,12 @@ class GamePak(data: ByteArray) {
 
     fun isTestRom() = crc.value == TEST_ROM_CRC
 
+    fun createMapper(): Mapper = when (header.mapper) {
+        0 -> Mapper0(this)
+        1 -> Mapper1(this)
+        else -> throw UnsupportedOperationException("Mapper ${header.mapper} not implemented")
+    }
+
     override fun toString(): String {
         return "ROM Size: ${programRom.size}, VROM Size: ${chrRom.size}\nMapper: ${header.mapper}\nCRC32: ${crc.value}"
     }

@@ -7,19 +7,17 @@
 - **Behavior:** No bank switching. PRG ROM at $8000 is always PRG[0x0000-0x3FFF]
 - **Notes:** Simple, direct mapping. Full support.
 
-## Mapper 1 (MMC1/UxROM)
-**Status:** In Progress (Issues)
+## Mapper 1 (MMC1/SxROM)
+**Status:** Working
 
 - **Games:** Tetris, Lolo 1, Chip 'n Dale
 - **Behavior:**
   - 5-bit shift register for bank switching
-  - PRG mode 3: $C000 switchable, $8000 mirrors $C000
-  - CHR ROM loaded into pattern tables
-- **Known Issues:**
-  - Games show black screens
-  - PPUMASK stays at 0 (rendering never enabled)
-  - Root cause unknown (suspected PPU timing/VBlank issue)
-- **PRG Banking Fix Applied:** PRG offset now calculated correctly using `address and 0x3FFF`
+  - PRG mode 3 (default): $8000-$BFFF switchable, $C000-$FFFF fixed to last bank
+  - PRG mode 2: $8000-$BFFF fixed to bank 0, $C000-$FFFF switchable
+  - PRG mode 0/1: 32KB mode (both 16KB banks switch together)
+  - CHR ROM loaded via mapper delegate into pattern tables
+- **Banking Fix Applied (2026-04-15):** Mode 3 and mode 2 had inverted fixed/switchable assignments per MMC1 spec
 
 ## Mapper 2 (UxROM)
 **Status:** Not Implemented

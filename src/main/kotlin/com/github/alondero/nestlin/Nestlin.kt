@@ -13,7 +13,7 @@ class Nestlin {
     val cpu: Cpu
     val ppu: Ppu
     val apu: Apu
-    private val memory: Memory
+    internal val memory: Memory  // internal for test access
     private var running = false
     private var lastFrameTimeNanos: Long = 0
 
@@ -41,6 +41,8 @@ class Nestlin {
 
     fun getAudioSamples(): ShortArray = apu.getAudioSamples()
     fun getAudioSampleRateHz(): Double = apu.outputSampleRateHz()
+
+    fun ppuMask(): Int = memory.ppuAddressedMemory.mask.register.toUnsignedInt()
 
     fun powerReset() {
         cpu.reset()

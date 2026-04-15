@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.gamepak.GamePak
+import com.github.alondero.nestlin.gamepak.Mapper
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
 import com.github.alondero.nestlin.apu.ApuAddressedMemory
 
@@ -8,7 +9,6 @@ class Memory {
     private val internalRam = ByteArray(0x800)
     val ppuAddressedMemory = PpuAddressedMemory()
     val apuAddressedMemory = ApuAddressedMemory()
-    private val cartridgeSpace = ByteArray(0xBFE0)
 
     val controller1 = Controller()
     val controller2 = Controller()
@@ -16,26 +16,28 @@ class Memory {
     // Will be set by Nestlin after APU creation
     var apu: Apu? = null
 
+    // Mapper for cartridge bank switching (set during readCartridge)
+    var mapper: Mapper? = null
+
     fun readCartridge(data: GamePak) {
-        // Load PRG ROM into CPU address space
-        data.programRom.copyOfRange(0, 16384).withIndex().forEach {
-            (idx, value) -> cartridgeSpace[0x8000+idx - 0x4020] = value
-        }
+        val m = data.createMapper()
+        mapper = m
 
-        data.programRom.copyOfRange(data.programRom.size - 16384, data.programRom.size).withIndex().forEach {
-            (idx, value) -> cartridgeSpace[0xC000+idx - 0x4020] = value
-        }
+        // Wire CHR banking delegates to the mapper
+        ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = { addr -> m.ppuRead(addr) }
+        ppuAddressedMemory.ppuInternalMemory.chrWriteDelegate = { addr, v -> m.ppuWrite(addr, v) }
 
-        // Load CHR ROM into PPU pattern tables
-        ppuAddressedMemory.ppuInternalMemory.loadChrRom(data.chrRom)
+        // Apply initial mirroring from mapper
+        applyMirroringFromMapper(m)
+    }
 
-        // Set nametable mirroring mode from iNES header
-        val pmuMirroring = if (data.header.mirroring == com.github.alondero.nestlin.gamepak.Header.Mirroring.HORIZONTAL) {
-            com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.HORIZONTAL
-        } else {
-            com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.VERTICAL
+    private fun applyMirroringFromMapper(m: Mapper) {
+        ppuAddressedMemory.ppuInternalMemory.mirroring = when (m.currentMirroring()) {
+            Mapper.MirroringMode.HORIZONTAL -> com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.HORIZONTAL
+            Mapper.MirroringMode.VERTICAL -> com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.VERTICAL
+            Mapper.MirroringMode.ONE_SCREEN_LOWER -> com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.ONE_SCREEN_LOWER
+            Mapper.MirroringMode.ONE_SCREEN_UPPER -> com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.ONE_SCREEN_UPPER
         }
-        ppuAddressedMemory.ppuInternalMemory.mirroring = pmuMirroring
     }
 
     operator fun set(address: Int, value: Byte) {
@@ -57,7 +59,10 @@ class Memory {
                 apuAddressedMemory[address - 0x4000] = value
                 apu?.handleRegisterWrite(address - 0x4000, value)
             }
-            else -> cartridgeSpace[address-0x4020] = value
+            in 0x4020..0xFFFF -> {
+                mapper?.cpuWrite(address, value)
+                mapper?.let { applyMirroringFromMapper(it) }  // sync mirroring after each write
+            }
         }
     }
 
@@ -67,7 +72,8 @@ class Memory {
         0x4016 -> controller1.read()
         0x4017 -> controller2.read()
         in 0x4000..0x401F -> apu?.handleRegisterRead(address - 0x4000) ?: apuAddressedMemory[address - 0x4000]
-        else /* in 0x4020..0xFFFF */ -> cartridgeSpace[address - 0x4020]
+        in 0x4020..0xFFFF -> mapper?.cpuRead(address) ?: 0
+        else -> 0
     }
 
     operator fun get(address1: Int, address2: Int): Short {

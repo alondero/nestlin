@@ -318,8 +318,15 @@ class PpuInternalMemory {
 
     var mirroring = Mirroring.HORIZONTAL
 
+    // Delegate functions for dynamic CHR banking (set by mapper)
+    var chrReadDelegate: ((Int) -> Byte)? = null
+    var chrWriteDelegate: ((Int, Byte) -> Unit)? = null
+
     enum class Mirroring {
-        HORIZONTAL, VERTICAL
+        HORIZONTAL,
+        VERTICAL,
+        ONE_SCREEN_LOWER,
+        ONE_SCREEN_UPPER
     }
 
     private fun mapNametableAddress(addr: Int): Pair<ByteArray, Int> {
@@ -335,14 +342,16 @@ class PpuInternalMemory {
                 // This means CIRAM A10 = PPU A10
                 (normalizedAddr / 0x400) % 2
             }
+            Mirroring.ONE_SCREEN_LOWER -> 0
+            Mirroring.ONE_SCREEN_UPPER -> 1
         }
         val table = if (tableIndex == 0) nameTable0 else nameTable1
         return Pair(table, addr % 0x400)
     }
 
     operator fun get(addr: Int): Byte = when (addr) {
-        in 0x0000..0x0FFF -> patternTable0[addr]
-        in 0x1000..0x1FFF -> patternTable1[addr - 0x1000]
+        in 0x0000..0x0FFF -> chrReadDelegate?.invoke(addr) ?: patternTable0[addr]
+        in 0x1000..0x1FFF -> chrReadDelegate?.invoke(addr) ?: patternTable1[addr - 0x1000]
         in 0x2000..0x2FFF -> {
             val (table, offset) = mapNametableAddress(addr)
             table[offset]
@@ -353,10 +362,9 @@ class PpuInternalMemory {
 
     operator fun set(addr: Int, value: Byte) {
         when (addr) {
-            // Pattern tables (0x0000-0x1FFF) are read-only for NROM cartridges
-            // Writes are silently ignored (games shouldn't write here, but some buggy code might try)
-            in 0x0000..0x0FFF -> {} // Ignore writes to pattern table 0
-            in 0x1000..0x1FFF -> {} // Ignore writes to pattern table 1
+            // Pattern tables (0x0000-0x1FFF): delegate to mapper for CHR banking
+            in 0x0000..0x0FFF -> chrWriteDelegate?.invoke(addr, value) ?: Unit
+            in 0x1000..0x1FFF -> chrWriteDelegate?.invoke(addr, value) ?: Unit
             in 0x2000..0x2FFF -> {
                 val (table, offset) = mapNametableAddress(addr)
                 table[offset] = value
