@@ -55,7 +55,7 @@ An NES emulator written in Kotlin for learning purposes. The emulator simulates 
 - **JInputNatives.kt** - JInput native library loader for controller support
 
 ### UI & Testing
-- **ui/Application.kt** - JavaFX UI with 256×240 canvas
+- **ui/Application.kt** - JavaFX UI with 256×240 canvas and File menu (Load Game, Hard Reset, Exit)
 - **GoldenLogTest.kt** - Validates CPU execution against nestest.log golden output
 - **testroms/** - Test ROMs (nestest.nes for CPU validation)
 
@@ -136,6 +136,7 @@ Kotlin doesn't have unsigned primitives (pre-1.3), so use extension functions:
 - **Controller input**: $4016/$4017 implemented with strobe functionality
 - **Frame rate throttling**: Configurable speed throttling with toggle
 - **Screenshot capture**: PNG screenshot saving with timestamp
+- **File menu**: Load Game, Hard Reset Game, and Exit via UI menu
 
 ### ⚠️ Incomplete / Known Issues
 - **Only mapper 0**: No support for MMC1, MMC3, or other mappers

@@ -10,13 +10,19 @@ import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
 import com.github.alondero.nestlin.ppu.RESOLUTION_WIDTH
 import javafx.animation.AnimationTimer
 import javafx.application.Application
+import javafx.application.Platform
 import javafx.scene.Scene
 import javafx.scene.canvas.Canvas
+import javafx.scene.control.Menu
+import javafx.scene.control.MenuBar
+import javafx.scene.control.MenuItem
 import javafx.scene.image.PixelFormat
 import javafx.scene.layout.StackPane
+import javafx.stage.FileChooser
 import javafx.stage.Stage
 import tornadofx.App
 import java.io.IOException
+import java.nio.file.Path
 import java.nio.file.Paths
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
@@ -46,6 +52,11 @@ class NestlinApplication : FrameListener, App() {
     // 4x larger buffer to hold magnified pixels
     private var nextFrame = ByteArray(scaledHeight * scaledWidth * 3)
 
+    // Current ROM path for Hard Reset functionality
+    private var currentRomPath: Path? = null
+    // Emulation thread reference for stop/start control
+    private var emulationThread: Thread? = null
+
     // Audio playback
     private var audioLine: SourceDataLine? = null
     private var audioEnabled = true
@@ -64,6 +75,23 @@ class NestlinApplication : FrameListener, App() {
 
             // Create menu bar
             val menuBar = javafx.scene.control.MenuBar()
+
+            // File menu
+            val fileMenu = Menu("File")
+
+            val loadGameItem = MenuItem("Load Game...")
+            loadGameItem.setOnAction { handleLoadGame() }
+
+            val hardResetItem = MenuItem("Hard Reset Game")
+            hardResetItem.setOnAction { handleHardReset() }
+
+            val exitItem = MenuItem("Exit")
+            exitItem.setOnAction { handleExit() }
+
+            fileMenu.items.addAll(loadGameItem, hardResetItem, exitItem)
+            menuBar.menus.add(fileMenu)
+
+            // Settings menu
             val settingsMenu = javafx.scene.control.Menu("Settings")
 
             val throttleMenuItem = javafx.scene.control.CheckMenuItem("Speed Throttling (60 FPS)")
@@ -131,6 +159,7 @@ class NestlinApplication : FrameListener, App() {
         // Initialize audio playback
         initAudio()
 
+        // Load and start emulation from command line argument
         thread {
             with(nestlin) {
                 println("[APP] Parameters: named=${parameters.named}, unnamed=${parameters.unnamed}")
@@ -146,11 +175,61 @@ class NestlinApplication : FrameListener, App() {
                 } else {
                     nonFlagParams[0]
                 }
-                load(Paths.get(romPath))
+                currentRomPath = Paths.get(romPath)
+                load(currentRomPath!!)
                 powerReset()
-                start()
             }
+        }.also { emulationThread = it }
+    }
+
+    private fun stopEmulation() {
+        nestlin.stop()
+        emulationThread?.join(1000)
+        emulationThread = null
+    }
+
+    private fun startEmulation() {
+        emulationThread = thread {
+            nestlin.start()
         }
+    }
+
+    private fun handleLoadGame() {
+        val chooser = FileChooser()
+        chooser.title = "Load NES ROM"
+        chooser.extensionFilters.addAll(
+            FileChooser.ExtensionFilter("NES ROMs (*.nes)", "*.nes"),
+            FileChooser.ExtensionFilter("7z Archives (*.7z)", "*.7z"),
+            FileChooser.ExtensionFilter("All Files", "*.*")
+        )
+        val file = chooser.showOpenDialog(stage)
+        if (file != null) {
+            val romPath = file.toPath()
+            stopEmulation()
+            currentRomPath = romPath
+            nestlin.load(romPath)
+            nestlin.powerReset()
+            startEmulation()
+        }
+    }
+
+    private fun handleHardReset() {
+        if (currentRomPath == null) {
+            val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
+            alert.title = "No ROM Loaded"
+            alert.contentText = "Please load a game first."
+            alert.showAndWait()
+            return
+        }
+        stopEmulation()
+        nestlin.load(currentRomPath!!)
+        nestlin.powerReset()
+        startEmulation()
+    }
+
+    private fun handleExit() {
+        stopEmulation()
+        Platform.exit()
     }
 
     override fun stop() {
