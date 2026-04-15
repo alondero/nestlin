@@ -34,3 +34,8 @@ This produces a runnable distribution in `build/distributions/`.
 
 - `.nes` - iNES ROM format
 - `.7z` - 7-Zip archives containing ROM files
+- **Mapper 0** (NROM) and **Mapper 1** (MMC1) supported
+
+## Key Mappings
+
+Key mappings are configurable in `~/.config/nestlin/input.json`
