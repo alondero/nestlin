@@ -21,9 +21,12 @@ hs_err_pid*
 # Screenshot directory (generated at runtime)
 screenshots/
 
-# Roms (except nestest rom)
-testroms/
-!testroms/nestest.*
+# Roms - only nestest.nes is allowed
+*.nes
+!testroms/nestest.nes
+
+# 7z archives
+*.7z
 
 # Replays
 replays/

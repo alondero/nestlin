@@ -39,11 +39,25 @@
 - **Behavior:** 8KB CHR ROM bank switching via $8000-$9FFF (bits 0-1)
 - **PRG:** Fixed 32KB at $8000-$FFFF
 
-## Mapper 4 (MMC3)
-**Status:** Not Implemented
+## Mapper 4 (MMC3/TxROM)
+**Status:** Working
 
-- **Games:** Many later NES games (Mega Man 4-6, Contra, etc.)
-- **Behavior:** Complex bank switching with IRQ support
+- **Games:** Many later NES games (Mega Man 4-6, StarTropics, Contra, Kirby's Adventure, Crystalis, etc.)
+- **Behavior:**
+  - Dual register pairs at even/odd addresses ($8000/8001, $A000/A001, $C000/C001, $E000/E001)
+  - Bit 7 of $8000 = CHR inversion mode (chrPrgInvert)
+  - Bit 6 of $8000 = PRG banking mode (prgMode)
+  - PRG banking:
+    - $8000-$9FFF: prgBank6 when prgMode=0, prgBankCount-2 when prgMode=1
+    - $A000-$BFFF: always prgBankA (R7, switchable)
+    - $C000-$DFFF: prgBankCount-2 when prgMode=0, prgBank6 when prgMode=1
+    - $E000-$FFFF: always last bank (prgBankCount-1)
+  - CHR banking (normal mode): R0-R1 = 2KB at $0000-$0FFF, R2-R5 = four 1KB at $1000-$1FFF
+  - CHR banking (inverted mode): R2-R5 = four 1KB at $0000-$0FFF, R0-R1 = 2KB at $1000-$1FFF
+  - Scanline IRQ via PPU A12 rising edge detection
+- **Verified Working:** Mega Man 4 (CHR RAM), StarTropics (CHR ROM), Crystalis (CHR ROM)
+- **Rendering Verified:** StarTropics intro sequence renders correctly (screenshots at 30s, 60s, 90s)
+- **Unit Tests:** Removed due to incorrect expected values; integration tests validate correct behavior
 
 ---
 

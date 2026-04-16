@@ -1,0 +1,37 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: false
+        default: 'latest'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build uberJar
+        run: ./gradlew uberJar
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          release_name: Nestlin v${{ inputs.version }}
+          draft: true
+          artifacts: build/libs/nestlin-standalone.jar
+          artifact_errors: fail
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
