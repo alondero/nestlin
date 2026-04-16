@@ -27,6 +27,9 @@ class Memory {
         ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = { addr -> m.ppuRead(addr) }
         ppuAddressedMemory.ppuInternalMemory.chrWriteDelegate = { addr, v -> m.ppuWrite(addr, v) }
 
+        // Load CHR ROM into PPU pattern tables for initial tiles
+        ppuAddressedMemory.ppuInternalMemory.loadChrRom(data.chrRom)
+
         // Apply initial mirroring from mapper
         applyMirroringFromMapper(m)
     }

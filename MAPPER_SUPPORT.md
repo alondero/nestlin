@@ -19,15 +19,25 @@
   - CHR ROM loaded via mapper delegate into pattern tables
 - **Banking Fix Applied (2026-04-15):** Mode 3 and mode 2 had inverted fixed/switchable assignments per MMC1 spec
 
-## Mapper 2 (UxROM)
-**Status:** Not Implemented
+## Mapper 2 (CNROM/UNROM)
+**Status:** Working
 
-- **Behavior:** Simple 16KB PRG bank switching at $8000-$BFFF
+- **CNROM (original):** 8KB CHR bank switching, fixed PRG at $8000-$FFFF
+- **UNROM (commercial variant):** 16KB PRG bank switching at $8000-$BFFF via $8000-$FFFF writes
+  - Bits 0-2 of value written select the 16KB PRG bank (0-7 for 128KB ROM)
+  - $8000-$BFFF: switchable 16KB PRG bank window
+  - $C000-$FFFF: fixed to last PRG bank (bank 7 for 128KB, bank 3 for 64KB)
+  - Same CHR banking as CNROM (bits 0-1 for CHR bank selection)
+- **Games:** Castlevania, Contra, 1943, DuckTales, California Games (UNROM); original CNROM games
+- **PRG Banking:** $8000-$BFFF switchable, $C000-$FFFF fixed to last bank
+- **CHR Banking:** 8KB banks, switch via bits 0-1 of $8000-$9FFF writes
 
-## Mapper 3 (CNROM)
-**Status:** Not Implemented
+## Mapper 3 (NINA-003/006)
+**Status:** Working
 
-- **Behavior:** 8KB CHR ROM bank switching
+- **Games:** Paperboy
+- **Behavior:** 8KB CHR ROM bank switching via $8000-$9FFF (bits 0-1)
+- **PRG:** Fixed 32KB at $8000-$FFFF
 
 ## Mapper 4 (MMC3)
 **Status:** Not Implemented

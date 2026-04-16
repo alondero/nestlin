@@ -23,6 +23,8 @@ class GamePak(data: ByteArray) {
     fun createMapper(): Mapper = when (header.mapper) {
         0 -> Mapper0(this)
         1 -> Mapper1(this)
+        2 -> Mapper2(this)
+        3 -> Mapper3(this)
         else -> throw UnsupportedOperationException("Mapper ${header.mapper} not implemented")
     }
 

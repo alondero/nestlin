@@ -65,6 +65,12 @@ class NestlinApplication : FrameListener, App() {
     // Screenshot management
     private val screenshotManager = ScreenshotManager(Paths.get("screenshots"))
 
+    // Automated screenshot interval mode (for validation)
+    private var screenshotIntervalSeconds: Int = 0
+    private var screenshotDurationSeconds: Int = 0
+    private var screenshotElapsedSeconds: Int = 0
+    private var screenshotTimer: java.util.Timer? = null
+
     // Input configuration and gamepad support
     private val inputConfig = InputConfig.load()
     private lateinit var gamepadInput: GamepadInput
@@ -159,25 +165,59 @@ class NestlinApplication : FrameListener, App() {
         // Initialize audio playback
         initAudio()
 
+        // Parse screenshot interval parameters for automated validation
+        // Note: JavaFX doesn't support --name value syntax, only --name=value
+        // So we parse from unnamed parameters
+        fun getNamedParam(name: String): String? {
+            val index = parameters.unnamed.indexOf(name)
+            return if (index >= 0 && index + 1 < parameters.unnamed.size) {
+                parameters.unnamed[index + 1]
+            } else null
+        }
+        val intervalStr = getNamedParam("--screenshot-interval") ?: parameters.named["screenshot-interval"]
+        val durationStr = getNamedParam("--screenshot-duration") ?: parameters.named["screenshot-duration"]
+        if (intervalStr != null && durationStr != null) {
+            screenshotIntervalSeconds = intervalStr.toIntOrNull() ?: 0
+            screenshotDurationSeconds = durationStr.toIntOrNull() ?: 15
+            if (screenshotIntervalSeconds > 0 && screenshotDurationSeconds > 0) {
+                println("[APP] Automated screenshot mode: every ${screenshotIntervalSeconds}s for ${screenshotDurationSeconds}s")
+                // Wait before starting screenshots to let emulation stabilize
+                screenshotTimer = java.util.Timer(true)
+                screenshotTimer?.scheduleAtFixedRate(object : java.util.TimerTask() {
+                    private var nextCapture = 5  // First capture at 5 seconds
+                    override fun run() {
+                        if (nextCapture >= screenshotDurationSeconds) {
+                            println("[APP] Screenshot duration reached (${nextCapture}s >= ${screenshotDurationSeconds}s), shutting down...")
+                            Platform.runLater {
+                                handleExit()
+                            }
+                            cancel()
+                        } else {
+                            println("[APP] Capturing screenshot at elapsed=${nextCapture}s...")
+                            captureScreenshot()
+                            nextCapture += screenshotIntervalSeconds
+                        }
+                    }
+                }, screenshotIntervalSeconds * 1000L, screenshotIntervalSeconds * 1000L)
+            }
+        }
+
         // Load and start emulation from command line argument
         thread {
             with(nestlin) {
                 println("[APP] Parameters: named=${parameters.named}, unnamed=${parameters.unnamed}")
-                // Reconstruct the ROM path from parameters that were split on spaces.
-                // Filter out any parameter that looks like a named flag (starts with --)
-                // since those should be handled by parameters.named, not as part of the path.
+                // Reconstruct the ROM path from parameters. The ROM path is the first non-flag parameter.
+                // Filter out any parameter that looks like a named flag (starts with --).
                 val nonFlagParams = parameters.unnamed.filter { !it.startsWith("--") }
                 val debugEnabled = !parameters.named["debug"].isNullOrEmpty() ||
                         parameters.unnamed.any { it.startsWith("--debug") }
                 if (debugEnabled) enableLogging()
-                val romPath = if (nonFlagParams.size > 1) {
-                    nonFlagParams.joinToString(" ")
-                } else {
-                    nonFlagParams[0]
-                }
+                // Take only the first non-flag parameter as the ROM path (rest are other arguments)
+                val romPath = nonFlagParams.firstOrNull() ?: throw IllegalStateException("No ROM file provided")
                 currentRomPath = Paths.get(romPath)
                 load(currentRomPath!!)
                 powerReset()
+                startEmulation()
             }
         }.also { emulationThread = it }
     }
@@ -192,6 +232,28 @@ class NestlinApplication : FrameListener, App() {
         emulationThread = thread {
             nestlin.start()
         }
+    }
+
+    private fun startScreenshotTimer() {
+        screenshotTimer = java.util.Timer(true)
+        // First screenshot after interval, then every intervalSeconds
+        screenshotTimer?.scheduleAtFixedRate(object : java.util.TimerTask() {
+            override fun run() {
+                if (screenshotElapsedSeconds >= screenshotDurationSeconds) {
+                    // Duration reached - stop emulation and exit
+                    println("[APP] Screenshot duration reached (${screenshotElapsedSeconds}s >= ${screenshotDurationSeconds}s), shutting down...")
+                    Platform.runLater {
+                        handleExit()
+                    }
+                    cancel()
+                } else {
+                    // Capture screenshot at interval
+                    println("[APP] Capturing screenshot at elapsed=${screenshotElapsedSeconds}s...")
+                    captureScreenshot()
+                    screenshotElapsedSeconds += screenshotIntervalSeconds
+                }
+            }
+        }, screenshotIntervalSeconds * 1000L, screenshotIntervalSeconds * 1000L)
     }
 
     private fun handleLoadGame() {
@@ -235,6 +297,10 @@ class NestlinApplication : FrameListener, App() {
     override fun stop() {
         nestlin.stop()
         running = false
+
+        // Clean up screenshot timer
+        screenshotTimer?.cancel()
+        screenshotTimer = null
 
         // Clean up gamepad
         gamepadInput.shutdown()

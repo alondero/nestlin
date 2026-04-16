@@ -23,6 +23,9 @@ class PpuAddressedMemory {
 
     var nmiOccurred = false
     var nmiOutput = false
+    var vBlankDebug = false
+    var vBlankReadCounter = 0
+    var lastVBlankReadFrame = -1
 
     fun setVBlank() {
         status.register = status.register.setBit(7)
@@ -55,9 +58,9 @@ class PpuAddressedMemory {
                 writeToggle = false
                 val value = status.register
                 status.clearVBlank()
-                // Reading $2002 also clears the NMI flag? 
+                // Reading $2002 also clears the NMI flag?
                 // NESdev: "Reading $2002... will also acknowledge the interrupt"
-                nmiOccurred = false 
+                nmiOccurred = false
                 value
             }
             3 -> oamAddress
@@ -87,7 +90,9 @@ class PpuAddressedMemory {
                 controller.register = value
                 tempVRamAddress.updateNameTable(value.toUnsignedInt() and 0x03)
             }
-            1 -> mask.register = value
+            1 -> {
+                mask.register = value
+            }
             2 -> status.register = value
             3 -> oamAddress = value
             4 -> writeOamData(value)
