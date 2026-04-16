@@ -3,6 +3,7 @@
     "jdtls-lsp@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
     "code-review@claude-plugins-official": true,
-    "kotlin-lsp@claude-plugins-official": true
+    "kotlin-lsp@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true
   }
 }

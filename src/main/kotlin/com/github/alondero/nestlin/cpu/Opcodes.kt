@@ -352,7 +352,7 @@ class Opcodes {
     }
 
     private fun immediate(): (Cpu) -> Byte = { it.readByteAtPC() }
-    private fun absolute(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[(absoluteAdr(shift)(it) and 0xFFFF)] }
+    private fun absolute(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[absoluteAdr(shift)(it) and 0xFFFF] }
     private fun zeroPaged(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[zeroPagedAdr(shift)(it) and 0xFFFF] }
     private fun indirectX(): (Cpu) -> Byte = { it.memory[indirectXAdr()(it)] }
     private fun indirectY(): (Cpu) -> Byte = { it.memory[indirectYAdr()(it)]}

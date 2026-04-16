@@ -39,6 +39,9 @@ class Cpu(var memory: Memory)
         logger = Logger()
     }
 
+    private var instructionCount = 0
+    private var traceAfterVBlank = false
+
     fun tick() {
         if (readyForNextInstruction()) {
             // Check for NMI interrupt before executing next instruction
@@ -55,6 +58,10 @@ class Cpu(var memory: Memory)
 
             val initialPC = registers.programCounter
             val opcodeVal = readByteAtPC().toUnsignedInt()
+            if (traceAfterVBlank && instructionCount < 50) {
+                println("[CPU] PC=$${String.format("%04X", initialPC.toInt())}, opcode=$${String.format("%02X", opcodeVal)}")
+            }
+            instructionCount++
             opcodes[opcodeVal]?.also {
                 logger?.cpuTick(initialPC, opcodeVal, this)
                 it.op(this)

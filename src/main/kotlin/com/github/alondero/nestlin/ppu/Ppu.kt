@@ -56,7 +56,6 @@ class Ppu(var memory: Memory) {
     private var frameCompletionListener: (() -> Unit)? = null
 
     fun tick() {
-
 //       println("Rendering ($cycle, $scanline)")
         if (cycle == 341) {
             endLine()
