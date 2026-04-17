@@ -25,6 +25,10 @@ class GamePak(data: ByteArray) {
         1 -> Mapper1(this)
         2 -> Mapper2(this)
         3 -> Mapper3(this)
+        4 -> Mapper4(this)
+        7 -> Mapper7(this)
+        11 -> Mapper11(this)
+        34 -> Mapper34(this)
         else -> throw UnsupportedOperationException("Mapper ${header.mapper} not implemented")
     }
 

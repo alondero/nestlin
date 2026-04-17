@@ -18,8 +18,19 @@ hs_err_pid*
 # Claude local settings
 .claude/settings.local.json
 
+# Debug output files
+*.debug.txt
+
 # Screenshot directory (generated at runtime)
 screenshots/
+
+# Doc screenshots (generated at runtime)
+doc/screenshots/*.png
+
+# Test screenshots (generated at runtime)
+testroms/screenshots/
+testroms/fire_debug.txt
+testroms/kirby_debug.txt
 
 # Roms - only nestest.nes is allowed
 *.nes

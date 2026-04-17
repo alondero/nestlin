@@ -198,8 +198,8 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
             // $1000-$13FF = R2 (1KB), $1400-$17FF = R3 (1KB)
             // $1800-$1BFF = R4 (1KB), $1C00-$1FFF = R5 (1KB)
             when {
-                maskedAddress < 0x0800 -> chrRom[(chrBanks[0] * 0x0400 + maskedAddress) % chrRom.size]
-                maskedAddress < 0x1000 -> chrRom[(chrBanks[1] * 0x0400 + (maskedAddress - 0x0800)) % chrRom.size]
+                maskedAddress < 0x0800 -> chrRom[(chrBanks[0] * 0x0800 + maskedAddress) % chrRom.size]
+                maskedAddress < 0x1000 -> chrRom[(chrBanks[1] * 0x0800 + (maskedAddress - 0x0800)) % chrRom.size]
                 maskedAddress < 0x1400 -> chrRom[(chrBanks[2] * 0x0400 + (maskedAddress - 0x1000)) % chrRom.size]
                 maskedAddress < 0x1800 -> chrRom[(chrBanks[3] * 0x0400 + (maskedAddress - 0x1400)) % chrRom.size]
                 maskedAddress < 0x1C00 -> chrRom[(chrBanks[4] * 0x0400 + (maskedAddress - 0x1800)) % chrRom.size]
