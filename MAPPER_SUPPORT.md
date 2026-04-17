@@ -40,9 +40,9 @@
 - **PRG:** Fixed 32KB at $8000-$FFFF
 
 ## Mapper 4 (MMC3/TxROM)
-**Status:** Working
+**Status:** Known Issue - Gray Screen
 
-- **Games:** Many later NES games (Mega Man 4-6, StarTropics, Contra, Kirby's Adventure, Crystalis, etc.)
+- **Games:** Many later NES games (Mega Man 4-6, StarTropics, Contra, Kirby's Adventure, Crystalis, Bad Dudes, etc.)
 - **Behavior:**
   - Dual register pairs at even/odd addresses ($8000/8001, $A000/A001, $C000/C001, $E000/E001)
   - Bit 7 of $8000 = CHR inversion mode (chrPrgInvert)
@@ -55,9 +55,21 @@
   - CHR banking (normal mode): R0-R1 = 2KB at $0000-$0FFF, R2-R5 = four 1KB at $1000-$1FFF
   - CHR banking (inverted mode): R2-R5 = four 1KB at $0000-$0FFF, R0-R1 = 2KB at $1000-$1FFF
   - Scanline IRQ via PPU A12 rising edge detection
-- **Verified Working:** Mega Man 4 (CHR RAM), StarTropics (CHR ROM), Crystalis (CHR ROM)
-- **Rendering Verified:** StarTropics intro sequence renders correctly (screenshots at 30s, 60s, 90s)
-- **Unit Tests:** Removed due to incorrect expected values; integration tests validate correct behavior
+- **Known Issue:** Games render as gray screen - deeper CHR banking address calculation bug suspected
+- **Status (2026-04-17):** CPU IRQ check extended to query `mapper.isIrqPending()`, A12 edge infrastructure exists but gray screen persists. Attempted A12 edge detection in PpuAddressedMemory broke other mappers; reverted. Root cause not yet identified - likely pre-existing CHR bank index calculation error.
+
+---
+
+## Mapper 11 (Color Dreams)
+**Status:** Working (Fixed 2026-04-17)
+
+- **Games:** Bible Adventures, Action 52, Crystalis (some versions)
+- **Behavior:** CHR bank switching via bits 4-7 of $8000-$FFFF writes, PRG fixed at $8000-$FFFF
+- **Bugs Fixed (2026-04-17):**
+  1. CHR banking was reading bits 0-1 (PRG bank field) instead of bits 4-7 (CHR bank field)
+  2. PRG banking was fixed to bank 0 only; now properly switches 32KB PRG banks via bits 0-1
+- **Format (per NESdev wiki):** `CCCC LLPP` where CCCC = 8KB CHR bank (bits 4-7), LL = unused/lockout, PP = 32KB PRG bank (bits 0-1)
+- **Verified:** Bible Adventures now shows gameplay content (was all-black before fix)
 
 ---
 

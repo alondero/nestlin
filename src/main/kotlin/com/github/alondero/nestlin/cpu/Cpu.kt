@@ -131,7 +131,7 @@ class Cpu(var memory: Memory)
 
     private fun checkAndHandleIrq(): Boolean {
         if (processorStatus.interruptDisable) return false
-        if (memory.apu?.isIrqPending() != true) return false
+        if (memory.apu?.isIrqPending() != true && memory.mapper?.isIrqPending() != true) return false
 
         // Push PC (high byte first, then low byte)
         val pc = registers.programCounter.toUnsignedInt()
@@ -151,6 +151,9 @@ class Cpu(var memory: Memory)
 
         // IRQ takes 7 cycles
         workCyclesLeft = 7
+
+        // Acknowledge IRQ from mapper (APU IRQ is cleared elsewhere by the APU)
+        memory.mapper?.acknowledgeIrq()
 
         return true
     }

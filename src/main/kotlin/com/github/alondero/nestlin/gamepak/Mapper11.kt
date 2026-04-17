@@ -19,17 +19,20 @@ class Mapper11(private val gamePak: GamePak) : Mapper {
     // CHR RAM initialized to zeros when no CHR ROM
     private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
     private var chrBank = 0
+    private var prgBank = 0  // 32KB PRG bank units
 
     override fun cpuRead(address: Int): Byte {
-        // PRG fixed at $8000-$FFFF (32KB)
-        return programRom[(address - 0x8000) and 0x7FFF]
+        // PRG bank switching via $8000-$FFFF
+        return programRom[(prgBank * 0x8000 + (address - 0x8000)) % programRom.size]
     }
 
     override fun cpuWrite(address: Int, value: Byte) {
-        // CHR bank switch via $8000-$FFFF
-        // Low bits select 8KB CHR bank
+        // Bank switch via $8000-$FFFF
+        // Format: CCCC LLPP (bits 4-7 = 8KB CHR, bits 0-1 = 32KB PRG bank)
         if (address in 0x8000..0xFFFF) {
-            chrBank = value.toUnsignedInt() and 0x03
+            val valueInt = value.toUnsignedInt()
+            chrBank = (valueInt shr 4) and 0x0F  // Bits 4-7: 8KB CHR bank (up to 128KB)
+            prgBank = valueInt and 0x03          // Bits 0-1: 32KB PRG bank
         }
     }
 
