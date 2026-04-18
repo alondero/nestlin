@@ -27,6 +27,10 @@ class Memory {
         ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = { addr -> m.ppuRead(addr) }
         ppuAddressedMemory.ppuInternalMemory.chrWriteDelegate = { addr, v -> m.ppuWrite(addr, v) }
 
+        // Wire A12 edge detection for MMC3 scanline IRQ
+        ppuAddressedMemory.ppuInternalMemory.a12EdgeListener = { rising -> m.notifyA12Edge(rising) }
+        ppuAddressedMemory.ppuInternalMemory.resetA12State()
+
         // Load CHR ROM into PPU pattern tables for initial tiles
         ppuAddressedMemory.ppuInternalMemory.loadChrRom(data.chrRom)
 

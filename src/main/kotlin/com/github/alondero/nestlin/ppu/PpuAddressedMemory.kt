@@ -327,6 +327,22 @@ class PpuInternalMemory {
     var chrReadDelegate: ((Int) -> Byte)? = null
     var chrWriteDelegate: ((Int, Byte) -> Unit)? = null
 
+    // A12 edge detection for MMC3 scanline IRQ
+    private var lastA12High: Boolean = false
+    var a12EdgeListener: ((Boolean) -> Unit)? = null
+
+    private inline fun emitA12(addr: Int) {
+        val high = (addr and 0x1000) != 0
+        if (high != lastA12High) {
+            a12EdgeListener?.invoke(high)
+            lastA12High = high
+        }
+    }
+
+    fun resetA12State() {
+        lastA12High = false
+    }
+
     enum class Mirroring {
         HORIZONTAL,
         VERTICAL,
@@ -355,8 +371,14 @@ class PpuInternalMemory {
     }
 
     operator fun get(addr: Int): Byte = when (addr) {
-        in 0x0000..0x0FFF -> chrReadDelegate?.invoke(addr) ?: patternTable0[addr]
-        in 0x1000..0x1FFF -> chrReadDelegate?.invoke(addr) ?: patternTable1[addr - 0x1000]
+        in 0x0000..0x0FFF -> {
+            emitA12(addr)
+            chrReadDelegate?.invoke(addr) ?: patternTable0[addr]
+        }
+        in 0x1000..0x1FFF -> {
+            emitA12(addr)
+            chrReadDelegate?.invoke(addr) ?: patternTable1[addr - 0x1000]
+        }
         in 0x2000..0x2FFF -> {
             val (table, offset) = mapNametableAddress(addr)
             table[offset]
@@ -368,8 +390,14 @@ class PpuInternalMemory {
     operator fun set(addr: Int, value: Byte) {
         when (addr) {
             // Pattern tables (0x0000-0x1FFF): delegate to mapper for CHR banking
-            in 0x0000..0x0FFF -> chrWriteDelegate?.invoke(addr, value) ?: Unit
-            in 0x1000..0x1FFF -> chrWriteDelegate?.invoke(addr, value) ?: Unit
+            in 0x0000..0x0FFF -> {
+                emitA12(addr)
+                chrWriteDelegate?.invoke(addr, value) ?: Unit
+            }
+            in 0x1000..0x1FFF -> {
+                emitA12(addr)
+                chrWriteDelegate?.invoke(addr, value) ?: Unit
+            }
             in 0x2000..0x2FFF -> {
                 val (table, offset) = mapNametableAddress(addr)
                 table[offset] = value

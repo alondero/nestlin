@@ -40,7 +40,7 @@
 - **PRG:** Fixed 32KB at $8000-$FFFF
 
 ## Mapper 4 (MMC3/TxROM)
-**Status:** Known Issue - Gray Screen
+**Status:** Supported
 
 - **Games:** Many later NES games (Mega Man 4-6, StarTropics, Contra, Kirby's Adventure, Crystalis, Bad Dudes, etc.)
 - **Behavior:**
@@ -54,9 +54,12 @@
     - $E000-$FFFF: always last bank (prgBankCount-1)
   - CHR banking (normal mode): R0-R1 = 2KB at $0000-$0FFF, R2-R5 = four 1KB at $1000-$1FFF
   - CHR banking (inverted mode): R2-R5 = four 1KB at $0000-$0FFF, R0-R1 = 2KB at $1000-$1FFF
-  - Scanline IRQ via PPU A12 rising edge detection
-- **Known Issue:** Games render as gray screen - deeper CHR banking address calculation bug suspected
-- **Status (2026-04-17):** CPU IRQ check extended to query `mapper.isIrqPending()`, A12 edge infrastructure exists but gray screen persists. Attempted A12 edge detection in PpuAddressedMemory broke other mappers; reverted. Root cause not yet identified - likely pre-existing CHR bank index calculation error.
+  - Scanline IRQ via PPU A12 rising edge detection (wired 2026-04-17)
+- **Fixes Applied (2026-04-17):**
+  - PRG banking: Fixed inverted prgMode branches per NESdev MMC3 spec
+  - CHR banking: Fixed R0/R1 bank calculation per NESdev spec
+  - IRQ counter reload: Fixed per NESdev spec - reload occurs when counter==0 OR reload flag is set
+  - A12 edge detection: Wired from PPU pattern table access to mapper via a12EdgeListener
 
 ---
 
