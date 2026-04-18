@@ -108,9 +108,10 @@ emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
     }
 
     private fun guessScriptDataFolder(): Path {
-        // On Windows: %APPDATA%\Sourcen\Mesen\LuaScriptData\<scriptname>\
-        val appData = System.getenv("APPDATA") ?: return Paths.get(".")
-        return Paths.get(appData, "Sourcen", "Mesen", "LuaScriptData")
+        // Mesen2 writes to: <mesen_dir>/LuaScriptData/<script_name>/
+        // NOT %APPDATA%/Sourcen/Mesen/ (that's Mesen v1, not v2)
+        val mesenPath = getMesen2Path()
+        return mesenPath.parent.resolve("LuaScriptData").resolve("capture")
     }
 }
 

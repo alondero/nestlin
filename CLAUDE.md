@@ -172,7 +172,7 @@ The test will fail when it encounters:
 ### Screenshot Comparison
 Frame-accurate pixel comparison against Mesen2 (the reference emulator) detects PPU/mapper regressions that CPU-only tests miss.
 
-**Setup:** Set the `MESEN2_PATH` environment variable to your Mesen2 binary:
+**Setup:** Set the `MESEN2_PATH` environment variable to your Mesen2 binary, or ensure `tools/Mesen/Mesen.exe` exists:
 ```bash
 export MESEN2_PATH=/path/to/Mesen2.exe
 ```
@@ -183,13 +183,12 @@ export MESEN2_PATH=/path/to/Mesen2.exe
 ```
 
 **How it works:**
-- Runs Nestlin and Mesen2 headless for N frames
-- Compares the resulting PNGs pixel-for-pixel
+- Runs Nestlin headless for N frames, saves PNG
+- Runs Mesen2 in GUI mode for N frames, captures screenshot via Lua script
+- Compares the PNGs pixel-for-pixel using zlib decompression
 - On mismatch: saves side-by-side diff to `build/reports/screenshot-diffs/<rom>-frame-<n>/`
 
 **Without Mesen2:** Tests are automatically skipped, so CI without Mesen2 installed won't fail.
-
-**Future:** FM2 movie replay for input-dependent test cases (can drive both emulators with the same input recording).
 
 ## Development Workflow
 
