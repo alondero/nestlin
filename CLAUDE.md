@@ -169,6 +169,28 @@ The test will fail when it encounters:
 3. Set correct `workCyclesLeft` (check 6502 reference)
 4. Run golden log test to verify
 
+### Screenshot Comparison
+Frame-accurate pixel comparison against Mesen2 (the reference emulator) detects PPU/mapper regressions that CPU-only tests miss.
+
+**Setup:** Set the `MESEN2_PATH` environment variable to your Mesen2 binary:
+```bash
+export MESEN2_PATH=/path/to/Mesen2.exe
+```
+
+**Running the tests:**
+```bash
+./gradlew test --tests ScreenshotComparisonTest
+```
+
+**How it works:**
+- Runs Nestlin and Mesen2 headless for N frames
+- Compares the resulting PNGs pixel-for-pixel
+- On mismatch: saves side-by-side diff to `build/reports/screenshot-diffs/<rom>-frame-<n>/`
+
+**Without Mesen2:** Tests are automatically skipped, so CI without Mesen2 installed won't fail.
+
+**Future:** FM2 movie replay for input-dependent test cases (can drive both emulators with the same input recording).
+
 ## Development Workflow
 
 ### Explore-Plan-Code Pattern
