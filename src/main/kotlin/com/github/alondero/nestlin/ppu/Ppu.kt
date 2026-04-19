@@ -101,11 +101,9 @@ class Ppu(var memory: Memory) {
 
         if (scanline == PRE_RENDER_SCANLINE && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
 
-        // MMC3 scanline IRQ clock - at cycle 260 of every visible scanline when rendering is enabled
-        // This triggers one A12 edge per scanline matching real MMC3 hardware behavior
-        if (renderingActive && cycle == 260) {
-            memory.mapper?.clockScanline()
-        }
+        // Note: MMC3 scanline IRQ is triggered by A12 edge detection (via notifyA12Edge),
+        // NOT by a fixed-rate clock. The PPU naturally triggers A12 edges when fetching
+        // pattern data. We do NOT call clockScanline() here to avoid double-counting.
 
         // Load shift registers every 8 cycles (at cycles 9, 17, 25, ..., 249, 329, 337)
         // Note: NES reloads at 329 and 337 for post-render (cycles 321-340), NOT at 321

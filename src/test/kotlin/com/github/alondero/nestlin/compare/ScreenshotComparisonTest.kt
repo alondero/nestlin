@@ -21,7 +21,8 @@ class ScreenshotComparisonTest(
         fun data(): List<Array<Any>> {
             return listOf(
                 arrayOf("tetris.nes", 60),
-                arrayOf("lolo1.nes", 60)
+                arrayOf("lolo1.nes", 60),
+                arrayOf("kirby.nes", 60)
             )
         }
     }

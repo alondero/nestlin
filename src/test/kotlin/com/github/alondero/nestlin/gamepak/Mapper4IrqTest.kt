@@ -169,33 +169,4 @@ class Mapper4IrqTest {
         // Counter never decrements when latch is 0
         assertThat(mapper.isIrqPending(), equalTo(false))
     }
-
-    @Test
-    fun `clockScanlineDecrementsCounter identically to a12RisingEdge`() {
-        val gamePak = createTestGamePak()
-        val mapperViaEdge = Mapper4(gamePak)
-        val mapperViaScanline = Mapper4(gamePak)
-
-        // Set identical IRQ state on both mappers
-        listOf(mapperViaEdge, mapperViaScanline).forEach { mapper ->
-            mapper.cpuWrite(0xC000, 5.toByte())
-            mapper.cpuWrite(0xC001, 0x00)
-            mapper.cpuWrite(0xE001, 0x00)
-        }
-
-        // Fire 3 edges via notifyA12Edge
-        repeat(3) { mapperViaEdge.notifyA12Edge(true) }
-
-        // Fire 3 edges via clockScanline
-        repeat(3) { mapperViaScanline.clockScanline() }
-
-        // Both should have the same counter state (5->4->3->2 after 3 decrements from 5)
-        val edgeSnapshot = mapperViaEdge.snapshot()!!
-        val scanlineSnapshot = mapperViaScanline.snapshot()!!
-
-        val edgeCounter = edgeSnapshot.irqState?.get("irqCounter") as? Int
-        val scanlineCounter = scanlineSnapshot.irqState?.get("irqCounter") as? Int
-        assertThat(scanlineCounter, equalTo(edgeCounter))
-        assertThat(mapperViaScanline.isIrqPending(), equalTo(mapperViaEdge.isIrqPending()))
-    }
 }

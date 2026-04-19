@@ -33,6 +33,13 @@ doc/screenshots/*.png
 testroms/screenshots/
 testroms/fire_debug.txt
 testroms/kirby_debug.txt
+test-output*.png
+test-screenshot.lua
+capture-kirby.lua
+
+# Local emulator tools
+tools/Mesen/
+tools/Mesen2/
 
 # Roms - only nestest.nes is allowed
 *.nes

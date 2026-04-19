@@ -69,10 +69,6 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
         clockMmc3Counter()
     }
 
-    override fun clockScanline() {
-        clockMmc3Counter()
-    }
-
     override fun cpuRead(address: Int): Byte {
         if (address < 0x8000) return 0
 
