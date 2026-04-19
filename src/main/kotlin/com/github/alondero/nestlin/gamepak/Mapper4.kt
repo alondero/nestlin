@@ -184,11 +184,12 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
             // $0000-$03FF = R2 (1KB), $0400-$07FF = R3 (1KB)
             // $0800-$0BFF = R4 (1KB), $0C00-$0FFF = R5 (1KB)
             // $1000-$17FF = R0 (2KB), $1800-$1FFF = R1 (2KB)
+            // CHR banks are 8KB units per NESdev MMC3 spec
             when (maskedAddress) {
-                in 0x0000..0x03FF -> chrRom[(chrBanks[2] * 0x0400 + maskedAddress) % chrRom.size]
-                in 0x0400..0x07FF -> chrRom[(chrBanks[3] * 0x0400 + (maskedAddress - 0x0400)) % chrRom.size]
-                in 0x0800..0x0BFF -> chrRom[(chrBanks[4] * 0x0400 + (maskedAddress - 0x0800)) % chrRom.size]
-                in 0x0C00..0x0FFF -> chrRom[(chrBanks[5] * 0x0400 + (maskedAddress - 0x0C00)) % chrRom.size]
+                in 0x0000..0x03FF -> chrRom[(chrBanks[2] * 0x2000 + maskedAddress) % chrRom.size]
+                in 0x0400..0x07FF -> chrRom[(chrBanks[3] * 0x2000 + (maskedAddress - 0x0400)) % chrRom.size]
+                in 0x0800..0x0BFF -> chrRom[(chrBanks[4] * 0x2000 + (maskedAddress - 0x0800)) % chrRom.size]
+                in 0x0C00..0x0FFF -> chrRom[(chrBanks[5] * 0x2000 + (maskedAddress - 0x0C00)) % chrRom.size]
                 in 0x1000..0x17FF -> chrRom[((chrBanks[0] and 0xFE) * 0x0800 + (maskedAddress - 0x1000)) % chrRom.size]
                 in 0x1800..0x1FFF -> chrRom[((chrBanks[1] and 0xFE) * 0x0800 + (maskedAddress - 0x1800)) % chrRom.size]
                 else -> chrRom[maskedAddress % chrRom.size]
@@ -198,13 +199,14 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
             // $0000-$07FF = R0 (2KB), $0800-$0FFF = R1 (2KB)
             // $1000-$13FF = R2 (1KB), $1400-$17FF = R3 (1KB)
             // $1800-$1BFF = R4 (1KB), $1C00-$1FFF = R5 (1KB)
+            // CHR banks are 8KB units per NESdev MMC3 spec
             when {
                 maskedAddress < 0x0800 -> chrRom[((chrBanks[0] and 0xFE) * 0x0800 + maskedAddress) % chrRom.size]
                 maskedAddress < 0x1000 -> chrRom[((chrBanks[1] and 0xFE) * 0x0800 + (maskedAddress - 0x0800)) % chrRom.size]
-                maskedAddress < 0x1400 -> chrRom[(chrBanks[2] * 0x0400 + (maskedAddress - 0x1000)) % chrRom.size]
-                maskedAddress < 0x1800 -> chrRom[(chrBanks[3] * 0x0400 + (maskedAddress - 0x1400)) % chrRom.size]
-                maskedAddress < 0x1C00 -> chrRom[(chrBanks[4] * 0x0400 + (maskedAddress - 0x1800)) % chrRom.size]
-                maskedAddress < 0x2000 -> chrRom[(chrBanks[5] * 0x0400 + (maskedAddress - 0x1C00)) % chrRom.size]
+                maskedAddress < 0x1400 -> chrRom[(chrBanks[2] * 0x2000 + (maskedAddress - 0x1000)) % chrRom.size]
+                maskedAddress < 0x1800 -> chrRom[(chrBanks[3] * 0x2000 + (maskedAddress - 0x1400)) % chrRom.size]
+                maskedAddress < 0x1C00 -> chrRom[(chrBanks[4] * 0x2000 + (maskedAddress - 0x1800)) % chrRom.size]
+                maskedAddress < 0x2000 -> chrRom[(chrBanks[5] * 0x2000 + (maskedAddress - 0x1C00)) % chrRom.size]
                 else -> chrRom[maskedAddress % chrRom.size]
             }
         }
