@@ -42,6 +42,8 @@ class Cpu(var memory: Memory)
     private var instructionCount = 0
     private var traceAfterVBlank = false
 
+    fun getInstructionCount() = instructionCount
+
     fun tick() {
         if (readyForNextInstruction()) {
             // Check for NMI interrupt before executing next instruction
