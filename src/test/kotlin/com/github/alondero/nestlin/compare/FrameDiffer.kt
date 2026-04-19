@@ -10,10 +10,11 @@ data class DiffResult(
     val match: Boolean,
     val mismatchedPixels: Int,
     val totalPixels: Int,
-    val firstMismatch: Pair<Int, Int>?
+    val firstMismatch: Pair<Int, Int>?,
+    val matchPercentage: Double
 )
 
-fun diff(expected: Path, actual: Path): DiffResult {
+fun diff(expected: Path, actual: Path, threshold: Double = 0.0): DiffResult {
     val expectedImg = ImageIO.read(expected.toFile())
     val actualImg = ImageIO.read(actual.toFile())
 
@@ -22,7 +23,8 @@ fun diff(expected: Path, actual: Path): DiffResult {
             match = false,
             mismatchedPixels = expectedImg.width * expectedImg.height,
             totalPixels = expectedImg.width * expectedImg.height,
-            firstMismatch = null
+            firstMismatch = null,
+            matchPercentage = 0.0
         )
     }
 
@@ -42,11 +44,15 @@ fun diff(expected: Path, actual: Path): DiffResult {
         }
     }
 
+    val totalPixels = width * height
+    val matchPercentage = ((totalPixels - mismatched).toDouble() / totalPixels) * 100
+
     return DiffResult(
-        match = mismatched == 0,
+        match = matchPercentage >= (100.0 - threshold),
         mismatchedPixels = mismatched,
-        totalPixels = width * height,
-        firstMismatch = firstMismatch
+        totalPixels = totalPixels,
+        firstMismatch = firstMismatch,
+        matchPercentage = matchPercentage
     )
 }
 
