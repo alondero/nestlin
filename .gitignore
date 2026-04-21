@@ -41,6 +41,11 @@ capture-kirby.lua
 tools/Mesen/
 tools/Mesen2/
 tools/fceux/
+tools/bin/
+tools/doc/
+tools/luaScripts/
+tools/palettes/
+tools/tools/
 
 # Roms - only nestest.nes is allowed
 *.nes
