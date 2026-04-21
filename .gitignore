@@ -40,6 +40,7 @@ capture-kirby.lua
 # Local emulator tools
 tools/Mesen/
 tools/Mesen2/
+tools/fceux/
 
 # Roms - only nestest.nes is allowed
 *.nes
