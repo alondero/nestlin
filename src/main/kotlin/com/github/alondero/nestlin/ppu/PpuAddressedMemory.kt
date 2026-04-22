@@ -380,6 +380,7 @@ class PpuInternalMemory {
             chrReadDelegate?.invoke(addr) ?: patternTable1[addr - 0x1000]
         }
         in 0x2000..0x2FFF -> {
+            emitA12(addr)
             val (table, offset) = mapNametableAddress(addr)
             table[offset]
         }
@@ -399,6 +400,7 @@ class PpuInternalMemory {
                 chrWriteDelegate?.invoke(addr, value) ?: Unit
             }
             in 0x2000..0x2FFF -> {
+                emitA12(addr)
                 val (table, offset) = mapNametableAddress(addr)
                 table[offset] = value
             }

@@ -1,5 +1,9 @@
 *.class
 
+# NPM package files (created during development)
+package.json
+package-lock.json
+
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/
 

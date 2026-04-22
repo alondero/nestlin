@@ -176,17 +176,52 @@ class Ppu(var memory: Memory) {
     }
 
     private fun fetchSpriteTile() {
-//        The tile data for the spriteNametables on the next scanline are fetched here. Again, each memory access takes 2 PPU cycles to complete, and 4 are performed for each of the 8 spriteNametables:
-//
-//        Garbage nametable byte
-//        Garbage nametable byte
-//        Tile bitmap low
-//        Tile bitmap high (+8 bytes from tile bitmap low)
-//        The garbage fetches occur so that the same circuitry that performs the BG tile fetches could be reused for the sprite tile fetches.
-//
-//        If there are less than 8 spriteNametables on the next scanline, then dummy fetches to tile $FF occur for the left-over spriteNametables, because of the dummy sprite data in the secondary OAM (see sprite evaluation). This data is then discarded, and the spriteNametables are loaded with a transparent bitmap instead.
-//
-//        In addition to this, the X positions and attributes for each sprite are loaded from the secondary OAM into their respective counters/latches. This happens during the second garbage nametable fetch, with the attribute byte loaded during the first tick and the X coordinate during the second.
+        // Sprite tile fetches occur during cycles 257-320:
+        // - 4 memory accesses per sprite (8 sprites max = 32 actual fetches)
+        // - Each memory access takes 2 PPU cycles, so we do 2 accesses per cycle
+        // - Pattern: garbage nametable, garbage nametable, tile bitmap low, tile bitmap high
+        //
+        // These fetches trigger A12 edges for sprites at pattern table 0x1000.
+        // We access the PPU memory to trigger A12 edge detection via the mapper delegate.
+
+        // Calculate which sprite access we're on (0-31, representing 8 sprites × 4 accesses)
+        val spriteAccessIndex = cycle - 257
+
+        if (spriteAccessIndex < 32) {
+            // Determine which sprite and which access type
+            val spriteIndex = spriteAccessIndex / 4
+            val accessType = spriteAccessIndex % 4
+
+            // Get sprite data if available
+            val oam = memory.ppuAddressedMemory.objectAttributeMemory
+            if (spriteIndex < 8) {
+                val spriteData = oam.getSprite(spriteIndex)
+                val spriteSize = memory.ppuAddressedMemory.controller.spriteSize()
+                val spriteHeight = if (spriteSize == Control.SpriteSize.X_8_16) 16 else 8
+                val patternBase = memory.ppuAddressedMemory.controller.spritePatternTableAddress()
+
+                // For each sprite, do 4 fetches (2 cycles each = 8 cycles total per sprite)
+                // Access types: 0=garbage NT, 1=garbage NT, 2=pattern low, 3=pattern high
+                when (accessType) {
+                    2, 3 -> {
+                        // Tile pattern fetch - access PPU memory which triggers A12 for 0x1000+
+                        val tileRow = 0  // dummy row for garbage fetches
+                        val tileAddr = patternBase + (spriteData.tileIndex.toUnsignedInt() * 16) + tileRow
+                        // Trigger A12 by reading from pattern table
+                        memory.ppuAddressedMemory.ppuInternalMemory[tileAddr]
+                        if (accessType == 3) {
+                            // High byte is 8 bytes after low byte
+                            memory.ppuAddressedMemory.ppuInternalMemory[tileAddr + 8]
+                        }
+                    }
+                    else -> {
+                        // Garbage nametable fetch - these would be at nametable addresses
+                        // but we just need to access something to keep timing
+                        memory.ppuAddressedMemory.ppuInternalMemory[0x2000]
+                    }
+                }
+            }
+        }
     }
 
     /**
