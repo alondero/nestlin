@@ -16,7 +16,7 @@ object Mesen2StateCapturer {
 
     fun getMesen2Path(): Path {
         val path = System.getenv(ENV_VAR) ?: System.getProperty("mesen2.path")
-        return path?.let { Paths.get(it) } ?: Paths.get("tools/Mesen/Mesen.exe")
+        return path?.let { Paths.get(it) } ?: Paths.get("tools/Mesen2/Mesen.exe")
     }
 
     fun isMesen2Available(): Boolean = getMesen2Path().toFile().exists()
@@ -53,17 +53,18 @@ object Mesen2StateCapturer {
                 )
             }
 
-            // Read the state JSON from script data folder
-            val stateJsonPath = guessScriptDataFolder().resolve("state.json")
-            if (Files.exists(stateJsonPath)) {
-                val json = Files.readString(stateJsonPath)
-                return parseMesen2State(json, romPath.fileName.toString(), frameNumber)
-            } else {
-                throw Mesen2ScreenshotException(
-                    "Mesen2 script ran but state not found at $stateJsonPath. " +
-                    "I/O access may not be enabled."
+            // Read the state JSON - Lua script tries session folder and mesen_dir
+            val possiblePaths = listOf(
+                guessScriptDataFolder().resolve("state.json"),
+                mesenPath.parent.resolve("mesen_state.json"),
+                Paths.get("test_state.json")
+            )
+            val stateJsonPath = possiblePaths.firstOrNull { Files.exists(it) }
+                ?: throw Mesen2ScreenshotException(
+                    "Mesen2 script ran but state not found. Tried: ${possiblePaths.joinToString { it.toString() }}"
                 )
-            }
+            val json = Files.readString(stateJsonPath)
+            return parseMesen2State(json, romPath.fileName.toString(), frameNumber)
         } finally {
             // Cleanup temp script directory
             scriptPath.toFile().delete()
@@ -72,7 +73,8 @@ object Mesen2StateCapturer {
     }
 
     private fun generateCaptureScript(targetFrame: Int): String {
-        // Use emu.addEventCallback for endFrame, then dump state via emu.getState() and emu.read()
+        // Use emu.getState() and write what we can get to a file
+        // os.exit() instead of emu.stop() since emu.stop() hangs in Mesen2
         val luaScript = """
 local targetFrame = $targetFrame
 local frame = 0
@@ -82,102 +84,54 @@ local function writeState()
     local cpu = state.cpu
     local ppu = state.ppu
 
-    -- Build state table as JSON-compatible structure
+    -- Simple flat structure - no nesting to avoid nil issues
     local snapshot = {
-        cpu = {
-            pc = cpu.pc,
-            a = cpu.a,
-            x = cpu.x,
-            y = cpu.y,
-            sp = cpu.sp,
-            status = cpu.status,
-            cycleCount = cpu.cycleCount
-        },
-        ppu = {
-            cycle = ppu.cycle,
-            scanline = ppu.scanline,
-            frameCount = ppu.frameCount,
-            control = emu.read(0x2000, emu.memType.cpuDebug),
-            mask = emu.read(0x2001, emu.memType.cpuDebug),
-            status = emu.read(0x2002, emu.memType.cpuDebug)
-        },
-        cpuRam = {},
-        ppuRegisters = {
-            controller = emu.read(0x2000, emu.memType.cpuDebug),
-            mask = emu.read(0x2001, emu.memType.cpuDebug),
-            status = emu.read(0x2002, emu.memType.cpuDebug),
-            oamAddress = emu.read(0x2003, emu.memType.cpuDebug),
-            oamData = emu.read(0x2004, emu.memType.cpuDebug),
-            scroll = emu.read(0x2005, emu.memType.cpuDebug),
-            address = emu.read(0x2006, emu.memType.cpuDebug),
-            data = emu.read(0x2007, emu.memType.cpuDebug)
-        },
-        oam = {},
-        paletteRam = {}
+        pc = cpu.pc,
+        a = cpu.a,
+        x = cpu.x,
+        y = cpu.y,
+        sp = cpu.sp,
+        status = cpu.status,
+        cycleCount = cpu.cycleCount,
+        scanline = ppu.scanline,
+        ppuCycle = ppu.cycle,
+        ppuFrameCount = ppu.frameCount,
+        control = ppu.control,
+        mask = ppu.mask,
+        ppuStatus = ppu.status
     }
 
-    -- Read 2KB CPU RAM
-    for i = 0, 0x7FF do
-        snapshot.cpuRam[i] = emu.read(i, emu.memType.cpuDebug)
-    end
+    -- Encode as simple JSON
+    local json = "{" ..
+        "\"pc\":" .. cpu.pc .. "," ..
+        "\"a\":" .. cpu.a .. "," ..
+        "\"x\":" .. cpu.x .. "," ..
+        "\"y\":" .. cpu.y .. "," ..
+        "\"sp\":" .. cpu.sp .. "," ..
+        "\"status\":" .. cpu.status .. "," ..
+        "\"cycleCount\":" .. cpu.cycleCount .. "," ..
+        "\"scanline\":" .. ppu.scanline .. "," ..
+        "\"ppuCycle\":" .. ppu.cycle .. "," ..
+        "\"ppuFrameCount\":" .. ppu.frameCount .. "," ..
+        "\"control\":" .. (ppu.control or 0) .. "," ..
+        "\"mask\":" .. (ppu.mask or 0) .. "," ..
+        "\"ppuStatus\":" .. (ppu.status or 0) ..
+    "}"
 
-    -- Read 256B OAM
-    for i = 0, 0xFF do
-        snapshot.oam[i] = emu.read(i, emu.memType.oam)
-    end
-
-    -- Read 32B Palette RAM
-    for i = 0, 0x1F do
-        snapshot.paletteRam[i] = emu.read(0x3F00 + i, emu.memType.palette)
-    end
-
-    -- Write JSON manually (simple serialization)
-    local json = encodeJSON(snapshot)
-    local f = io.open(emu.getScriptDataFolder() .. "state.json", "w")
-    if f then
-        f:write(json)
-        f:close()
-    end
-end
-
--- Simple JSON encoder for tables with only simple types
-function encodeJSON(obj)
-    if type(obj) == "table" then
-        local keys = {}
-        for k, v in pairs(obj) do
-            table.insert(keys, k)
+    -- Try to write to session folder (most likely to work)
+    local scriptDir = emu.getScriptDataFolder()
+    -- Also try relative to Mesen2's directory (mesenDir)
+    local testPaths = {
+        scriptDir .. "state.json",
+        "mesen_state.json"
+    }
+    for i, p in ipairs(testPaths) do
+        local f = io.open(p, "w")
+        if f then
+            f:write(json)
+            f:close()
+            break
         end
-        table.sort(keys, function(a, b)
-            if type(a) == "number" and type(b) == "number" then
-                return a < b
-            elseif type(a) == "string" and type(b) == "string" then
-                return a < b
-            end
-            return tostring(a) < tostring(b)
-        end)
-
-        local parts = {}
-        for _, k in ipairs(keys) do
-            local v = obj[k]
-            if type(k) == "number" then
-                table.insert(parts, string.format("%d:%s", k, encodeJSON(v)))
-            else
-                table.insert(parts, string.format("\"%s\":%s", k, encodeJSON(v)))
-            end
-        end
-        return "{" .. table.concat(parts, ",") .. "}"
-    elseif type(obj) == "string" then
-        return "\"" .. obj .. "\""
-    elseif type(obj) == "number" then
-        if obj == math.floor(obj) then
-            return string.format("%d", obj)
-        else
-            return string.format("%.10g", obj)
-        end
-    elseif type(obj) == "boolean" then
-        return obj and "true" or "false"
-    else
-        return "null"
     end
 end
 
@@ -185,7 +139,7 @@ function onEndFrame()
     frame = frame + 1
     if frame == targetFrame then
         writeState()
-        emu.stop()
+        os.exit()
     end
 end
 
@@ -196,6 +150,8 @@ emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
 
     private fun guessScriptDataFolder(): Path {
         val mesenPath = getMesen2Path()
+        // Mesen2 creates a session folder: <mesen_dir>/LuaScriptData/<script_name>/
+        // where <script_name> is derived from the script filename
         return mesenPath.parent.resolve("LuaScriptData").resolve("state_capture")
     }
 
@@ -216,6 +172,40 @@ emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
         )
     }
 
+    private data class Mesen2CartState(
+        val selectedChrPages: IntArray?,
+        val selectedPrgPages: IntArray?,
+        val prgRomSize: Int,
+        val chrRomSize: Int
+    )
+
+    private fun parseCartState(json: String): Mesen2CartState {
+        val chrPages = parseIntArrayFromTable(json, "selectedChrPages", 8)
+        val prgPages = parseIntArrayFromTable(json, "selectedPrgPages", 4)
+        val prgSize = parseInt(json, "prgRomSize")
+        val chrSize = parseInt(json, "chrRomSize")
+        return Mesen2CartState(chrPages, prgPages, prgSize, chrSize)
+    }
+
+    private fun parseIntArrayFromTable(json: String, key: String, size: Int): IntArray? {
+        // Look for "key":{n0:v0,n1:v1,...}
+        val pattern = "\"$key\":\\{([0-9:,]*)\\}"
+        val regex = Regex(pattern)
+        val match = regex.find(json) ?: return null
+        val arr = IntArray(size)
+        val content = match.groupValues[1]
+        val pairs = content.split(",")
+        for (pair in pairs) {
+            if (pair.contains(":")) {
+                val parts = pair.split(":")
+                val idx = parts[0].toIntOrNull() ?: continue
+                val value = parts[1].toIntOrNull() ?: continue
+                if (idx in 0 until size) arr[idx] = value
+            }
+        }
+        return arr
+    }
+
     private fun parseCpuState(json: String): CpuState {
         return CpuState(
             pc = parseInt(json, "pc"),
@@ -230,26 +220,26 @@ emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
 
     private fun parsePpuState(json: String): PpuState {
         return PpuState(
-            cycle = parseInt(json, "cycle"),
+            cycle = parseInt(json, "ppuCycle"),
             scanline = parseInt(json, "scanline"),
-            frameCount = parseInt(json, "frameCount"),
+            frameCount = parseInt(json, "ppuFrameCount"),
             control = parseInt(json, "control"),
             mask = parseInt(json, "mask"),
-            status = parseInt(json, "status"),
-            vRamAddress = 0  // Will be computed from scroll if needed
+            status = parseInt(json, "ppuStatus"),
+            vRamAddress = 0
         )
     }
 
     private fun parsePpuRegisters(json: String): PpuRegisters {
         return PpuRegisters(
-            controller = parseInt(json, "controller"),
+            controller = parseInt(json, "control"),
             mask = parseInt(json, "mask"),
-            status = parseInt(json, "status"),
-            oamAddress = parseInt(json, "oamAddress"),
-            oamData = parseInt(json, "oamData"),
-            scroll = parseInt(json, "scroll"),
-            address = parseInt(json, "address"),
-            data = parseInt(json, "data")
+            status = parseInt(json, "ppuStatus"),
+            oamAddress = 0,
+            oamData = 0,
+            scroll = 0,
+            address = 0,
+            data = 0
         )
     }
 
