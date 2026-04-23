@@ -45,10 +45,6 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
     private var irqCounter = 0
     private var irqPending = false
 
-    // Track A12 for IRQ - set during PPU cycle when address bit 12 goes high
-    // The actual toggle detection happens in the PPU, but we need a way to signal it
-    private var a12ToggleCount = 0
-
     // Mirroring override from $A000 register (bit 0: 0=vertical, 1=horizontal)
     private var mirroringOverride: Mapper.MirroringMode? = null
 
@@ -131,8 +127,8 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
                 if ((address and 0x01) == 0) {
                     irqLatch = valueInt
                 } else {
+                    // Reload flag is set; actual counter reload happens at next A12 rising edge
                     irqReload = true
-                    irqCounter = valueInt
                 }
             }
             0xE000 -> {
@@ -263,7 +259,7 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
                 "irqEnabled" to irqEnabled,
                 "irqCounter" to irqCounter,
                 "irqPending" to irqPending,
-                "a12ToggleCount" to a12ToggleCount
+                "a12ToggleCount" to 0
             ),
             chrRam = chrRam?.copyOf()
         )
