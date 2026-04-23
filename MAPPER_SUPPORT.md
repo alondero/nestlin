@@ -55,6 +55,8 @@
   - CHR banking (normal mode): R0-R1 = 2KB at $0000-$0FFF, R2-R5 = four 1KB at $1000-$1FFF
   - CHR banking (inverted mode): R2-R5 = four 1KB at $0000-$0FFF, R0-R1 = 2KB at $1000-$1FFF
   - Scanline IRQ via PPU A12 rising edge detection (wired 2026-04-17)
+- **Fixes Applied (2026-04-23):**
+  - IRQ reload at $C001: Removed immediate `irqCounter = valueInt`; reload now correctly defers to next A12 rising edge per NESdev spec
 - **Fixes Applied (2026-04-17):**
   - PRG banking: Fixed inverted prgMode branches per NESdev MMC3 spec
   - CHR banking: Fixed R0/R1 bank calculation per NESdev spec
