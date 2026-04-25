@@ -41,8 +41,26 @@ class Cpu(var memory: Memory)
 
     private var instructionCount = 0
     private var traceAfterVBlank = false
+    private var instructionTrace: MutableList<Pair<Int, Int>>? = null  // (PC, opcode) pairs
+    private var maxTraceInstructions = 0
 
     fun getInstructionCount() = instructionCount
+
+    /**
+     * Enable instruction tracing for debugging.
+     * @param maxInstructions Stop tracing after this many instructions (0 = unlimited)
+     * @return List that will be populated with (pc, opcode) pairs
+     */
+    fun enableInstructionTrace(maxInstructions: Int = 0): MutableList<Pair<Int, Int>> {
+        instructionTrace = mutableListOf()
+        maxTraceInstructions = maxInstructions
+        return instructionTrace!!
+    }
+
+    fun disableInstructionTrace() {
+        instructionTrace = null
+        maxTraceInstructions = 0
+    }
 
     fun tick() {
         if (readyForNextInstruction()) {
@@ -64,6 +82,14 @@ class Cpu(var memory: Memory)
                 println("[CPU] PC=$${String.format("%04X", initialPC.toInt())}, opcode=$${String.format("%02X", opcodeVal)}")
             }
             instructionCount++
+
+            // Record instruction trace if enabled
+            instructionTrace?.let { trace ->
+                if (maxTraceInstructions <= 0 || trace.size < maxTraceInstructions) {
+                    trace.add(Pair(initialPC.toUnsignedInt(), opcodeVal))
+                }
+            }
+
             opcodes[opcodeVal]?.also {
                 logger?.cpuTick(initialPC, opcodeVal, this)
                 it.op(this)

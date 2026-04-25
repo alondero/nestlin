@@ -329,18 +329,36 @@ class PpuInternalMemory {
 
     // A12 edge detection for MMC3 scanline IRQ
     private var lastA12High: Boolean = false
+    // Tracks how many M2 (CPU) cycles A12 has been continuously low
+    // Real MMC3 requires A12 to be low for 3+ M2 cycles before accepting a rising edge
+    private var m2CyclesSinceA12Low: Int = 0
     var a12EdgeListener: ((Boolean) -> Unit)? = null
 
     private inline fun emitA12(addr: Int) {
         val high = (addr and 0x1000) != 0
         if (high != lastA12High) {
-            a12EdgeListener?.invoke(high)
+            if (!high) {
+                // A12 transitioned to low - start counting M2 cycles
+                m2CyclesSinceA12Low = 0
+            } else {
+                // A12 transitioned to high (rising edge) - only fire if A12 was low for 3+ M2 cycles
+                // Per NESdev wiki: "triggered on a rising edge after the line has remained low for
+                // three falling edges of M2"
+                if (m2CyclesSinceA12Low >= 3) {
+                    a12EdgeListener?.invoke(true)
+                }
+                m2CyclesSinceA12Low = 0
+            }
             lastA12High = high
+        }
+        if (!high) {
+            m2CyclesSinceA12Low++
         }
     }
 
     fun resetA12State() {
         lastA12High = false
+        m2CyclesSinceA12Low = 0
     }
 
     enum class Mirroring {
