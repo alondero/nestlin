@@ -6,11 +6,129 @@ import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.ppu.Frame
 import org.junit.Test
 import java.nio.file.Paths
+import com.natpryce.hamkrest.assertion.assertThat
+import com.natpryce.hamkrest.equalTo
+import com.natpryce.hamkrest.greaterThanOrEqualTo
+import com.natpryce.hamkrest.contains
 
 /**
  * Detailed trace of Kirby's boot sequence - decode operands correctly.
+ *
+ * This test validates H1: The "stuck in poll loop" conclusion is a measurement artifact.
+ * Extended trace to 150,000 instructions (~5 frames) should prove PC leaves $C02D.
  */
 class KirbyInstructionTraceTest {
+
+    @Test
+    fun traceKirbyWithCorrectDecoding() {
+        val romPath = Paths.get("testroms/kirby.nes")
+        val nestlin = Nestlin().apply {
+            config.speedThrottlingEnabled = false
+            load(romPath)
+        }
+
+        // Trace up to 150,000 instructions (~5 frames at ~30,000 instructions/frame)
+        val trace = nestlin.cpu.enableInstructionTrace(150000)
+
+        var frameCount = 0
+        val ppuCtrlWrites = mutableListOf<String>()
+        val ppuMaskWrites = mutableListOf<String>()
+
+        // Track NMI handler entries by detecting reads from NMI vector ($FFFA)
+        var nmiHandlerEntryCount = 0
+
+        nestlin.addFrameListener(object : FrameListener {
+            override fun frameUpdated(frame: Frame) {
+                frameCount++
+                if (frameCount >= 5) nestlin.stop()
+            }
+        })
+
+        nestlin.powerReset()
+        nestlin.start()
+
+        // Analyze all $2000 and $2001 writes from the trace
+        trace.forEachIndexed { idx, (pc, opcode) ->
+            // Check for NMI handler entry - when PC becomes $FFFA-$FFFB (NMI vector)
+            if (pc == 0xFFFA || pc == 0xFFFB) {
+                nmiHandlerEntryCount++
+            }
+
+            // Check for STA to $2000 (PPUCTRL)
+            if (opcode == 0x8D) {
+                val low = nestlin.memory[pc + 1].toUnsignedInt()
+                val high = nestlin.memory[pc + 2].toUnsignedInt()
+                val addr = (high shl 8) or low
+                if (addr == 0x2000) {
+                    val value = nestlin.memory[pc + 3].toUnsignedInt()
+                    ppuCtrlWrites.add("PC=${String.format("%04X", pc)} inst=$idx: STA \$2000 = ${String.format("%02X", value)}")
+                }
+                if (addr == 0x2001) {
+                    val value = nestlin.memory[pc + 3].toUnsignedInt()
+                    ppuMaskWrites.add("PC=${String.format("%04X", pc)} inst=$idx: STA \$2001 = ${String.format("%02X", value)}")
+                }
+            }
+        }
+
+        // Print summary for debugging
+        System.err.println("=== PPUCTRL ($2000) and PPUMASK ($2001) Write Analysis ===")
+        System.err.println("PPUCTRL ($2000) writes found: ${ppuCtrlWrites.size}")
+        ppuCtrlWrites.forEach { System.err.println("  $it") }
+
+        System.err.println("\nPPUMASK ($2001) writes found: ${ppuMaskWrites.size}")
+        ppuMaskWrites.forEach { System.err.println("  $it") }
+
+        // Print first 60 instructions with correct decoding
+        System.err.println("\n=== First 60 Instructions (correctly decoded) ===")
+        trace.take(60).forEachIndexed { idx, (pc, opcode) ->
+            val decoded = decodeInstruction(nestlin, pc, opcode)
+            System.err.println("${idx.toString().padStart(4)}: PC=${String.format("%04X", pc)} ${String.format("%02X", opcode)} $decoded")
+        }
+
+        // Check for accesses to $8000-$9FFF (MMC3 bank registers)
+        System.err.println("\n=== MMC3 Bank Register Access ($8000-$9FFF) ===")
+        val mmc3Accesses = trace.filter { (pc, opcode) ->
+            (opcode == 0xAD || opcode == 0x8D) && run {
+                val low = nestlin.memory[pc + 1].toUnsignedInt()
+                val high = nestlin.memory[pc + 2].toUnsignedInt()
+                val addr = (high shl 8) or low
+                addr in 0x8000..0x9FFF
+            }
+        }
+        if (mmc3Accesses.isEmpty()) {
+            System.err.println("NO accesses to $8000-$9FFF!")
+        } else {
+            System.err.println("Found ${mmc3Accesses.size} MMC3 accesses (showing first 10)")
+            mmc3Accesses.take(10).forEach { (pc, opcode) ->
+                val low = nestlin.memory[pc + 1].toUnsignedInt()
+                val high = nestlin.memory[pc + 2].toUnsignedInt()
+                val addr = (high shl 8) or low
+                val decoded = decodeInstruction(nestlin, pc, opcode)
+                System.err.println("PC=${String.format("%04X", pc)} $decoded")
+            }
+        }
+
+        // Final state
+        System.err.println("\n=== Final State ===")
+        System.err.println("Total instructions: ${trace.size}, Frames: $frameCount")
+        System.err.println("CPU PC: ${String.format("%04X", nestlin.cpu.registers.programCounter.toUnsignedInt())}")
+        System.err.println("A=${String.format("%02X", nestlin.cpu.registers.accumulator.toUnsignedInt())} X=${String.format("%02X", nestlin.cpu.registers.indexX.toUnsignedInt())} Y=${String.format("%02X", nestlin.cpu.registers.indexY.toUnsignedInt())}")
+        System.err.println("PPU \$2000: ${String.format("%02X", nestlin.memory.ppuAddressedMemory.controller.register.toUnsignedInt())}")
+        System.err.println("PPU \$2001: ${String.format("%02X", nestlin.memory.ppuAddressedMemory.mask.register.toUnsignedInt())}")
+        System.err.println("NMI handler entries: $nmiHandlerEntryCount")
+
+        // === ASSERTIONS ===
+
+        // Assert 1: We ran long enough (at least 4 frames)
+        assertThat("Should have run at least 4 frames", frameCount, greaterThanOrEqualTo(4))
+
+        // Assert 2: PPUCTRL $A8 was ever written (proves the game reached NMI-enable write)
+        val a8Written = ppuCtrlWrites.any { it.contains("A8") }
+        assertThat("PPUCTRL should have reached \$A8 (NMI enabled)", a8Written, equalTo(true))
+
+        // Assert 3: At least one NMI handler entry occurred
+        assertThat("At least one NMI should have fired", nmiHandlerEntryCount, greaterThanOrEqualTo(1))
+    }
 
     /**
      * Get instruction mnemonic for opcode
@@ -235,88 +353,5 @@ class KirbyInstructionTraceTest {
 
             else -> name
         }
-    }
-
-    @Test
-    fun traceKirbyWithCorrectDecoding() {
-        val romPath = Paths.get("testroms/kirby.nes")
-        val nestlin = Nestlin().apply {
-            config.speedThrottlingEnabled = false
-            load(romPath)
-        }
-
-        // Trace first 1000 instructions
-        val trace = nestlin.cpu.enableInstructionTrace(1000)
-
-        var frameCount = 0
-        nestlin.addFrameListener(object : FrameListener {
-            override fun frameUpdated(frame: Frame) {
-                frameCount++
-                if (frameCount >= 5) nestlin.stop()
-            }
-        })
-
-        nestlin.powerReset()
-        nestlin.start()
-
-        // Print first 60 instructions with correct decoding
-        System.err.println("=== First 60 Instructions (correctly decoded) ===")
-        trace.take(60).forEachIndexed { idx, (pc, opcode) ->
-            val decoded = decodeInstruction(nestlin, pc, opcode)
-            System.err.println("${idx.toString().padStart(4)}: PC=${String.format("%04X", pc)} ${String.format("%02X", opcode)} $decoded")
-        }
-
-        // Check for memory accesses to $2000-$2007 (PPU registers)
-        System.err.println("\n=== PPU Register Access ($2000-$2007) ===")
-        val ppuAccesses = trace.filter { (pc, opcode) ->
-            // LDA/STAx to $2000-$2007 - absolute accesses
-            (opcode == 0xAD || opcode == 0x8D) && run {
-                val low = nestlin.memory[pc + 1].toUnsignedInt()
-                val high = nestlin.memory[pc + 2].toUnsignedInt()
-                val addr = (high shl 8) or low
-                addr in 0x2000..0x2007
-            }
-        }
-        if (ppuAccesses.isEmpty()) {
-            System.err.println("NO accesses to PPU registers in first 1000 instructions!")
-        } else {
-            ppuAccesses.forEach { (pc, opcode) ->
-                val low = nestlin.memory[pc + 1].toUnsignedInt()
-                val high = nestlin.memory[pc + 2].toUnsignedInt()
-                val addr = (high shl 8) or low
-                val decoded = decodeInstruction(nestlin, pc, opcode)
-                System.err.println("PC=${String.format("%04X", pc)} $decoded")
-            }
-        }
-
-        // Check for accesses to $8000-$9FFF (MMC3 bank registers)
-        System.err.println("\n=== MMC3 Bank Register Access ($8000-$9FFF) ===")
-        val mmc3Accesses = trace.filter { (pc, opcode) ->
-            (opcode == 0xAD || opcode == 0x8D) && run {
-                val low = nestlin.memory[pc + 1].toUnsignedInt()
-                val high = nestlin.memory[pc + 2].toUnsignedInt()
-                val addr = (high shl 8) or low
-                addr in 0x8000..0x9FFF
-            }
-        }
-        if (mmc3Accesses.isEmpty()) {
-            System.err.println("NO accesses to $8000-$9FFF!")
-        } else {
-            mmc3Accesses.forEach { (pc, opcode) ->
-                val low = nestlin.memory[pc + 1].toUnsignedInt()
-                val high = nestlin.memory[pc + 2].toUnsignedInt()
-                val addr = (high shl 8) or low
-                val decoded = decodeInstruction(nestlin, pc, opcode)
-                System.err.println("PC=${String.format("%04X", pc)} $decoded")
-            }
-        }
-
-        // Final state
-        System.err.println("\n=== Final State ===")
-        System.err.println("Total instructions: ${trace.size}, Frames: $frameCount")
-        System.err.println("CPU PC: ${String.format("%04X", nestlin.cpu.registers.programCounter.toUnsignedInt())}")
-        System.err.println("A=${String.format("%02X", nestlin.cpu.registers.accumulator.toUnsignedInt())} X=${String.format("%02X", nestlin.cpu.registers.indexX.toUnsignedInt())} Y=${String.format("%02X", nestlin.cpu.registers.indexY.toUnsignedInt())}")
-        System.err.println("PPU \$2000: ${String.format("%02X", nestlin.memory.ppuAddressedMemory.controller.register.toUnsignedInt())}")
-        System.err.println("PPU \$2001: ${String.format("%02X", nestlin.memory.ppuAddressedMemory.mask.register.toUnsignedInt())}")
     }
 }

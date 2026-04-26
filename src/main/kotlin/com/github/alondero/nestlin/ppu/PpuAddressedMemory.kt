@@ -111,8 +111,14 @@ class PpuAddressedMemory {
 //        println("Setting PPU Addressed data ${addr.toHexString()}, with ${value.toHexString()}")
         when (addr) {
             0 -> {
+                val previousNmiEnabled = controller.generateNmi()
                 controller.register = value
                 tempVRamAddress.updateNameTable(value.toUnsignedInt() and 0x03)
+                // Edge-triggered NMI: if bit-7 transitioned 0→1 while VBlank was already set,
+                // re-trigger nmiOccurred so checkAndHandleNmi() fires on next CPU tick
+                if (!previousNmiEnabled && controller.generateNmi() && status.vBlankStarted()) {
+                    nmiOccurred = true
+                }
             }
             1 -> {
                 mask.register = value
