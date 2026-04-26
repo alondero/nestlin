@@ -59,6 +59,18 @@ An NES emulator written in Kotlin for learning purposes. The emulator simulates 
 - **GoldenLogTest.kt** - Validates CPU execution against nestest.log golden output
 - **testroms/** - Test ROMs (nestest.nes for CPU validation)
 
+### Developer Tools
+- **dump_analyzer.py** - Parse 64KB NES CPU memory dumps (`.dmp` files) and query memory regions, registers, I/O state. Run from project root:
+  ```python
+  from dump_analyzer import parse_dump, analyze_multiple_dumps
+  a = parse_dump("kirbyframe3-cpumem.dmp")
+  a.cpu.summary()       # PC, SP, A, X, Y, P registers
+  a.ppu.as_dict()       # PPU registers $2000-$2007
+  a.apu.summary()       # APU registers $4000-$401F
+  a.hexdump_region(0x6000, 0x6100)  # hex view of any address range
+  ```
+  Memory map: `$0000-$07FF` RAM, `$2000-$2007` PPU, `$4000-$401F` APU/I/O, `$8000-$FFFF` PRG ROM.
+
 ## NES Architecture Essentials
 
 ### Timing

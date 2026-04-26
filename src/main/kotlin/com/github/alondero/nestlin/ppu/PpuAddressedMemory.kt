@@ -27,9 +27,28 @@ class PpuAddressedMemory {
     var vBlankReadCounter = 0
     var lastVBlankReadFrame = -1
 
+    // Debug: log every $2002 read with frame number
+    var debugLogStatusReads = false
+    var currentFrameForDebug = 0
+    data class StatusRead(val frame: Int, val value: Int, val bit7: Boolean)
+    val statusReadLog = mutableListOf<StatusRead>()
+
     fun setVBlank() {
         status.register = status.register.setBit(7)
         nmiOccurred = true
+    }
+
+    fun enableDebugLogging() {
+        debugLogStatusReads = true
+        statusReadLog.clear()
+    }
+
+    fun disableDebugLogging() {
+        debugLogStatusReads = false
+    }
+
+    fun setDebugFrame(frame: Int) {
+        currentFrameForDebug = frame
     }
 
     fun writeOamData(value: Byte) {
@@ -61,6 +80,11 @@ class PpuAddressedMemory {
                 // Reading $2002 also clears the NMI flag?
                 // NESdev: "Reading $2002... will also acknowledge the interrupt"
                 nmiOccurred = false
+                // Debug logging
+                if (debugLogStatusReads) {
+                    val bit7 = (value.toUnsignedInt() and 0x80) != 0
+                    statusReadLog.add(StatusRead(currentFrameForDebug, value.toUnsignedInt(), bit7))
+                }
                 value
             }
             3 -> oamAddress
