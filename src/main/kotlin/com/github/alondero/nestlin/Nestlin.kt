@@ -28,8 +28,12 @@ class Nestlin {
     fun getController1() = memory.controller1
 
     fun load(romPath: Path) {
-        cpu.currentGame = romPath.load()?.let(::GamePak)
+        val data = romPath.load()
+        val displayName = romPath.fileName.toString().removeSuffix(".nes").removeSuffix(".7z")
+        cpu.currentGame = data?.let { GamePak(it, displayName) }
     }
+
+    fun currentGameName(): String = cpu.currentGame?.name ?: "No Game Loaded"
 
     fun addFrameListener(listener: FrameListener) {
         ppu.addFrameListener(listener)

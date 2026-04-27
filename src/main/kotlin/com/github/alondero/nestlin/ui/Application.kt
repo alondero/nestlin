@@ -77,7 +77,7 @@ class NestlinApplication : FrameListener, App() {
 
     override fun start(stage: Stage) {
         this.stage = stage.apply {
-            title = "Nestlin - ${DISPLAY_SCALE}x Magnification"
+            title = "Nestlin"
 
             // Create menu bar
             val menuBar = javafx.scene.control.MenuBar()
@@ -217,6 +217,7 @@ class NestlinApplication : FrameListener, App() {
                 currentRomPath = Paths.get(romPath)
                 load(currentRomPath!!)
                 powerReset()
+                Platform.runLater { updateTitle() }
                 startEmulation()
             }
         }.also { emulationThread = it }
@@ -271,8 +272,14 @@ class NestlinApplication : FrameListener, App() {
             currentRomPath = romPath
             nestlin.load(romPath)
             nestlin.powerReset()
+            updateTitle()
             startEmulation()
         }
+    }
+
+    private fun updateTitle() {
+        val gameName = nestlin.currentGameName()
+        stage.title = if (gameName.isNotEmpty()) "Nestlin - $gameName" else "Nestlin"
     }
 
     private fun handleHardReset() {
@@ -286,6 +293,7 @@ class NestlinApplication : FrameListener, App() {
         stopEmulation()
         nestlin.load(currentRomPath!!)
         nestlin.powerReset()
+        updateTitle()
         startEmulation()
     }
 
