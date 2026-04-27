@@ -30,11 +30,12 @@ An NES emulator written in Kotlin for learning purposes. The emulator simulates 
 ### Core Components
 - **Nestlin.kt** - Main emulator orchestration (CPU:PPU:APU tick ratio is 1:3:1)
 - **cpu/Cpu.kt** - 6502 CPU implementation with registers and processor status
-- **cpu/Opcodes.kt** - 6502 opcode implementations (151 opcodes including unofficial, 604 lines)
+- **cpu/Opcodes.kt** - 6502 opcode implementations (151 opcodes including unofficial, 604 pages)
 - **ppu/Ppu.kt** - Picture Processing Unit with full background/sprite rendering (~590 lines)
 - **ppu/PpuAddressedMemory.kt** - PPU registers ($2000-$2007) and VRAM addressing
 - **Memory.kt** - CPU memory map with proper mirroring
 - **gamepak/GamePak.kt** - ROM loading and iNES format parsing
+- **gamepak/Header.kt** - iNES header parsing including NO-INTRO ROM name detection
 - **Apu.kt** - Audio Processing Unit with 5 channels (Pulse×2, Triangle, Noise, DMC)
 
 ### Audio Channels (apu/)
@@ -137,7 +138,7 @@ Kotlin doesn't have unsigned primitives (pre-1.3), so use extension functions:
 
 ## Current Implementation Status
 
-### ✅ Working
+### Working
 - CPU: 151 opcodes implemented (including unofficial opcodes) with proper addressing modes
 - Memory system with correct mirroring and open-bus behavior
 - ROM loading (iNES format, mapper 0)
@@ -149,8 +150,9 @@ Kotlin doesn't have unsigned primitives (pre-1.3), so use extension functions:
 - **Frame rate throttling**: Configurable speed throttling with toggle
 - **Screenshot capture**: PNG screenshot saving with timestamp
 - **File menu**: Load Game, Hard Reset Game, and Exit via UI menu
+- **Window title**: Displays game name (NO-INTRO field or filename) or "Nestlin" when no game loaded
 
-### ⚠️ Incomplete / Known Issues
+### Incomplete / Known Issues
 - **Only mapper 0**: No support for MMC1, MMC3, or other mappers
 - **CPU cycle timing**: Some opcodes may not have exact cycle counts
 - **JInput controller support**: Native libraries need platform-specific setup
@@ -236,6 +238,12 @@ When adding significant features (like PPU rendering):
 - RAM mirrors every $0800 bytes
 - PPU registers mirror every 8 bytes
 - Nametables have complex mirroring (depends on cartridge)
+
+### iNES ROM Format
+- Standard iNES 1.0 ROMs: 16-byte header, no embedded ROM name
+- NO-INTRO format: 16-byte header + 128-byte ROM name field at offset 0x10 (only when byte 7 has bit 4/$10 set)
+- ROM files smaller than 144 bytes cannot have a NO-INTRO name field
+- Display name fallback uses filename (without .nes/.7z extension) when NO-INTRO name not present
 
 ## Useful References
 - [NESdev Wiki](https://www.nesdev.org/wiki/) - Comprehensive NES documentation
