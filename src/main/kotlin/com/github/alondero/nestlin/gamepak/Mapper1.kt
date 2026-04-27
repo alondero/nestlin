@@ -29,7 +29,15 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     private val chrRom = gamePak.chrRom
     private val prgBankCount = programRom.size / 0x4000
 
+    // PRG RAM ($6000-$7FFF)
+    private val prgRam = ByteArray(0x2000)
+
     override fun cpuRead(address: Int): Byte {
+        if (address in 0x6000..0x7FFF) {
+            return prgRam[address - 0x6000]
+        }
+        if (address < 0x8000) return 0
+        
         val prgMode = controlReg.toUnsignedInt() shr 2 and 0x03
         val bank = when (prgMode) {
             0, 1 -> {
@@ -63,6 +71,12 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     }
 
     override fun cpuWrite(address: Int, value: Byte) {
+        if (address in 0x6000..0x7FFF) {
+            prgRam[address - 0x6000] = value
+            return
+        }
+        if (address < 0x8000) return
+
         // MMC1 uses a 5-bit shift register protocol
         // Bit 7 of the value controls whether this is a "reset" write
         if (value.toUnsignedInt() and 0x80 != 0) {
@@ -129,5 +143,24 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
             2 -> Mapper.MirroringMode.VERTICAL
             else -> Mapper.MirroringMode.HORIZONTAL
         }
+    }
+
+    override fun snapshot(): MapperStateSnapshot {
+        return MapperStateSnapshot(
+            mapperId = 1,
+            type = "MMC1",
+            banks = mapOf(
+                "prgBank" to prgBank,
+                "chrBank0" to chrBank0,
+                "chrBank1" to chrBank1
+            ),
+            registers = mapOf(
+                "controlReg" to controlReg.toUnsignedInt(),
+                "shiftReg" to shiftReg
+            ),
+            irqState = null,
+            chrRam = chrRam?.copyOf(),
+            prgRam = prgRam.copyOf()
+        )
     }
 }

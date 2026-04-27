@@ -17,6 +17,7 @@
   - PRG mode 2: $8000-$BFFF fixed to bank 0, $C000-$FFFF switchable
   - PRG mode 0/1: 32KB mode (both 16KB banks switch together)
   - CHR ROM loaded via mapper delegate into pattern tables
+  - **PRG RAM ($6000-$7FFF):** 8KB RAM supported (Added 2026-04-27)
 - **Banking Fix Applied (2026-04-15):** Mode 3 and mode 2 had inverted fixed/switchable assignments per MMC1 spec
 
 ## Mapper 2 (CNROM/UNROM)
@@ -47,6 +48,7 @@
   - Dual register pairs at even/odd addresses ($8000/8001, $A000/A001, $C000/C001, $E000/E001)
   - Bit 7 of $8000 = CHR inversion mode (chrPrgInvert)
   - Bit 6 of $8000 = PRG banking mode (prgMode)
+  - **PRG RAM ($6000-$7FFF):** 8KB RAM supported with enable/protect bits at $A001 (Added 2026-04-27)
   - PRG banking:
     - $8000-$9FFF: prgBank6 when prgMode=0, prgBankCount-2 when prgMode=1
     - $A000-$BFFF: always prgBankA (R7, switchable)

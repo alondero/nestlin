@@ -1,66 +1,51 @@
 # NES Emulator - Current Focus & Status
 
-## Current Status (2026-04-14)
+## Current Status (2026-04-27)
 
-**Main Issue:** Mapper 1 games (Tetris, Lolo 1, Chip 'n Dale) show black screens
+**Main Goal:** Improve mapper support and compatibility.
 
 **What's Working:**
-- Donkey Kong (Mapper 0) runs correctly
-- GoldenLogTest passes (CPU is correct)
-- PPU rendering infrastructure is in place
+- Mapper 0 (NROM): Full support (Donkey Kong, SMB1)
+- Mapper 1 (MMC1): Full support with PRG-RAM (Tetris, Zelda)
+- Mapper 2 (CNROM/UNROM): Full support (Castlevania, Contra)
+- Mapper 3 (NINA-003/006): Support for Paperboy
+- Mapper 4 (MMC3): Supported with PRG-RAM and IRQs (Mega Man 4-6, Kirby's Adventure)
+- Mapper 11 (Color Dreams): Fixed CHR/PRG banking (Bible Adventures)
 
-**What Has Been Tried:**
-1. Fixed Mapper 1 PRG banking offset calculation (was causing wrong reset vector reads)
-2. Added PPU warm-up tracking infrastructure (disabled - breaks VBlank wait loops)
-3. Added CHR write notification system
-4. PPUMASK stays at 0 - PPU never receives initialization writes
+**Recent Fixes:**
+- **Kirby's Adventure (MMC3):** Fixed black screen crash caused by missing PRG-RAM at $6000-$7FFF.
+- **Mapper 4 (MMC3):** Added PRG-RAM support and RAM protect register ($A001).
+- **Mapper 1 (MMC1):** Added PRG-RAM support.
+- **State Capture:** Updated MapperStateSnapshot to include PRG-RAM for debugging.
 
-**Current Hypothesis:**
-Games may be waiting for VBlank during initialization, and our VBlank timing may not match real NES behavior. The first ~15 seconds of frames may be empty.
+**Current Issues:**
+- Some MMC3 games might have IRQ timing glitches (e.g., status bar jitter).
+- Audio DMC channel needs further validation.
 
 **Next Steps:**
-1. Instrument PPU register writes (trace $2000-$2007)
-2. Compare frame output between working (Donkey Kong) and broken (Tetris)
-3. Investigate why Donkey Kong takes ~15s to produce valid screenshots
+1. Implement Mapper 7 (AOROM).
+2. Refine MMC3 IRQ timing - specifically the A12 toggle behavior.
+3. Add support for battery-backed PRG-RAM (saving/loading .sav files).
+4. Implement Mapper 9 (MMC2 - Punch-Out!!).
 
 ---
 
 # Detailed Debugging Notes
 
-## Priority: Resolve Mapper 1 Black Screen Issue
+## Resolved: Kirby's Adventure Black Screen (MMC3)
 
 ### Symptom
-- Tetris (Mapper 1) shows black screen
-- Donkey Kong (Mapper 0) works correctly
-- Mapper 1 PRG banking is now correct (PC=0xFF00 confirmed)
-- CHR ROM loaded correctly (16KB)
-- PPUMASK stays 0 throughout execution
+- Game would boot but eventually crash/jump to $0000.
+- Trace analysis revealed a `JMP ($6038)` jumping to $0000.
 
-### Root Cause Hypothesis
-The PPU never receives initialization writes because either:
-1. CPU executes an infinite loop before PPU initialization
-2. PPU warm-up delay (NES-001) not implemented - but this shouldn't affect execution
-3. CHR bank initialization issue for 16KB CHR ROM
+### Root Cause
+- Mapper 4 (MMC3) was missing PRG-RAM at $6000-$7FFF.
+- Kirby's Adventure uses this RAM for jump tables.
 
-### Next Steps
+### Fix
+- Implemented 8KB PRG-RAM in `Mapper4.kt`.
+- Properly implemented $A001 control register for RAM enabling/protection.
 
-1. **Instrument execution to trace PC at regular intervals**
-   - Add logging every ~1 million cycles to see where execution goes
-   - Check if Tetris is hitting the PPU initialization code at all
-
-2. **Verify PPU register writes are happening**
-   - Log writes to $2000-$2007 (PPU registers)
-   - Track PPUMASK specifically
-
-3. **Check if Tetris initializes the PPU at all**
-   - Look for writes to $2000 (PPUCTRL) and $2001 (PPUMASK)
-   - If these never happen, the game is stuck in an early init loop
-
-4. **Consider PPU warm-up delay implementation**
-   - NES-001: PPU ignores writes for ~1 frame after power-on
-   - This might cause games to wait in loops that our emulator doesn't implement
-
-### Test ROMs
-- `tetris.nes`: Mapper 1, 32KB PRG, 16KB CHR ROM, reset at $FF00
-- `lolo1.nes`: Mapper 1 (user confirmed)
-- `chipndale.nes`: Mapper 1 (user confirmed)
+### Verification
+- `KirbyScreenshotTest` now shows valid gameplay frames (e.g., 61200 non-black pixels).
+- CPU PC correctly stays in PRG-ROM range ($8000-$FFFF) instead of jumping to zero page.

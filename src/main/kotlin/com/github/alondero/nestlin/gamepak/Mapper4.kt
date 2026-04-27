@@ -31,6 +31,11 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
     // 2KB CHR banks (R0, R1) and 1KB CHR banks (R2-R5)
     private var chrBanks = IntArray(6) { 0 }
 
+    // PRG RAM ($6000-$7FFF)
+    private val prgRam = ByteArray(0x2000)
+    private var prgRamEnabled = true
+    private var prgRamWriteProtect = false
+
     // Bank select register ($8000)
     private var bankSelect = 0
     // CHR/PRG inversion mode (bit 6 of $8000)
@@ -66,6 +71,9 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
     }
 
     override fun cpuRead(address: Int): Byte {
+        if (address in 0x6000..0x7FFF) {
+            return if (prgRamEnabled) prgRam[address - 0x6000] else 0
+        }
         if (address < 0x8000) return 0
 
         return when (address and 0xE000) {
@@ -92,6 +100,12 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
     }
 
     override fun cpuWrite(address: Int, value: Byte) {
+        if (address in 0x6000..0x7FFF) {
+            if (prgRamEnabled && !prgRamWriteProtect) {
+                prgRam[address - 0x6000] = value
+            }
+            return
+        }
         if (address < 0x8000) return
 
         val addrLow = address and 0xE000
@@ -112,14 +126,20 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
                 }
             }
             0xA000 -> {
-                // Mirroring control (even address only)
                 if ((address and 0x01) == 0) {
+                    // Even address: Mirroring control
                     // Bit 0: 0=vertical, 1=horizontal
                     mirroringOverride = if ((valueInt and 0x01) != 0) {
                         Mapper.MirroringMode.HORIZONTAL
                     } else {
                         Mapper.MirroringMode.VERTICAL
                     }
+                } else {
+                    // Odd address: PRG RAM protect ($A001)
+                    // Bit 7: PRG RAM chip enable (0: disable, 1: enable)
+                    // Bit 6: PRG RAM write protect (0: allow, 1: deny)
+                    prgRamEnabled = (valueInt and 0x80) != 0
+                    prgRamWriteProtect = (valueInt and 0x40) != 0
                 }
             }
             0xC000 -> {
@@ -261,7 +281,8 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
                 "irqPending" to irqPending,
                 "a12ToggleCount" to 0
             ),
-            chrRam = chrRam?.copyOf()
+            chrRam = chrRam?.copyOf(),
+            prgRam = prgRam.copyOf()
         )
     }
 }

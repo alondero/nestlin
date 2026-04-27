@@ -10,7 +10,8 @@ data class MapperStateSnapshot(
     val banks: Map<String, Int>,
     val registers: Map<String, Int>,
     val irqState: Map<String, Any>?,
-    val chrRam: ByteArray?
+    val chrRam: ByteArray?,
+    val prgRam: ByteArray? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
