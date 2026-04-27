@@ -65,6 +65,17 @@
   - IRQ counter reload: Fixed per NESdev spec - reload occurs when counter==0 OR reload flag is set
   - A12 edge detection: Wired from PPU pattern table access to mapper via a12EdgeListener
 
+## Mapper 7 (AxROM)
+**Status:** Working (Verified 2026-04-27)
+
+- **Games:** Marble Madness, R.C. Pro-Am, Battletoads, Arch Rivals, Solar Jetman, Cobra Triangle, Beetlejuice
+- **Behavior:**
+  - 32KB PRG ROM bank switching via writes to `$8000-$FFFF` (bits 0-2 select bank)
+  - 8KB CHR RAM (not ROM) — fully writable pattern table memory
+  - Single-screen mirroring controlled by bit 3 of bank write (0=lower screen, 1=upper screen)
+- **Notes:** AxROM bankswitches on writes to the **entire** `$8000-$FFFF` range (unlike UNROM/Mapper 2 which ignores `$C000-$FFFF` writes)
+- **Verification:** Marble Madness and R.C. Pro-Am pass `MapperVerificationTest` headless rendering tests
+
 ---
 
 ## Mapper 11 (Color Dreams)
