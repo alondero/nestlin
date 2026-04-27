@@ -94,4 +94,34 @@ class MapperVerificationTest {
 
         verifyMapper(romPath, mapperId = 2)
     }
+
+    @Test
+    fun `Mapper 7 - Marble Madness runs without black screen`() {
+        val romPath = Path.of("S:\\Media\\Nintendo NES\\Games\\Marble Madness (USA).nes")
+        if (!Files.exists(romPath)) {
+            println("[SKIP] ROM not found: $romPath")
+            return
+        }
+
+        val gamePak = GamePak(Files.readAllBytes(romPath))
+        println("[MapperVerification] Marble Madness: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
+                "CHR RAM = ${gamePak.chrRom.size / 1024}KB (CHR RAM, no CHR ROM), mapper = ${gamePak.header.mapper}")
+
+        verifyMapper(romPath, mapperId = 7)
+    }
+
+    @Test
+    fun `Mapper 7 - R C Pro-Am runs without black screen`() {
+        val romPath = Path.of("S:\\Media\\Nintendo NES\\Games\\R.C. Pro-Am (USA) (Rev A).nes")
+        if (!Files.exists(romPath)) {
+            println("[SKIP] ROM not found: $romPath")
+            return
+        }
+
+        val gamePak = GamePak(Files.readAllBytes(romPath))
+        println("[MapperVerification] R.C. Pro-Am: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
+                "CHR RAM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
+
+        verifyMapper(romPath, mapperId = 7)
+    }
 }
