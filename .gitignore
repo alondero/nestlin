@@ -18,6 +18,7 @@ hs_err_pid*
 
 # Git worktrees
 .worktrees/
+.claude/worktrees/
 
 # Claude local settings
 .claude/settings.local.json
