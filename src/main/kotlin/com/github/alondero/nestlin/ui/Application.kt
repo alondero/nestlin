@@ -33,11 +33,7 @@ import kotlin.concurrent.thread
 const val DISPLAY_SCALE = 4  // 4x magnification for debugging
 
 fun main(args: Array<String>) {
-    when {
-        args.size == 0 -> throw IllegalStateException("Please provide a rom file as an argument")
-        else -> Application.launch(NestlinApplication::class.java, *args)
-    }
-
+    Application.launch(NestlinApplication::class.java, *args)
 }
 
 class NestlinApplication : FrameListener, App() {
