@@ -43,31 +43,15 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
     // PRG banking mode (bit 7 of $8000)
     private var prgMode = false
 
-    // IRQ registers
-    private var irqLatch = 0    // $C000
-    private var irqReload = false // $C001 trigger
-    private var irqEnabled = false // $E000
-    private var irqCounter = 0
-    private var irqPending = false
+    // IRQ counter (MMC3 scanline IRQ)
+    private val scanlineCounter = ScanlineCounter()
 
     // Mirroring override from $A000 register (bit 0: 0=vertical, 1=horizontal)
     private var mirroringOverride: Mapper.MirroringMode? = null
 
-    private fun clockMmc3Counter() {
-        if (irqCounter == 0 || irqReload) {
-            irqCounter = irqLatch
-            irqReload = false
-        } else {
-            irqCounter--
-        }
-        if (irqCounter == 0 && irqEnabled) {
-            irqPending = true
-        }
-    }
-
     override fun notifyA12Edge(rising: Boolean) {
         if (!rising) return
-        clockMmc3Counter()
+        scanlineCounter.clock()
     }
 
     override fun cpuRead(address: Int): Byte {
@@ -145,19 +129,18 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
             0xC000 -> {
                 // IRQ latch (even) or IRQ reload (odd)
                 if ((address and 0x01) == 0) {
-                    irqLatch = valueInt
+                    scanlineCounter.writeLatch(valueInt)
                 } else {
                     // Reload flag is set; actual counter reload happens at next A12 rising edge
-                    irqReload = true
+                    scanlineCounter.triggerReload()
                 }
             }
             0xE000 -> {
                 // IRQ disable (even) or enable (odd)
                 if ((address and 0x01) == 0) {
-                    irqEnabled = false
-                    irqPending = false
+                    scanlineCounter.setEnabled(false)
                 } else {
-                    irqEnabled = true
+                    scanlineCounter.setEnabled(true)
                 }
             }
         }
@@ -246,13 +229,13 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
      * Acknowledge pending IRQ (called after CPU handles the interrupt).
      */
     override fun acknowledgeIrq() {
-        irqPending = false
+        scanlineCounter.acknowledgeIrq()
     }
 
     /**
      * Check if IRQ is pending (for CPU interrupt line).
      */
-    override fun isIrqPending(): Boolean = irqPending
+    override fun isIrqPending(): Boolean = scanlineCounter.isIrqPending()
 
     override fun snapshot(): MapperStateSnapshot {
         return MapperStateSnapshot(
@@ -274,11 +257,10 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
                 "prgMode" to if (prgMode) 1 else 0
             ),
             irqState = mapOf(
-                "irqLatch" to irqLatch,
-                "irqReload" to irqReload,
-                "irqEnabled" to irqEnabled,
-                "irqCounter" to irqCounter,
-                "irqPending" to irqPending,
+                "irqLatch" to scanlineCounter.irqLatchValue(),
+                "irqEnabled" to if (scanlineCounter.isIrqEnabled()) 1 else 0,
+                "irqCounter" to scanlineCounter.irqCounterValue(),
+                "irqPending" to if (scanlineCounter.isIrqPending()) 1 else 0,
                 "a12ToggleCount" to 0
             ),
             chrRam = chrRam?.copyOf(),

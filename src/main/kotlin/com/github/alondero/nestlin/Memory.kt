@@ -4,8 +4,9 @@ import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.gamepak.Mapper
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
 import com.github.alondero.nestlin.apu.ApuAddressedMemory
+import com.github.alondero.nestlin.apu.DmaPort
 
-class Memory {
+class Memory : DmaPort {
     private val internalRam = ByteArray(0x800)
     val ppuAddressedMemory = PpuAddressedMemory()
     val apuAddressedMemory = ApuAddressedMemory()
@@ -73,7 +74,7 @@ class Memory {
         }
     }
 
-    operator fun get(address: Int) = when (address) {
+    override operator fun get(address: Int) = when (address) {
         in 0x0000..0x1FFF -> internalRam[address % 0x800]
         in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
         0x4016 -> controller1.read()

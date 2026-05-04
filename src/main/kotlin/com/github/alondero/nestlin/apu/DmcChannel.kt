@@ -1,10 +1,10 @@
 package com.github.alondero.nestlin.apu
 
-import com.github.alondero.nestlin.Memory
+import com.github.alondero.nestlin.apu.DmaPort
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toUnsignedInt
 
-class DmcChannel(val memory: Memory) {
+class DmcChannel(private val dmaPort: DmaPort) {
     var isEnabled: Boolean = false
     var irqEnabled: Boolean = false
     var irqPending: Boolean = false
@@ -109,7 +109,7 @@ class DmcChannel(val memory: Memory) {
     private fun refillSampleBuffer() {
         if (sampleBuffer != null || remainingBytes == 0) return
 
-        sampleBuffer = memory[currentAddress]
+        sampleBuffer = dmaPort[currentAddress]
         currentAddress = (currentAddress + 1) and 0xFFFF
         if (currentAddress < 0x8000) {
             currentAddress = 0x8000

@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.cpu
 
 import com.github.alondero.nestlin.*
+import com.github.alondero.nestlin.cpu.addressing.*
 import java.util.*
 
 class Opcodes {
@@ -349,28 +350,6 @@ class Opcodes {
             }
         }
 
-    }
-
-    private fun immediate(): (Cpu) -> Byte = { it.readByteAtPC() }
-    private fun absolute(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[absoluteAdr(shift)(it) and 0xFFFF] }
-    private fun zeroPaged(shift: (Cpu) -> Byte = {0}): (Cpu) -> Byte = { it.memory[zeroPagedAdr(shift)(it) and 0xFFFF] }
-    private fun indirectX(): (Cpu) -> Byte = { it.memory[indirectXAdr()(it)] }
-    private fun indirectY(): (Cpu) -> Byte = { it.memory[indirectYAdr()(it)]}
-    private fun absoluteAdr(shift: (Cpu) -> Byte = {0}): (Cpu) -> Int = { it.readShortAtPC().toUnsignedInt() + shift(it).toUnsignedInt() }
-    private fun zeroPagedAdr(shift: (Cpu) -> Byte = {0}): (Cpu) -> Int = { (it.readByteAtPC().toUnsignedInt() + shift(it).toUnsignedInt()) and 0xFF }
-    private fun indirectXAdr(): (Cpu) -> Int = {
-        it.let {
-            val mem = it.readByteAtPC()
-            it.memory[(mem + it.registers.indexX) and 0xFF, (mem + it.registers.indexX + 1) and 0xFF]
-        }.toUnsignedInt()
-    }
-    private fun indirectYAdr(): (Cpu) -> Int = {
-        it.let {
-            val mem = it.readByteAtPC().toUnsignedInt()
-            val addr = it.memory[mem].toUnsignedInt() or (it.memory[(mem+1) and 0xFF].toUnsignedInt() shl 8)
-            val shiftedAddr = ((addr + it.registers.indexY.toUnsignedInt()) and 0xFFFF)
-            shiftedAddr
-        }
     }
 
     private fun branchOp(flag: (Cpu) -> Boolean) = Opcode {

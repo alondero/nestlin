@@ -4,7 +4,7 @@ import com.github.alondero.nestlin.apu.*
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.setBit
 
-class Apu(val memory: Memory) {
+class Apu(private val dmaPort: DmaPort) {
     private val apuMemory = ApuAddressedMemory()
     private val frameCounter = FrameCounter()
     private val audioBuffer = AudioBuffer(sampleRate = 44100, bufferSize = 8192)
@@ -13,7 +13,7 @@ class Apu(val memory: Memory) {
     val pulse2 = PulseChannel(channelId = 2)
     val triangle = TriangleChannel()
     val noise = NoiseChannel()
-    val dmc = DmcChannel(memory)
+    val dmc = DmcChannel(dmaPort)
 
     private var cycleAccumulator = 0.0
     private var cpuCycleCounter = 0
