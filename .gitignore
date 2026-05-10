@@ -73,3 +73,5 @@ __pycache__/
 
 # Undocumented Opcodes (generated at runtime)
 undocumented_opcodes.txt
+# Buildmesh config (local tool, do not commit)
+mesh.toml

@@ -62,8 +62,25 @@ val mesenTests = listOf(
 )
 
 // Also exclude debug/investigation tests that can hang or have pre-existing issues
-val debugTests = listOf(
-    "com.github.alondero.nestlin.gamepak.Mapper4Verification"
+// Also exclude tests that depend on ROMs not in the repository
+val auxiliaryTests = listOf(
+    // Debug/investigation tests with external ROM dependencies
+    "com.github.alondero.nestlin.gamepak.Mapper4Verification",
+    "com.github.alondero.nestlin.gamepak.Mapper4GamesTest",
+    // Integration tests requiring external ROMs
+    "com.github.alondero.nestlin.Mapper1IntegrationTest",
+    // Compare tests that depend on external ROMs (kirby.nes, etc.)
+    "com.github.alondero.nestlin.compare.KirbyInstructionTraceTest",
+    "com.github.alondero.nestlin.compare.KirbyPpuCtrlTrackingTest",
+    "com.github.alondero.nestlin.compare.KirbyScreenshotTest",
+    "com.github.alondero.nestlin.compare.KirbyVBlankTest",
+    "com.github.alondero.nestlin.compare.MinimalVBlankSetTest",
+    "com.github.alondero.nestlin.compare.PpuCtrlNmiEdgeTest",
+    "com.github.alondero.nestlin.compare.ScreenshotCapture",
+    "com.github.alondero.nestlin.compare.VBlankPollingTest",
+    "com.github.alondero.nestlin.compare.VBlankReadRaceTest",
+    "com.github.alondero.nestlin.compare.VBlankTimingTest",
+    "com.github.alondero.nestlin.compare.VBlankTimingTest2"
 )
 
 tasks.test {
@@ -71,7 +88,7 @@ tasks.test {
     mesenTests.forEach { testClass ->
         exclude("**/${testClass.replace('.', '/')}.class")
     }
-    debugTests.forEach { testClass ->
+    auxiliaryTests.forEach { testClass ->
         exclude("**/${testClass.replace('.', '/')}.class")
     }
 }
