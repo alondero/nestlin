@@ -19,14 +19,16 @@
 - **State Capture:** Updated MapperStateSnapshot to include PRG-RAM for debugging.
 
 **Current Issues:**
-- Some MMC3 games might have IRQ timing glitches (e.g., status bar jitter).
 - Audio DMC channel needs further validation.
 
 **Next Steps:**
 1. Implement Mapper 7 (AOROM).
-2. Refine MMC3 IRQ timing - specifically the A12 toggle behavior.
-3. Add support for battery-backed PRG-RAM (saving/loading .sav files).
-4. Implement Mapper 9 (MMC2 - Punch-Out!!).
+2. Add support for battery-backed PRG-RAM (saving/loading .sav files).
+3. Implement Mapper 9 (MMC2 - Punch-Out!!).
+4. Visual validation: run Mesen2 screenshot comparison on Kirby/MM4-6/SMB3 to confirm the 2026-05-18 MMC3 IRQ-timing fix resolves HUD jitter end-to-end.
+
+**Recently Resolved:**
+- **MMC3 IRQ doubling (2026-05-18):** PPU sprite-fetch pipeline rewritten to match real hardware. Sprite evaluation moved to cycle 65 (no pattern reads), tile fetches moved to cycles 257-320 of previous scanline. Removed eager cycle-0 sprite reads that produced a second A12 rising edge per scanline. Also fixed 8x16 pattern table to be resolved per-sprite. MMC3 IRQ now clocks at 241 A12 rising edges per frame (was ~480). Validated by `A12EdgeRateTest`.
 
 ---
 

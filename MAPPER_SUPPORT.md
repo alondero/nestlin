@@ -57,6 +57,10 @@
   - CHR banking (normal mode): R0-R1 = 2KB at $0000-$0FFF, R2-R5 = four 1KB at $1000-$1FFF
   - CHR banking (inverted mode): R2-R5 = four 1KB at $0000-$0FFF, R0-R1 = 2KB at $1000-$1FFF
   - Scanline IRQ via PPU A12 rising edge detection (wired 2026-04-17)
+- **Fixes Applied (2026-05-18):**
+  - PPU sprite-fetch pipeline rewritten: sprite evaluation now happens at cycle 65 (no pattern reads) and sprite tile fetches happen at cycles 257-320 of the previous scanline, matching real PPU. Removed eager sprite reads at cycle 0 that were producing a second spurious A12 rising edge per scanline.
+  - 8x16 sprite mode: pattern table now resolved per-sprite (PPUCTRL bit 3 was being used for all sprites, which is only correct for 8x8 mode).
+  - Result: MMC3 IRQ counter now clocks at exactly 241 A12 rising edges per frame (240 visible + 1 pre-render), down from ~480. Validated by `A12EdgeRateTest`.
 - **Fixes Applied (2026-04-23):**
   - IRQ reload at $C001: Removed immediate `irqCounter = valueInt`; reload now correctly defers to next A12 rising edge per NESdev spec
 - **Fixes Applied (2026-04-17):**

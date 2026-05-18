@@ -9,7 +9,6 @@ interface Mapper {
 
     // IRQ support (for mappers like MMC3 that have scanline IRQs)
     fun notifyA12Edge(rising: Boolean) {}
-    fun clockScanline() {}
     fun acknowledgeIrq() {}
     fun isIrqPending(): Boolean = false
 
