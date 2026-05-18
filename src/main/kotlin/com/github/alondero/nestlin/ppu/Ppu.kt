@@ -41,8 +41,23 @@ class Ppu(var memory: Memory) {
     private var patternLatchHigh: Byte = 0
     private var paletteLatch: Int = 0
 
-    // Active sprites for current scanline (max 8)
+    // Active sprites for current scanline (max 8) — consumed by fetchData() during 2-257.
     private val activeSpriteBuffer = mutableListOf<ActiveSprite>()
+
+    // Secondary OAM: up to 8 sprites picked during evaluation (cycle 65) for the next scanline.
+    // The tile-row offset is pre-computed with vertical-flip applied.
+    private data class SecondaryOamEntry(val sprite: SpriteData, val tileY: Int)
+    private val secondaryOam = mutableListOf<SecondaryOamEntry>()
+
+    // Sprites being assembled during the cycles 257-320 fetch phase, ready to render on the
+    // next scanline. Swapped into activeSpriteBuffer in endLine() before the next scanline begins.
+    private val nextScanlineSprites = mutableListOf<ActiveSprite>()
+
+    // Latches for the currently-fetching sprite slot. The pattern address is computed once at
+    // accessType=2 and reused at accessType=3 to avoid recomputing 8x16 arithmetic.
+    private var spriteTileLowLatch: Byte = 0
+    private var spriteTileHighLatch: Byte = 0
+    private var spritePatternAddrLatch: Int = 0
 
     private var listener: FrameListener? = null
     private var vBlank = false
@@ -67,24 +82,28 @@ class Ppu(var memory: Memory) {
         val renderingActive = renderingEnabled && (scanline in 0 until RESOLUTION_HEIGHT || scanline == PRE_RENDER_SCANLINE)
 
         if (renderingActive) {
-            // Fetch sprites for this scanline at cycle 0
             if (cycle == 0) {
                 // Copy horizontal scroll from temp register BEFORE preloading
-                // This must happen before preload since preload uses vRamAddress
                 with(memory.ppuAddressedMemory) {
                     if (scanline in 0..239 || scanline == PRE_RENDER_SCANLINE) {
                         vRamAddress.coarseXScroll = tempVRamAddress.coarseXScroll
                         vRamAddress.horizontalNameTable = tempVRamAddress.horizontalNameTable
                     }
                 }
-
-                fetchActiveSpriteDataForScanline(scanline)
-                // Pre-load the first two tiles for this scanline
+                // Pre-load the first two BG tiles for this scanline (reads pattern table 0/1
+                // depending on PPUCTRL bit 4 — drives A12 low for typical MMC3 setups).
                 preloadFirstTwoTiles()
             }
 
+            // Sprite evaluation for the *next* scanline happens at cycle 65 in real hardware.
+            // We do the full scan in one cycle for simplicity; it has no pattern-table accesses,
+            // so it does not affect A12.
+            if (cycle == 65) {
+                evaluateSpritesForTargetScanline(targetScanlineForSpriteEval())
+            }
+
             //  Fetch tile data
-            when (cycle) {// Idle
+            when (cycle) {
                 in 1..256 -> fetchData()
                 in 257..320 -> fetchSpriteTile()
                 in 321..336 -> fetchData() // Ready for next scanline
@@ -101,9 +120,7 @@ class Ppu(var memory: Memory) {
 
         if (scanline == PRE_RENDER_SCANLINE && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
 
-        // Note: MMC3 scanline IRQ is triggered by A12 edge detection (via notifyA12Edge),
-        // NOT by a fixed-rate clock. The PPU naturally triggers A12 edges when fetching
-        // pattern data. We do NOT call clockScanline() here to avoid double-counting.
+        // MMC3 scanline IRQ is triggered solely by A12 rising edges from pattern fetches.
 
         // Load shift registers every 8 cycles (at cycles 9, 17, 25, ..., 249, 329, 337)
         // Note: NES reloads at 329 and 337 for post-render (cycles 321-340), NOT at 321
@@ -155,6 +172,13 @@ class Ppu(var memory: Memory) {
     }
 
     private fun endLine() {
+        // Sprite tile data assembled during cycles 257-320 becomes the active set for the
+        // upcoming scanline. The secondary-OAM scratch buffer is also cleared for the next eval.
+        activeSpriteBuffer.clear()
+        activeSpriteBuffer.addAll(nextScanlineSprites)
+        nextScanlineSprites.clear()
+        secondaryOam.clear()
+
         when (scanline) {
             NTSC_SCANLINES - 1 -> endFrame()
             else -> scanline++
@@ -175,124 +199,111 @@ class Ppu(var memory: Memory) {
         vBlank = false
     }
 
+    /**
+     * The scanline that the current sprite eval/fetch phase is preparing for.
+     * For pre-render (261), prep is for scanline 0 of the next frame.
+     */
+    private fun targetScanlineForSpriteEval(): Int =
+        if (scanline == PRE_RENDER_SCANLINE) 0 else scanline + 1
+
+    /**
+     * Sprite evaluation: scan primary OAM, pick up to 8 sprites visible on the target scanline.
+     * Stores their resolved tile-Y offset (with vertical-flip applied) in secondaryOam.
+     * No pattern-table accesses occur here, so A12 is not affected.
+     */
+    private fun evaluateSpritesForTargetScanline(target: Int) {
+        secondaryOam.clear()
+        val oam = memory.ppuAddressedMemory.objectAttributeMemory
+        val spriteSize = memory.ppuAddressedMemory.controller.spriteSize()
+        val spriteHeight = if (spriteSize == Control.SpriteSize.X_8_16) 16 else 8
+
+        for (i in 0 until 64) {
+            if (secondaryOam.size >= 8) break
+            val s = oam.getSprite(i)
+            val y = s.y
+            // NES Y semantics: sprite at Y appears at scanlines Y+1 through Y+spriteHeight
+            if (target > y && target <= y + spriteHeight) {
+                val tileYOffset = target - y - 1
+                val tileY = if (s.verticalFlip) (spriteHeight - 1) - tileYOffset else tileYOffset
+                secondaryOam.add(SecondaryOamEntry(s, tileY))
+            }
+        }
+    }
+
+    /**
+     * Sprite tile fetch phase (cycles 257-320 of scanline N, preparing for scanline N+1).
+     * Each of the 8 slots gets 4 memory accesses spread across 8 cycles:
+     *   access 0,1: garbage nametable read at $2xxx (A12 unaffected for typical setups)
+     *   access 2:   pattern table low byte at the sprite's tile address ($0xxx or $1xxx)
+     *   access 3:   pattern table high byte (low + 8)
+     *
+     * For typical MMC3 games (BG at $0000, sprites at $1000), this produces exactly one
+     * A12 rising edge per scanline — the transition from BG fetches at $0xxx to the first
+     * sprite pattern read at $1xxx. The PpuInternalMemory 3-cycle low-time filter suppresses
+     * the spurious per-sprite A12 toggles caused by garbage NT reads between sprites.
+     */
     private fun fetchSpriteTile() {
-        // Sprite tile fetches occur during cycles 257-320:
-        // - 4 memory accesses per sprite (8 sprites max = 32 actual fetches)
-        // - Each memory access takes 2 PPU cycles, so we do 2 accesses per cycle
-        // - Pattern: garbage nametable, garbage nametable, tile bitmap low, tile bitmap high
-        //
-        // These fetches trigger A12 edges for sprites at pattern table 0x1000.
-        // We access the PPU memory to trigger A12 edge detection via the mapper delegate.
+        val slotIndex = (cycle - 257) / 4
+        if (slotIndex >= 8) return
+        val accessType = (cycle - 257) % 4
 
-        // Calculate which sprite access we're on (0-31, representing 8 sprites × 4 accesses)
-        val spriteAccessIndex = cycle - 257
+        val mem = memory.ppuAddressedMemory.ppuInternalMemory
+        val entry = secondaryOam.getOrNull(slotIndex)
 
-        if (spriteAccessIndex < 32) {
-            // Determine which sprite and which access type
-            val spriteIndex = spriteAccessIndex / 4
-            val accessType = spriteAccessIndex % 4
-
-            // Get sprite data if available
-            val oam = memory.ppuAddressedMemory.objectAttributeMemory
-            if (spriteIndex < 8) {
-                val spriteData = oam.getSprite(spriteIndex)
-                val spriteSize = memory.ppuAddressedMemory.controller.spriteSize()
-                val spriteHeight = if (spriteSize == Control.SpriteSize.X_8_16) 16 else 8
-                val patternBase = memory.ppuAddressedMemory.controller.spritePatternTableAddress()
-
-                // For each sprite, do 4 fetches (2 cycles each = 8 cycles total per sprite)
-                // Access types: 0=garbage NT, 1=garbage NT, 2=pattern low, 3=pattern high
-                when (accessType) {
-                    2, 3 -> {
-                        // Tile pattern fetch - access PPU memory which triggers A12 for 0x1000+
-                        val tileRow = 0  // dummy row for garbage fetches
-                        val tileAddr = patternBase + (spriteData.tileIndex.toUnsignedInt() * 16) + tileRow
-                        // Trigger A12 by reading from pattern table
-                        memory.ppuAddressedMemory.ppuInternalMemory[tileAddr]
-                        if (accessType == 3) {
-                            // High byte is 8 bytes after low byte
-                            memory.ppuAddressedMemory.ppuInternalMemory[tileAddr + 8]
-                        }
-                    }
-                    else -> {
-                        // Garbage nametable fetch - these would be at nametable addresses
-                        // but we just need to access something to keep timing
-                        memory.ppuAddressedMemory.ppuInternalMemory[0x2000]
-                    }
+        when (accessType) {
+            0, 1 -> {
+                val vramAddr = memory.ppuAddressedMemory.vRamAddress.asAddress()
+                mem[0x2000 or (vramAddr and 0x0FFF)]
+            }
+            2 -> {
+                spritePatternAddrLatch = resolveSpritePatternAddress(entry)
+                spriteTileLowLatch = mem[spritePatternAddrLatch]
+            }
+            3 -> {
+                spriteTileHighLatch = mem[spritePatternAddrLatch + 8]
+                if (entry != null) {
+                    nextScanlineSprites.add(buildActiveSprite(entry, spriteTileLowLatch, spriteTileHighLatch))
                 }
             }
         }
     }
 
     /**
-     * Fetch active sprites for the current scanline.
-     * Checks all 64 sprites in OAM, adds those on current scanline to active buffer.
+     * Pattern-table address for a sprite slot. In 8x16 mode the pattern table is selected
+     * per-sprite by bit 0 of the tile index (overriding PPUCTRL bit 3). Empty slots fetch
+     * tile $FF from the default sprite pattern table — the canonical dummy fetch that still
+     * drives A12 for hardware-accurate bus behaviour.
      */
-    private fun fetchActiveSpriteDataForScanline(scanline: Int) {
-        activeSpriteBuffer.clear()
+    private fun resolveSpritePatternAddress(entry: SecondaryOamEntry?): Int {
+        val controller = memory.ppuAddressedMemory.controller
+        val spritePatternBase = controller.spritePatternTableAddress()
+        if (entry == null) return spritePatternBase + (0xFF * 16)
 
-        // Get access to PPU's ObjectAttributeMemory
-        val oam = memory.ppuAddressedMemory.objectAttributeMemory
-
-        // Check all 64 sprites in OAM
-        for (i in 0 until 64) {
-            if (activeSpriteBuffer.size >= 8) break  // Max 8 sprites per scanline
-
-            val spriteData = oam.getSprite(i)
-            val spriteY = spriteData.y
-            val spriteSize = memory.ppuAddressedMemory.controller.spriteSize()
-            val spriteHeight = if (spriteSize == Control.SpriteSize.X_8_16) 16 else 8
-
-            // Check if sprite is visible on current scanline
-            // In the NES, Y position 0 is off-screen (renders at scanline 1)
-            if (scanline > spriteY && scanline <= (spriteY + spriteHeight)) {
-                val tileYOffset = scanline - spriteY - 1  // 0-7 within tile
-
-                // Apply vertical flip if needed
-                val tileY = if (spriteData.verticalFlip) {
-                    (spriteHeight - 1) - tileYOffset
-                } else {
-                    tileYOffset
-                }
-
-                // Fetch sprite tile data from pattern table
-                val tileIndex = spriteData.tileIndex.toUnsignedInt()
-                val (patternBase, tileNumber, tileRow) = if (spriteSize == Control.SpriteSize.X_8_16) {
-                    val base = (tileIndex and 0x01) * 0x1000
-                    val tileBase = tileIndex and 0xFE
-                    val tileOffset = if (tileY >= 8) 1 else 0
-                    Triple(base, tileBase + tileOffset, tileY and 0x07)
-                } else {
-                    val base = memory.ppuAddressedMemory.controller.spritePatternTableAddress()
-                    Triple(base, tileIndex, tileY)
-                }
-                val tileAddr = patternBase + (tileNumber * 16) + tileRow
-
-                val tileDataLow = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr]
-                val tileDataHigh = memory.ppuAddressedMemory.ppuInternalMemory[tileAddr + 8]
-
-                // Load shift registers with tile data
-                val activeSprite = ActiveSprite(
-                    data = spriteData,
-                    tileDataLow = tileDataLow,
-                    tileDataHigh = tileDataHigh,
-                    xCounter = spriteData.x  // Initialize counter to sprite's X position
-                )
-
-                // Initialize shift registers with tile data, apply horizontal flip
-                if (spriteData.horizontalFlip) {
-                    // If flipped, reverse bit order
-                    activeSprite.shiftLow = reverseBits(tileDataLow.toUnsignedInt() and 0xFF)
-                    activeSprite.shiftHigh = reverseBits(tileDataHigh.toUnsignedInt() and 0xFF)
-                } else {
-                    // Normal: no flip, just load the data
-                    activeSprite.shiftLow = tileDataLow.toUnsignedInt()
-                    activeSprite.shiftHigh = tileDataHigh.toUnsignedInt()
-                }
-
-                activeSpriteBuffer.add(activeSprite)
-            }
+        val tileIndex = entry.sprite.tileIndex.toUnsignedInt()
+        return if (controller.spriteSize() == Control.SpriteSize.X_8_16) {
+            val base = (tileIndex and 0x01) * 0x1000
+            val tileNumber = (tileIndex and 0xFE) + if (entry.tileY >= 8) 1 else 0
+            base + (tileNumber * 16) + (entry.tileY and 0x07)
+        } else {
+            spritePatternBase + (tileIndex * 16) + entry.tileY
         }
+    }
+
+    private fun buildActiveSprite(entry: SecondaryOamEntry, low: Byte, high: Byte): ActiveSprite {
+        val active = ActiveSprite(
+            data = entry.sprite,
+            tileDataLow = low,
+            tileDataHigh = high,
+            xCounter = entry.sprite.x
+        )
+        if (entry.sprite.horizontalFlip) {
+            active.shiftLow = reverseBits(low.toUnsignedInt() and 0xFF)
+            active.shiftHigh = reverseBits(high.toUnsignedInt() and 0xFF)
+        } else {
+            active.shiftLow = low.toUnsignedInt()
+            active.shiftHigh = high.toUnsignedInt()
+        }
+        return active
     }
 
     /**
