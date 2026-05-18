@@ -75,6 +75,36 @@ Mesen.exe --doNotSaveSettings <script.lua> <rom>
 
 Requires display attached. Screenshot path: `emu.getScriptDataFolder() .. "screenshot.png"`
 
+### `emu.read(addr, memType)` in Mesen2 GUI mode
+
+Works reliably. Useful for byte-level Nestlin↔Mesen2 comparison without
+plumbing state diffs. Examples used in this codebase:
+
+```lua
+local y    = emu.read(i * 4,     emu.memType.nesSpriteRam)  -- OAM
+local tile = emu.read(addr,      emu.memType.nesPpuMemory)  -- pattern/nametable
+```
+
+Useful NES memTypes (full list emitted by `for k,_ in pairs(emu.memType)`):
+`nesMemory`, `nesInternalRam`, `nesWorkRam`, `nesSaveRam`, `nesSpriteRam`,
+`nesSecondarySpriteRam`, `nesPaletteRam`, `nesNametableRam`,
+`nesPpuMemory`, `nesChrRom`, `nesChrRam`, `nesPrgRom`, `nesMapperRam`,
+`nesDebug`, `nesPpuDebug`.
+
+### Embedding Lua in Kotlin triple-quoted strings — escape `$`
+
+Lua uses `$` only inside `string.format` format strings (e.g. `"$%02X"`).
+In a Kotlin `"""…"""` literal those `$` characters start interpolation.
+Use `${'$'}` for a literal dollar sign — **never** `\$`, which Lua rejects
+with `invalid escape sequence near '\$'` and which Kotlin doesn't unescape
+either:
+
+```kotlin
+val lua = """
+local s = string.format("tile=${'$'}%02X", t)
+"""
+```
+
 ## Key Differences: Mesen v1 vs v2
 
 | Feature | Mesen v1 (headless) | Mesen2 |
@@ -82,5 +112,5 @@ Requires display attached. Screenshot path: `emu.getScriptDataFolder() .. "scree
 | `emu.stop()` | ✅ Works | ❌ Hangs |
 | `os.exit()` | ✅ Works | ✅ Works |
 | `emu.getState()` | ✅ Works | ✅ Works |
-| `emu.read()` | ❌ Deadlocks | ❌ Hangs |
+| `emu.read()` | ❌ Deadlocks | ✅ Works in GUI mode (verified 2026-05-18) |
 | `emu.takeScreenshot()` | ✅ Works | ✅ Works |
