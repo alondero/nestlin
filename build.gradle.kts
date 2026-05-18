@@ -71,6 +71,8 @@ val auxiliaryTests = listOf(
     "com.github.alondero.nestlin.Mapper1IntegrationTest",
     // Compare tests that depend on external ROMs (kirby.nes, etc.)
     "com.github.alondero.nestlin.compare.KirbyInstructionTraceTest",
+    "com.github.alondero.nestlin.compare.KirbyMesenVsNestlinOamTest",
+    "com.github.alondero.nestlin.compare.KirbyOamSnapshotTest",
     "com.github.alondero.nestlin.compare.KirbyPpuCtrlTrackingTest",
     "com.github.alondero.nestlin.compare.KirbyScreenshotTest",
     "com.github.alondero.nestlin.compare.KirbyVBlankTest",
