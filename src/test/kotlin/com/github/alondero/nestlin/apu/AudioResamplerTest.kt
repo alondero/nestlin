@@ -154,4 +154,38 @@ class AudioResamplerTest {
         val produced = resampler.resample(output, 1000)
         assertThat(produced > 0, equalTo(true))
     }
+
+    @Test
+    fun resamplerSurvivesMatchedRateSteadyState() {
+        // Producer pushes 735 samples per 16.67 ms burst (44100/sec). Consumer pulls
+        // 17 × 47 = 799 outputs per burst (≈ 48000/60). At ratio 0.91875, 799 outputs
+        // require 734 inputs — within 1 of the supply. A correct resampler must sustain
+        // this indefinitely without ever returning produced=0.
+
+        val resampler = AudioResampler(44100.0, 48000.0, bufferCapacity = 16384)
+        val outputBuf = ShortArray(64)
+
+        val samplesPerBurst = 735
+        val outputsPerPoll = 47
+        val pollsPerBurst = 17
+        val burstsToSimulate = 60
+
+        var underrunPolls = 0
+        var totalPolls = 0
+
+        for (burst in 0 until burstsToSimulate) {
+            resampler.push(ShortArray(samplesPerBurst) { 100.toShort() })
+            repeat(pollsPerBurst) {
+                val produced = resampler.resample(outputBuf, outputsPerPoll)
+                if (produced == 0) underrunPolls++
+                totalPolls++
+            }
+        }
+
+        assertThat(
+            "expected zero underrun polls over $totalPolls total polls; got $underrunPolls " +
+                "(each is a SourceDataLine starve event)",
+            underrunPolls, equalTo(0)
+        )
+    }
 }
