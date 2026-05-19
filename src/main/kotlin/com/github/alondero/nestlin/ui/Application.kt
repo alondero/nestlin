@@ -341,7 +341,9 @@ class NestlinApplication : FrameListener, App() {
                     val info = DataLine.Info(SourceDataLine::class.java, format)
                     val line = AudioSystem.getLine(info) as? SourceDataLine
                     if (line != null) {
-                        line.open(format, 4096)
+                        // ~93 ms headroom at 44.1 kHz 16-bit mono (~46 ms stereo) to absorb
+                        // emulation-thread throttle jitter.
+                        line.open(format, 8192)
                         line.start()
                         selectedFormat = format
                         bestMatch = line
