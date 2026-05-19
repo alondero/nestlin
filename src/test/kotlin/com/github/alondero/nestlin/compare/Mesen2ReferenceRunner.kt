@@ -24,7 +24,13 @@ object Mesen2ReferenceRunner {
 
     fun getMesen2Path(): Path {
         val path = System.getenv(ENV_VAR) ?: System.getProperty("mesen2.path")
-        return path?.let { Paths.get(it) } ?: Paths.get("tools/Mesen/Mesen.exe")
+        if (path != null) return Paths.get(path)
+        // Default fallback locations to try, in order of preference.
+        val candidates = listOf(
+            Paths.get("tools/Mesen2/Mesen.exe"),
+            Paths.get("tools/Mesen/Mesen.exe")
+        )
+        return candidates.firstOrNull { it.toFile().exists() } ?: candidates.first()
     }
 
     fun isMesen2Available(): Boolean = getMesen2Path().toFile().exists()
@@ -43,10 +49,16 @@ object Mesen2ReferenceRunner {
 
         try {
             // GUI mode: Mesen.exe script.lua rom.nes
-            // The script auto-exits via os.exit() after capturing
+            // The script auto-exits via os.exit() after capturing.
+            // Both paths MUST be absolute — Mesen's working directory is set to its own
+            // install dir, so a relative ROM path silently resolves into the Mesen folder
+            // and the ROM never loads. With no ROM loaded, emulation never starts, no
+            // endFrame callbacks fire, and the script hangs forever.
+            val absoluteScript = scriptPath.toAbsolutePath().toString()
+            val absoluteRom = romPath.toAbsolutePath().toString()
             val process = ProcessBuilder().apply {
                 command(mesenPath.toString(), *MESEN_ARGS.toTypedArray(),
-                        scriptPath.toString(), romPath.toString())
+                        absoluteScript, absoluteRom)
                 directory(mesenDir)
                 redirectError(ProcessBuilder.Redirect.INHERIT)
                 redirectOutput(ProcessBuilder.Redirect.INHERIT)
@@ -83,6 +95,9 @@ object Mesen2ReferenceRunner {
 
     private fun generateCaptureScript(targetFrame: Int, outputFile: String): String {
         // GUI mode: use emu.eventType.endFrame callback, NOT frameadvance loop
+        // NOTE: emu.getScriptDataFolder() does NOT return a trailing path separator
+        // on Windows, so concatenating "screenshot.png" lands the file OUTSIDE the
+        // script's data folder. We add the separator explicitly.
         return """
 local targetFrame = $targetFrame
 local outputFile = "$outputFile"
@@ -93,6 +108,10 @@ function onEndFrame()
     if frame == targetFrame then
         local data = emu.takeScreenshot()
         local basePath = emu.getScriptDataFolder()
+        local sep = string.sub(basePath, -1)
+        if sep ~= "/" and sep ~= "\\" then
+            basePath = basePath .. "\\"
+        end
         local fullPath = basePath .. outputFile
         local f = io.open(fullPath, "wb")
         if f then

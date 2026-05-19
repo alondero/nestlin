@@ -103,4 +103,16 @@ tasks.register<Test>("testMesenComparison") {
         include("**/${testClass.replace('.', '/')}.class")
     }
     useJUnit()
+    // Forward MESEN2_PATH to the test JVM so the runner can locate Mesen2.
+    // The Gradle daemon may not inherit shell env vars cleanly between invocations,
+    // so we read it explicitly and pass it through.
+    val mesen2Path = System.getenv("MESEN2_PATH")
+    if (mesen2Path != null) {
+        environment("MESEN2_PATH", mesen2Path)
+    }
+    // Show stdout/stderr from tests (e.g. the diff% println) so we can see results.
+    testLogging {
+        events("passed", "failed", "skipped", "standard_out", "standard_error")
+        showStandardStreams = true
+    }
 }
