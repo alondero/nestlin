@@ -58,6 +58,12 @@ class Nestlin {
 
         try {
             while (running) {
+                if (config.paused) {
+                    Thread.sleep(10)
+                    // Reset throttle baseline so the first frame after resume isn't sped up
+                    lastFrameTimeNanos = System.nanoTime()
+                    continue
+                }
                 (1..3).forEach { ppu.tick() }
                 apu.tick()
                 cpu.tick()

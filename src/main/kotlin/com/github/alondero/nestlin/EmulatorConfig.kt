@@ -20,7 +20,13 @@ data class EmulatorConfig(
      * PAL (Europe): 50.007 FPS
      * Default: 60.0 (NTSC approximation)
      */
-    var targetFps: Double = 60.0
+    var targetFps: Double = 60.0,
+
+    /**
+     * Pause emulation. When true, the emulation loop short-circuits each
+     * iteration without ticking CPU/PPU/APU. Toggled from the UI's Emulation menu.
+     */
+    var paused: Boolean = false
 ) {
     /**
      * Target time per frame in nanoseconds.
