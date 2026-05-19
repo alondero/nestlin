@@ -17,12 +17,20 @@ object Mesen2Process {
 
     private const val ENV_VAR = "MESEN2_PATH"
     private const val SYS_PROP = "mesen2.path"
-    private val DEFAULT_MESEN2_PATH = Paths.get("X:/src/nestlin/tools/Mesen2/Mesen.exe")
     private val ARGS = listOf("--doNotSaveSettings")
 
+    // Tried in order when MESEN2_PATH / mesen2.path are unset:
+    // absolute parent path makes worktrees zero-config on Adam's machine;
+    // relative fallback works for other contributors running from project root.
+    private val DEFAULT_CANDIDATES = listOf(
+        Paths.get("X:/src/nestlin/tools/Mesen2/Mesen.exe"),
+        Paths.get("tools/Mesen2/Mesen.exe")
+    )
+
     fun mesen2Path(): Path {
-        val path = System.getenv(ENV_VAR) ?: System.getProperty(SYS_PROP)
-        return path?.let { Paths.get(it) } ?: DEFAULT_MESEN2_PATH
+        val override = System.getenv(ENV_VAR) ?: System.getProperty(SYS_PROP)
+        if (override != null) return Paths.get(override)
+        return DEFAULT_CANDIDATES.firstOrNull { it.toFile().exists() } ?: DEFAULT_CANDIDATES.first()
     }
 
     fun isAvailable(): Boolean = mesen2Path().toFile().exists()
