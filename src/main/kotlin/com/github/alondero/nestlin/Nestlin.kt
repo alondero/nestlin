@@ -15,7 +15,8 @@ class Nestlin {
     val apu: Apu
     internal val memory: Memory  // internal for test access
     private var running = false
-    private var lastFrameTimeNanos: Long = 0
+    private var nextSyncDeadlineNanos: Long = 0
+    private var ticksSinceLastSync: Int = 0
 
     init {
         memory = Memory()
@@ -54,7 +55,8 @@ class Nestlin {
 
     fun start() {
         running = true
-        lastFrameTimeNanos = System.nanoTime()
+        nextSyncDeadlineNanos = System.nanoTime()
+        ticksSinceLastSync = 0
 
         try {
             while (running) {
@@ -67,10 +69,11 @@ class Nestlin {
                 (1..3).forEach { ppu.tick() }
                 apu.tick()
                 cpu.tick()
+                ticksSinceLastSync++
 
-                // Check if frame completed and throttle if needed
-                if (ppu.frameJustCompleted()) {
-                    throttleIfEnabled()
+                if (ticksSinceLastSync >= TICKS_PER_SYNC_CHUNK) {
+                    ticksSinceLastSync = 0
+                    syncToWallClock()
                 }
             }
         } finally {
@@ -80,32 +83,49 @@ class Nestlin {
         }
     }
 
-    /**
-     * Throttle emulation speed to match target frame rate.
-     * Uses high-precision timing to sleep until the next frame should start.
-     * Only throttles if speedThrottlingEnabled is true.
-     */
-    private fun throttleIfEnabled() {
+    // Sleeping the emulation thread for ~16 ms per frame starves the APU consumer;
+    // syncing every ~1 ms keeps Apu.audioBuffer continuously fed without changing the
+    // total throttle time.
+    private fun syncToWallClock() {
         if (!config.speedThrottlingEnabled) return
 
-        val currentTime = System.nanoTime()
-        val elapsedNanos = currentTime - lastFrameTimeNanos
-        val targetNanos = config.targetFrameTimeNanos
+        val nanosPerTick = config.targetFrameTimeNanos / TICKS_PER_FRAME
+        nextSyncDeadlineNanos += TICKS_PER_SYNC_CHUNK * nanosPerTick
 
-        if (elapsedNanos < targetNanos) {
-            val sleepNanos = targetNanos - elapsedNanos
-            val sleepMillis = sleepNanos / 1_000_000
-            val remainderNanos = (sleepNanos % 1_000_000).toInt()
+        val now = System.nanoTime()
+        val ahead = nextSyncDeadlineNanos - now
 
-            if (sleepMillis > 0 || remainderNanos > 0) {
+        if (ahead > MIN_SLEEP_NANOS) {
+            try {
+                val sleepMillis = ahead / 1_000_000
+                val remainderNanos = (ahead % 1_000_000).toInt()
                 Thread.sleep(sleepMillis, remainderNanos)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
             }
+        } else if (-ahead > MAX_DRIFT_NANOS) {
+            // Emulation is running slower than wall clock and falling behind. Reset
+            // the deadline so we don't try to "catch up" by skipping all future sleeps
+            // (which would defeat throttling on hosts where the emu can briefly outpace
+            // its target during transient stalls).
+            nextSyncDeadlineNanos = now
         }
-
-        lastFrameTimeNanos = System.nanoTime()
     }
 
     fun stop() {running = false}
+
+    companion object {
+        // NTSC NES CPU ticks per frame, used to derive nanos-per-tick from targetFps.
+        private const val TICKS_PER_FRAME = 29830L
+        // Sync to wall clock every ~1 ms of emulated time (1789 ticks at 1.79 MHz).
+        // Small enough that APU production gaps are barely perceptible to the audio
+        // thread, large enough that sync overhead stays negligible.
+        private const val TICKS_PER_SYNC_CHUNK = 1789
+        // Skip sub-0.1 ms sleeps; JVM/OS timer resolution can't honor them reliably.
+        private const val MIN_SLEEP_NANOS = 100_000L
+        // If wall-clock is more than 100 ms ahead of emulation, give up trying to catch up.
+        private const val MAX_DRIFT_NANOS = 100_000_000L
+    }
 }
 
 class BadHeaderException(message: String) : RuntimeException(message)
