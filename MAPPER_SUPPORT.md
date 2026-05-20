@@ -69,6 +69,24 @@
   - IRQ counter reload: Fixed per NESdev spec - reload occurs when counter==0 OR reload flag is set
   - A12 edge detection: Wired from PPU pattern table access to mapper via a12EdgeListener
 
+## Mapper 9 (MMC2 / PxROM)
+**Status:** Working (Added 2026-05-20)
+
+- **Games:** Mike Tyson's Punch-Out!! / Punch-Out!! (the only commercial NES game using MMC2)
+- **Behavior:**
+  - PRG: 8KB switchable bank at `$8000-$9FFF` (selected by writes to `$A000-$AFFF`, low 4 bits); `$A000-$FFFF` fixed to the last three 8KB banks in order.
+  - CHR: two 4KB windows (`$0000-$0FFF`, `$1000-$1FFF`), each with a 2-state latch (`FD`/`FE`) that selects one of two CHR bank registers.
+  - Latch transitions fire on PPU pattern-table reads at coarse tile-row boundaries:
+    - Read in `$0FD8-$0FDF` → `latch0 = FD`
+    - Read in `$0FE8-$0FEF` → `latch0 = FE`
+    - Read in `$1FD8-$1FDF` → `latch1 = FD`
+    - Read in `$1FE8-$1FEF` → `latch1 = FE`
+  - **Read-then-flip ordering is critical:** the triggering read returns data from the current bank, and the latch flip affects only subsequent reads in that window.
+  - Mirroring: writes to `$F000-$FFFF` (bit 0) select vertical (0) or horizontal (1).
+  - No IRQ.
+- **Implementation notes:** MMC2's latch is the only mechanism in the codebase where CHR banking is driven by PPU read addresses rather than CPU writes. The same latch design generalises to Mapper 10 (MMC4) — only PRG banking granularity differs.
+- **Verification:** `Mapper9Test` covers PRG fixed-bank invariant, PRG bank select, both CHR latches with read-then-flip ordering, latch independence, latch trigger range, and mirroring control.
+
 ## Mapper 7 (AxROM)
 **Status:** Working (Verified 2026-04-27)
 
