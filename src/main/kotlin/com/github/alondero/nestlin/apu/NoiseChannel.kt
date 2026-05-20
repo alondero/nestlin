@@ -2,6 +2,8 @@ package com.github.alondero.nestlin.apu
 
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 class NoiseChannel {
     private val envelope = Envelope()
@@ -93,4 +95,24 @@ class NoiseChannel {
     }
 
     fun getLengthCounterValue(): Int = lengthCounter.value
+
+    fun saveState(out: DataOutput) {
+        out.writeBoolean(isEnabled)
+        out.writeBoolean(modeFlag)
+        out.writeInt(period)
+        out.writeInt(timerCounter)
+        out.writeInt(shiftRegister)
+        envelope.saveState(out)
+        lengthCounter.saveState(out)
+    }
+
+    fun loadState(input: DataInput) {
+        isEnabled = input.readBoolean()
+        modeFlag = input.readBoolean()
+        period = input.readInt()
+        timerCounter = input.readInt()
+        shiftRegister = input.readInt()
+        envelope.loadState(input)
+        lengthCounter.loadState(input)
+    }
 }

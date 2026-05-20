@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 /**
  * Mapper 11 (Color Dreams) - CHR bank switching only.
@@ -59,6 +61,20 @@ class Mapper11(private val gamePak: GamePak) : Mapper {
             Header.Mirroring.HORIZONTAL -> Mapper.MirroringMode.HORIZONTAL
             Header.Mirroring.VERTICAL -> Mapper.MirroringMode.VERTICAL
         }
+    }
+
+    override fun saveState(out: DataOutput) {
+        out.writeInt(chrBank)
+        out.writeInt(prgBank)
+        out.writeBoolean(chrRam != null)
+        if (chrRam != null) out.write(chrRam)
+    }
+
+    override fun loadState(input: DataInput) {
+        chrBank = input.readInt()
+        prgBank = input.readInt()
+        val hasChrRam = input.readBoolean()
+        if (hasChrRam && chrRam != null) input.readFully(chrRam)
     }
 
     override fun snapshot(): MapperStateSnapshot {

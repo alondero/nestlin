@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 /**
  * Mapper 5 (MMC5/ExROM) - Nintendo's most feature-rich discrete mapper.
@@ -294,6 +296,60 @@ class Mapper5(private val gamePak: GamePak) : Mapper {
     }
 
     override fun isIrqPending(): Boolean = irqPending
+
+    override fun saveState(out: DataOutput) {
+        out.writeInt(prgBank8000)
+        out.writeInt(prgBankA000)
+        out.writeInt(prgBankC000)
+        out.write(prgRam)
+        out.writeBoolean(prgRamEnabled)
+        out.write(exRam)
+        out.writeBoolean(exRamEnabled)
+        out.writeInt(control)
+        out.writeInt(prgMode)
+        out.writeBoolean(chrMode8k)
+        out.writeInt(chrBank)
+        out.writeBoolean(fillModeEnabled)
+        out.writeInt(fillTile)
+        out.writeInt(fillPalette)
+        out.writeInt(fillAttribute)
+        out.writeBoolean(irqEnabled)
+        out.writeInt(irqLatch)
+        out.writeInt(irqCounter)
+        out.writeBoolean(irqPending)
+        out.writeBoolean(irqEnablePending)
+        out.writeInt(multiplicand)
+        out.writeInt(multiplier)
+        out.writeBoolean(chrRam != null)
+        if (chrRam != null) out.write(chrRam)
+    }
+
+    override fun loadState(input: DataInput) {
+        prgBank8000 = input.readInt()
+        prgBankA000 = input.readInt()
+        prgBankC000 = input.readInt()
+        input.readFully(prgRam)
+        prgRamEnabled = input.readBoolean()
+        input.readFully(exRam)
+        exRamEnabled = input.readBoolean()
+        control = input.readInt()
+        prgMode = input.readInt()
+        chrMode8k = input.readBoolean()
+        chrBank = input.readInt()
+        fillModeEnabled = input.readBoolean()
+        fillTile = input.readInt()
+        fillPalette = input.readInt()
+        fillAttribute = input.readInt()
+        irqEnabled = input.readBoolean()
+        irqLatch = input.readInt()
+        irqCounter = input.readInt()
+        irqPending = input.readBoolean()
+        irqEnablePending = input.readBoolean()
+        multiplicand = input.readInt()
+        multiplier = input.readInt()
+        val hasChrRam = input.readBoolean()
+        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+    }
 
     override fun snapshot(): MapperStateSnapshot {
         return MapperStateSnapshot(

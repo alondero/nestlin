@@ -2,6 +2,8 @@ package com.github.alondero.nestlin.apu
 
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 class TriangleChannel {
     private val lengthCounter = LengthCounter()
@@ -95,4 +97,28 @@ class TriangleChannel {
     }
 
     fun getLengthCounterValue(): Int = lengthCounter.value
+
+    fun saveState(out: DataOutput) {
+        out.writeBoolean(isEnabled)
+        out.writeBoolean(controlFlag)
+        out.writeInt(linearCounterReload)
+        out.writeInt(timerPeriod)
+        out.writeInt(timerCounter)
+        out.writeInt(sequenceStep)
+        out.writeInt(linearCounter)
+        out.writeBoolean(linearCounterReloadFlag)
+        lengthCounter.saveState(out)
+    }
+
+    fun loadState(input: DataInput) {
+        isEnabled = input.readBoolean()
+        controlFlag = input.readBoolean()
+        linearCounterReload = input.readInt()
+        timerPeriod = input.readInt()
+        timerCounter = input.readInt()
+        sequenceStep = input.readInt()
+        linearCounter = input.readInt()
+        linearCounterReloadFlag = input.readBoolean()
+        lengthCounter.loadState(input)
+    }
 }

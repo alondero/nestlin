@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.ppu
 
 import com.github.alondero.nestlin.*
+import java.io.DataInput
+import java.io.DataOutput
 
 class PpuAddressedMemory {
     val controller = Control()    // $2000
@@ -67,6 +69,44 @@ class PpuAddressedMemory {
         data = 0
 
         writeToggle = false
+    }
+
+    fun saveState(out: DataOutput) {
+        out.writeByte(controller.register.toInt())
+        out.writeByte(mask.register.toInt())
+        out.writeByte(status.register.toInt())
+        out.writeByte(oamAddress.toInt())
+        out.writeByte(oamData.toInt())
+        out.writeByte(scroll.toInt())
+        out.writeByte(address.toInt())
+        out.writeByte(data.toInt())
+        out.writeBoolean(writeToggle)
+        vRamAddress.saveState(out)
+        tempVRamAddress.saveState(out)
+        out.writeInt(fineXScroll)
+        out.writeBoolean(nmiOccurred)
+        out.writeBoolean(nmiOutput)
+        ppuInternalMemory.saveState(out)
+        objectAttributeMemory.saveState(out)
+    }
+
+    fun loadState(input: DataInput) {
+        controller.register = input.readByte()
+        mask.register = input.readByte()
+        status.register = input.readByte()
+        oamAddress = input.readByte()
+        oamData = input.readByte()
+        scroll = input.readByte()
+        address = input.readByte()
+        data = input.readByte()
+        writeToggle = input.readBoolean()
+        vRamAddress.loadState(input)
+        tempVRamAddress.loadState(input)
+        fineXScroll = input.readInt()
+        nmiOccurred = input.readBoolean()
+        nmiOutput = input.readBoolean()
+        ppuInternalMemory.loadState(input)
+        objectAttributeMemory.loadState(input)
     }
 
     operator fun get(addr: Int): Byte {

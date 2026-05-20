@@ -3,6 +3,8 @@ package com.github.alondero.nestlin.apu
 import com.github.alondero.nestlin.apu.DmaPort
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 class DmcChannel(private val dmaPort: DmaPort) {
     var isEnabled: Boolean = false
@@ -149,5 +151,42 @@ class DmcChannel(private val dmaPort: DmaPort) {
             shiftRegister = shiftRegister shr 1
             bitsRemaining--
         }
+    }
+
+    fun saveState(out: DataOutput) {
+        out.writeBoolean(isEnabled)
+        out.writeBoolean(irqEnabled)
+        out.writeBoolean(irqPending)
+        out.writeBoolean(loop)
+        out.writeInt(rateIndex)
+        out.writeInt(outputLevel)
+        out.writeInt(sampleAddress)
+        out.writeInt(sampleLength)
+        out.writeInt(currentAddress)
+        out.writeInt(remainingBytes)
+        out.writeBoolean(sampleBuffer != null)
+        if (sampleBuffer != null) out.writeByte(sampleBuffer!!.toInt())
+        out.writeInt(shiftRegister)
+        out.writeInt(bitsRemaining)
+        out.writeInt(timerCounter)
+        out.writeBoolean(silenceFlag)
+    }
+
+    fun loadState(input: DataInput) {
+        isEnabled = input.readBoolean()
+        irqEnabled = input.readBoolean()
+        irqPending = input.readBoolean()
+        loop = input.readBoolean()
+        rateIndex = input.readInt()
+        outputLevel = input.readInt()
+        sampleAddress = input.readInt()
+        sampleLength = input.readInt()
+        currentAddress = input.readInt()
+        remainingBytes = input.readInt()
+        sampleBuffer = if (input.readBoolean()) input.readByte() else null
+        shiftRegister = input.readInt()
+        bitsRemaining = input.readInt()
+        timerCounter = input.readInt()
+        silenceFlag = input.readBoolean()
     }
 }

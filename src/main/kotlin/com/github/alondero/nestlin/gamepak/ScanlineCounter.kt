@@ -1,5 +1,8 @@
 package com.github.alondero.nestlin.gamepak
 
+import java.io.DataInput
+import java.io.DataOutput
+
 /**
  * MMC3-style scanline IRQ counter.
  *
@@ -71,4 +74,20 @@ class ScanlineCounter {
     fun irqLatchValue(): Int = irqLatch
     fun irqCounterValue(): Int = irqCounter
     fun isIrqEnabled(): Boolean = irqEnabled
+
+    fun saveState(out: DataOutput) {
+        out.writeInt(irqLatch)
+        out.writeBoolean(irqReload)
+        out.writeBoolean(irqEnabled)
+        out.writeInt(irqCounter)
+        out.writeBoolean(irqPending)
+    }
+
+    fun loadState(input: DataInput) {
+        irqLatch = input.readInt()
+        irqReload = input.readBoolean()
+        irqEnabled = input.readBoolean()
+        irqCounter = input.readInt()
+        irqPending = input.readBoolean()
+    }
 }

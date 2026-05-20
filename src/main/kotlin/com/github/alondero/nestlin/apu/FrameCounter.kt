@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.apu
 
 import com.github.alondero.nestlin.isBitSet
+import java.io.DataInput
+import java.io.DataOutput
 
 class FrameCounter {
     enum class Mode {
@@ -85,4 +87,18 @@ class FrameCounter {
     }
 
     fun maxCycles(): Int = if (mode == Mode.FOUR_STEP) 29830 else 37282
+
+    fun saveState(out: DataOutput) {
+        out.writeInt(mode.ordinal)
+        out.writeBoolean(irqInhibit)
+        out.writeInt(step)
+        out.writeInt(cyclesSinceReset)
+    }
+
+    fun loadState(input: DataInput) {
+        mode = Mode.values()[input.readInt()]
+        irqInhibit = input.readBoolean()
+        step = input.readInt()
+        cyclesSinceReset = input.readInt()
+    }
 }

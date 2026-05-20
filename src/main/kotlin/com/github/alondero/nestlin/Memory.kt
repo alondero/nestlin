@@ -5,6 +5,8 @@ import com.github.alondero.nestlin.gamepak.Mapper
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
 import com.github.alondero.nestlin.apu.ApuAddressedMemory
 import com.github.alondero.nestlin.apu.DmaPort
+import java.io.DataInput
+import java.io.DataOutput
 
 class Memory : DmaPort {
     private val internalRam = ByteArray(0x800)
@@ -37,6 +39,19 @@ class Memory : DmaPort {
 
         // Apply initial mirroring from mapper
         applyMirroringFromMapper(m)
+    }
+
+    /** Re-applies the current mapper's mirroring to the PPU. Called after save state restore. */
+    fun syncMirroringFromMapper() {
+        mapper?.let { applyMirroringFromMapper(it) }
+    }
+
+    fun saveRamState(out: DataOutput) {
+        out.write(internalRam)
+    }
+
+    fun loadRamState(input: DataInput) {
+        input.readFully(internalRam)
     }
 
     private fun applyMirroringFromMapper(m: Mapper) {

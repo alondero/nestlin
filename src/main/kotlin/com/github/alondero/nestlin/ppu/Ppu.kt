@@ -2,6 +2,8 @@ package com.github.alondero.nestlin.ppu
 
 import com.github.alondero.nestlin.*
 import com.github.alondero.nestlin.ui.FrameListener
+import java.io.DataInput
+import java.io.DataOutput
 
 const val RESOLUTION_WIDTH = 256
 const val RESOLUTION_HEIGHT = 240
@@ -573,6 +575,129 @@ class Ppu(var memory: Memory) {
     fun addFrameCompletionListener(listener: () -> Unit) {
         frameCompletionListener = listener
     }
+
+    fun saveState(out: DataOutput) {
+        memory.ppuAddressedMemory.saveState(out)
+
+        out.writeInt(cycle)
+        out.writeInt(scanline)
+
+        out.writeInt(patternShiftLow)
+        out.writeInt(patternShiftHigh)
+        out.writeInt(paletteShiftLow)
+        out.writeInt(paletteShiftHigh)
+
+        out.writeByte(patternLatchLow.toInt())
+        out.writeByte(patternLatchHigh.toInt())
+        out.writeInt(paletteLatch)
+
+        out.writeBoolean(vBlank)
+        out.writeInt(frameCount)
+        out.writeByte(lastNametableByte.toInt())
+
+        out.writeByte(spriteTileLowLatch.toInt())
+        out.writeByte(spriteTileHighLatch.toInt())
+        out.writeInt(spritePatternAddrLatch)
+
+        writeActiveSpriteList(out, activeSpriteBuffer)
+        writeActiveSpriteList(out, nextScanlineSprites)
+        writeSecondaryOamList(out, secondaryOam)
+    }
+
+    fun loadState(input: DataInput) {
+        memory.ppuAddressedMemory.loadState(input)
+
+        cycle = input.readInt()
+        scanline = input.readInt()
+
+        patternShiftLow = input.readInt()
+        patternShiftHigh = input.readInt()
+        paletteShiftLow = input.readInt()
+        paletteShiftHigh = input.readInt()
+
+        patternLatchLow = input.readByte()
+        patternLatchHigh = input.readByte()
+        paletteLatch = input.readInt()
+
+        vBlank = input.readBoolean()
+        frameCount = input.readInt()
+        lastNametableByte = input.readByte()
+
+        spriteTileLowLatch = input.readByte()
+        spriteTileHighLatch = input.readByte()
+        spritePatternAddrLatch = input.readInt()
+
+        activeSpriteBuffer.clear()
+        activeSpriteBuffer.addAll(readActiveSpriteList(input))
+        nextScanlineSprites.clear()
+        nextScanlineSprites.addAll(readActiveSpriteList(input))
+        secondaryOam.clear()
+        secondaryOam.addAll(readSecondaryOamList(input))
+    }
+
+    private fun writeActiveSpriteList(out: DataOutput, list: List<ActiveSprite>) {
+        out.writeInt(list.size)
+        for (s in list) {
+            writeSpriteData(out, s.data)
+            out.writeByte(s.tileDataLow.toInt())
+            out.writeByte(s.tileDataHigh.toInt())
+            out.writeInt(s.shiftLow)
+            out.writeInt(s.shiftHigh)
+            out.writeInt(s.xCounter)
+            out.writeBoolean(s.isActive)
+        }
+    }
+
+    private fun readActiveSpriteList(input: DataInput): List<ActiveSprite> {
+        val n = input.readInt()
+        return List(n) {
+            val data = readSpriteData(input)
+            val tileLow = input.readByte()
+            val tileHigh = input.readByte()
+            ActiveSprite(
+                data = data,
+                tileDataLow = tileLow,
+                tileDataHigh = tileHigh,
+                shiftLow = input.readInt(),
+                shiftHigh = input.readInt(),
+                xCounter = input.readInt(),
+                isActive = input.readBoolean()
+            )
+        }
+    }
+
+    private fun writeSecondaryOamList(out: DataOutput, list: List<SecondaryOamEntry>) {
+        out.writeInt(list.size)
+        for (e in list) {
+            writeSpriteData(out, e.sprite)
+            out.writeInt(e.tileY)
+        }
+    }
+
+    private fun readSecondaryOamList(input: DataInput): List<SecondaryOamEntry> {
+        val n = input.readInt()
+        return List(n) {
+            val data = readSpriteData(input)
+            SecondaryOamEntry(data, input.readInt())
+        }
+    }
+
+    private fun writeSpriteData(out: DataOutput, s: SpriteData) {
+        out.writeInt(s.index)
+        out.writeInt(s.y)
+        out.writeByte(s.tileIndex.toInt())
+        out.writeByte(s.attributes.toInt())
+        out.writeInt(s.x)
+    }
+
+    private fun readSpriteData(input: DataInput): SpriteData {
+        val index = input.readInt()
+        val y = input.readInt()
+        val tileIndex = input.readByte()
+        val attributes = input.readByte()
+        val x = input.readInt()
+        return SpriteData(index, y, tileIndex, attributes, x)
+    }
 }
 
 
@@ -604,6 +729,9 @@ class ObjectAttributeMemory {
             x = memory[base + 3].toUnsignedInt()
         )
     }
+
+    fun saveState(out: DataOutput) { out.write(memory) }
+    fun loadState(input: DataInput) { input.readFully(memory) }
 }
 
 /**

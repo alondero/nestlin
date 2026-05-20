@@ -1,5 +1,8 @@
 package com.github.alondero.nestlin.gamepak
 
+import java.io.DataInput
+import java.io.DataOutput
+
 interface Mapper {
     fun cpuRead(address: Int): Byte
     fun cpuWrite(address: Int, value: Byte)
@@ -14,6 +17,10 @@ interface Mapper {
 
     // State snapshot for debugging
     fun snapshot(): MapperStateSnapshot? = null
+
+    // Save state persistence. Default no-op for mappers that have no mutable state.
+    fun saveState(out: DataOutput) {}
+    fun loadState(input: DataInput) {}
 
     enum class MirroringMode {
         HORIZONTAL,

@@ -1,5 +1,8 @@
 package com.github.alondero.nestlin.apu
 
+import java.io.DataInput
+import java.io.DataOutput
+
 class Envelope {
     var startFlag: Boolean = false
     var divider: Int = 0
@@ -34,5 +37,23 @@ class Envelope {
     fun reset() {
         decayLevel = 0
         divider = 0
+    }
+
+    fun saveState(out: DataOutput) {
+        out.writeBoolean(startFlag)
+        out.writeInt(divider)
+        out.writeInt(decayLevel)
+        out.writeBoolean(loop)
+        out.writeBoolean(constantVolume)
+        out.writeInt(volume)
+    }
+
+    fun loadState(input: DataInput) {
+        startFlag = input.readBoolean()
+        divider = input.readInt()
+        decayLevel = input.readInt()
+        loop = input.readBoolean()
+        constantVolume = input.readBoolean()
+        volume = input.readInt()
     }
 }

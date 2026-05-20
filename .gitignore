@@ -32,6 +32,10 @@ CLAUDE.local.md
 # Screenshot directory (generated at runtime)
 screenshots/
 
+# Save state directory (generated at runtime by F5 quicksave) and any stray save files
+savestates/
+*.nstl
+
 # Doc screenshots (generated at runtime)
 doc/screenshots/*.png
 

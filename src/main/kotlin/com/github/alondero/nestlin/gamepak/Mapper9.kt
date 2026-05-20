@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 /**
  * Mapper 9 (MMC2 / PxROM) - Punch-Out!!
@@ -116,6 +118,28 @@ class Mapper9(private val gamePak: GamePak) : Mapper {
     }
 
     override fun currentMirroring(): Mapper.MirroringMode = mirroringMode
+
+    override fun saveState(out: DataOutput) {
+        out.writeInt(prgBank)
+        out.writeInt(chrBank0FD)
+        out.writeInt(chrBank0FE)
+        out.writeInt(chrBank1FD)
+        out.writeInt(chrBank1FE)
+        out.writeBoolean(latch0Fe)
+        out.writeBoolean(latch1Fe)
+        out.writeInt(mirroringMode.ordinal)
+    }
+
+    override fun loadState(input: DataInput) {
+        prgBank = input.readInt()
+        chrBank0FD = input.readInt()
+        chrBank0FE = input.readInt()
+        chrBank1FD = input.readInt()
+        chrBank1FE = input.readInt()
+        latch0Fe = input.readBoolean()
+        latch1Fe = input.readBoolean()
+        mirroringMode = Mapper.MirroringMode.values()[input.readInt()]
+    }
 
     override fun snapshot(): MapperStateSnapshot {
         return MapperStateSnapshot(

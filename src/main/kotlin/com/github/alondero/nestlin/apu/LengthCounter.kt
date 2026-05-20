@@ -1,5 +1,8 @@
 package com.github.alondero.nestlin.apu
 
+import java.io.DataInput
+import java.io.DataOutput
+
 class LengthCounter {
     var value: Int = 0
     var halt: Boolean = false
@@ -18,5 +21,15 @@ class LengthCounter {
         if (!halt && value > 0) {
             value--
         }
+    }
+
+    fun saveState(out: DataOutput) {
+        out.writeInt(value)
+        out.writeBoolean(halt)
+    }
+
+    fun loadState(input: DataInput) {
+        value = input.readInt()
+        halt = input.readBoolean()
     }
 }

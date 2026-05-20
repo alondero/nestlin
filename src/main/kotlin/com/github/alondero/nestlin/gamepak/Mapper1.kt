@@ -2,6 +2,8 @@ package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 /**
  * Mapper 1 (MMC1) - Nintendo's first bank-switching mapper.
@@ -143,6 +145,28 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
             2 -> Mapper.MirroringMode.VERTICAL
             else -> Mapper.MirroringMode.HORIZONTAL
         }
+    }
+
+    override fun saveState(out: DataOutput) {
+        out.writeInt(shiftReg)
+        out.writeByte(controlReg.toInt())
+        out.writeInt(chrBank0)
+        out.writeInt(chrBank1)
+        out.writeInt(prgBank)
+        out.writeBoolean(chrRam != null)
+        if (chrRam != null) out.write(chrRam)
+        out.write(prgRam)
+    }
+
+    override fun loadState(input: DataInput) {
+        shiftReg = input.readInt()
+        controlReg = input.readByte()
+        chrBank0 = input.readInt()
+        chrBank1 = input.readInt()
+        prgBank = input.readInt()
+        val hasChrRam = input.readBoolean()
+        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readFully(prgRam)
     }
 
     override fun snapshot(): MapperStateSnapshot {

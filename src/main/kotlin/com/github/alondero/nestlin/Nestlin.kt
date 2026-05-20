@@ -5,6 +5,9 @@ import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.ppu.Ppu
 import com.github.alondero.nestlin.ui.FrameListener
+import java.io.InputStream
+import java.io.OutputStream
+import java.nio.file.Files
 import java.nio.file.Path
 
 class Nestlin {
@@ -53,6 +56,22 @@ class Nestlin {
         cpu.reset()
     }
 
+    /** Write the current emulator state to [out]. Caller is responsible for closing. */
+    fun saveState(out: OutputStream) = SaveState.save(this, out)
+
+    /** Restore emulator state from [input]. Caller is responsible for closing. */
+    fun loadState(input: InputStream) = SaveState.load(this, input)
+
+    /** Convenience overload: write save state to a file path. */
+    fun saveState(path: Path) {
+        Files.newOutputStream(path).use { saveState(it) }
+    }
+
+    /** Convenience overload: read save state from a file path. */
+    fun loadState(path: Path) {
+        Files.newInputStream(path).use { loadState(it) }
+    }
+
     fun start() {
         running = true
         nextSyncDeadlineNanos = System.nanoTime()
@@ -62,8 +81,10 @@ class Nestlin {
             while (running) {
                 if (config.paused) {
                     Thread.sleep(10)
-                    // Reset throttle baseline so the first frame after resume isn't sped up
-                    lastFrameTimeNanos = System.nanoTime()
+                    // Reset throttle baseline so the first frame after resume isn't sped up.
+                    // Without this, syncToWallClock would treat the pause duration as drift to "catch up".
+                    nextSyncDeadlineNanos = System.nanoTime()
+                    ticksSinceLastSync = 0
                     continue
                 }
                 (1..3).forEach { ppu.tick() }
