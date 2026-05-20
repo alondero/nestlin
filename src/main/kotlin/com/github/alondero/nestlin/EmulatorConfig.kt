@@ -1,5 +1,10 @@
 package com.github.alondero.nestlin
 
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+
 /**
  * Configuration settings for the emulator.
  *
@@ -34,4 +39,56 @@ data class EmulatorConfig(
      */
     val targetFrameTimeNanos: Long
         get() = (1_000_000_000.0 / targetFps).toLong()
+
+    companion object {
+        private val configDir = File(System.getProperty("user.home"), ".config/nestlin")
+        private val recentRomsFile = File(configDir, "recent_roms.json")
+        private const val MAX_RECENT_ROMS = 10
+
+        private val gson = com.google.gson.GsonBuilder().create()
+
+        /**
+         * Add a ROM path to the recent ROMs list.
+         * If the path already exists, it's moved to the front.
+         * Maintains a maximum of 10 entries.
+         */
+        fun addRecentRom(path: Path) {
+            val recentRoms = getRecentRoms().toMutableList()
+            recentRoms.remove(path)
+            recentRoms.add(0, path)
+            val trimmed = recentRoms.take(MAX_RECENT_ROMS)
+            saveRecentRoms(trimmed)
+        }
+
+        /**
+         * Get the list of recent ROMs, filtering out paths that no longer exist.
+         */
+        fun getRecentRoms(): List<Path> {
+            return try {
+                if (recentRomsFile.exists()) {
+                    val json = recentRomsFile.readText()
+                    val paths: List<String> = gson.fromJson(json, object : com.google.gson.reflect.TypeToken<List<String>>() {}.type)
+                    paths.mapNotNull { pathStr ->
+                        val path = Paths.get(pathStr)
+                        if (Files.exists(path)) path else null
+                    }
+                } else {
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                println("[CONFIG] Error loading recent ROMs: ${e.message}")
+                emptyList()
+            }
+        }
+
+        private fun saveRecentRoms(roms: List<Path>) {
+            try {
+                configDir.mkdirs()
+                val pathsAsStrings = roms.map { it.toAbsolutePath().toString() }
+                recentRomsFile.writeText(gson.toJson(pathsAsStrings))
+            } catch (e: Exception) {
+                println("[CONFIG] Error saving recent ROMs: ${e.message}")
+            }
+        }
+    }
 }

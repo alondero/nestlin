@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.ui
 
+import com.github.alondero.nestlin.EmulatorConfig
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Controller
 import com.github.alondero.nestlin.SaveState
@@ -76,6 +77,9 @@ class NestlinApplication : FrameListener, App() {
     // to clear pause when starting a fresh game via Load / Hard Reset.
     private var pauseMenuItem: javafx.scene.control.CheckMenuItem? = null
 
+    // Load Recent submenu
+    private val recentRomsMenu = Menu("Load Recent")
+
     override fun start(stage: Stage) {
         this.stage = stage.apply {
             title = "Nestlin"
@@ -101,8 +105,9 @@ class NestlinApplication : FrameListener, App() {
             val exitItem = MenuItem("Exit")
             exitItem.setOnAction { handleExit() }
 
-            fileMenu.items.addAll(loadGameItem, hardResetItem, saveStateItem, loadStateItem, exitItem)
+            fileMenu.items.addAll(loadGameItem, recentRomsMenu, hardResetItem, saveStateItem, loadStateItem, exitItem)
             menuBar.menus.add(fileMenu)
+            updateRecentMenu()
 
             // Settings menu
             val settingsMenu = javafx.scene.control.Menu("Settings")
@@ -319,6 +324,8 @@ class NestlinApplication : FrameListener, App() {
             nestlin.powerReset()
             clearPauseState()
             updateTitle()
+            EmulatorConfig.addRecentRom(romPath)
+            updateRecentMenu()
             startEmulation()
         }
     }
@@ -333,6 +340,32 @@ class NestlinApplication : FrameListener, App() {
         val gameName = nestlin.currentGameName()
         val base = if (gameName.isNotEmpty()) "Nestlin - $gameName" else "Nestlin"
         stage.title = if (nestlin.config.paused) "$base (Paused)" else base
+    }
+
+    private fun updateRecentMenu() {
+        recentRomsMenu.items.clear()
+        val recentRoms = EmulatorConfig.getRecentRoms()
+        if (recentRoms.isEmpty()) {
+            val emptyItem = MenuItem("(empty)")
+            emptyItem.isDisable = true
+            recentRomsMenu.items.add(emptyItem)
+        } else {
+            for (path in recentRoms) {
+                val item = MenuItem(path.fileName.toString())
+                item.setOnAction { loadRom(path) }
+                recentRomsMenu.items.add(item)
+            }
+        }
+    }
+
+    private fun loadRom(path: Path) {
+        stopEmulation()
+        currentRomPath = path
+        nestlin.load(path)
+        nestlin.powerReset()
+        clearPauseState()
+        updateTitle()
+        startEmulation()
     }
 
     private fun handleSaveState() {
