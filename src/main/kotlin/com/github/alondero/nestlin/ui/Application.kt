@@ -107,7 +107,7 @@ class NestlinApplication : FrameListener, App() {
 
             fileMenu.items.addAll(loadGameItem, recentRomsMenu, hardResetItem, saveStateItem, loadStateItem, exitItem)
             menuBar.menus.add(fileMenu)
-            updateRecentMenu()
+            updateRecentMenu(EmulatorConfig.getRecentRoms())
 
             // Settings menu
             val settingsMenu = javafx.scene.control.Menu("Settings")
@@ -325,7 +325,7 @@ class NestlinApplication : FrameListener, App() {
             clearPauseState()
             updateTitle()
             EmulatorConfig.addRecentRom(romPath)
-            updateRecentMenu()
+            updateRecentMenu(EmulatorConfig.getRecentRoms())
             startEmulation()
         }
     }
@@ -342,9 +342,8 @@ class NestlinApplication : FrameListener, App() {
         stage.title = if (nestlin.config.paused) "$base (Paused)" else base
     }
 
-    private fun updateRecentMenu() {
+    private fun updateRecentMenu(recentRoms: List<Path>) {
         recentRomsMenu.items.clear()
-        val recentRoms = EmulatorConfig.getRecentRoms()
         if (recentRoms.isEmpty()) {
             val emptyItem = MenuItem("(empty)")
             emptyItem.isDisable = true

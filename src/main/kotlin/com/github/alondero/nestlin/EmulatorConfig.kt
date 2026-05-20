@@ -51,13 +51,15 @@ data class EmulatorConfig(
          * Add a ROM path to the recent ROMs list.
          * If the path already exists, it's moved to the front.
          * Maintains a maximum of 10 entries.
+         * Returns the updated list (avoids a redundant file read on the caller's side).
          */
-        fun addRecentRom(path: Path) {
+        fun addRecentRom(path: Path): List<Path> {
             val recentRoms = getRecentRoms().toMutableList()
             recentRoms.remove(path)
             recentRoms.add(0, path)
             val trimmed = recentRoms.take(MAX_RECENT_ROMS)
             saveRecentRoms(trimmed)
+            return trimmed
         }
 
         /**
@@ -65,15 +67,11 @@ data class EmulatorConfig(
          */
         fun getRecentRoms(): List<Path> {
             return try {
-                if (recentRomsFile.exists()) {
-                    val json = recentRomsFile.readText()
-                    val paths: List<String> = gson.fromJson(json, object : com.google.gson.reflect.TypeToken<List<String>>() {}.type)
-                    paths.mapNotNull { pathStr ->
-                        val path = Paths.get(pathStr)
-                        if (Files.exists(path)) path else null
-                    }
-                } else {
-                    emptyList()
+                val json = recentRomsFile.readText()
+                val paths: List<String> = gson.fromJson(json, object : com.google.gson.reflect.TypeToken<List<String>>() {}.type)
+                paths.mapNotNull { pathStr ->
+                    val path = Paths.get(pathStr)
+                    if (Files.exists(path)) path else null
                 }
             } catch (e: Exception) {
                 println("[CONFIG] Error loading recent ROMs: ${e.message}")
@@ -83,7 +81,7 @@ data class EmulatorConfig(
 
         private fun saveRecentRoms(roms: List<Path>) {
             try {
-                configDir.mkdirs()
+                if (!configDir.exists()) configDir.mkdirs()
                 val pathsAsStrings = roms.map { it.toAbsolutePath().toString() }
                 recentRomsFile.writeText(gson.toJson(pathsAsStrings))
             } catch (e: Exception) {
