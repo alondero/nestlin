@@ -50,19 +50,18 @@ class AudioResampler(
             position += ratio
         }
 
-        // Discard consumed samples from buffer
-        // Note: position can be negative if we dropped samples when position < 1
-        // In that case, clamp to 0 since we've consumed beyond the buffer start
+        // After the loop, `position` points to the next input sample to interpolate
+        // from. Everything before floor(position) has been fully consumed and can be
+        // discarded; the fractional part stays as the offset for the next call.
         if (position < 0) {
+            // Defensive: push() can decrement position when dropping samples on overflow.
             head = 0
             position = 0.0
         } else {
-            // The CORRECT formula: we consumed `produced` input samples (each output consumes `ratio` samples).
-            // So we should discard `produced` samples, not floor(position).
-            // Note: `produced` is the count of outputs we just generated.
-            if (produced > 0) {
-                discard(produced)
-                position -= produced * ratio
+            val toDiscard = position.toInt()
+            if (toDiscard > 0) {
+                discard(toDiscard)
+                position -= toDiscard
             }
         }
 

@@ -72,6 +72,10 @@ class NestlinApplication : FrameListener, App() {
     private val inputConfig = InputConfig.load()
     private lateinit var gamepadInput: GamepadInput
 
+    // Held to keep the menu's check state in sync with keyboard shortcuts and
+    // to clear pause when starting a fresh game via Load / Hard Reset.
+    private var pauseMenuItem: javafx.scene.control.CheckMenuItem? = null
+
     override fun start(stage: Stage) {
         this.stage = stage.apply {
             title = "Nestlin"
@@ -113,6 +117,22 @@ class NestlinApplication : FrameListener, App() {
             settingsMenu.items.add(throttleMenuItem)
             menuBar.menus.add(settingsMenu)
 
+            // Emulation menu
+            val emulationMenu = javafx.scene.control.Menu("Emulation")
+
+            val pauseItem = javafx.scene.control.CheckMenuItem("Pause")
+            pauseItem.isSelected = nestlin.config.paused
+            pauseItem.accelerator = javafx.scene.input.KeyCombination.keyCombination("Ctrl+P")
+            pauseItem.setOnAction {
+                nestlin.config.paused = pauseItem.isSelected
+                updateTitle()
+                println("[APP] Emulation ${if (nestlin.config.paused) "paused" else "resumed"}")
+            }
+            pauseMenuItem = pauseItem
+
+            emulationMenu.items.add(pauseItem)
+            menuBar.menus.add(emulationMenu)
+
             // Create layout with menu bar and canvas
             val root = javafx.scene.layout.VBox()
             root.children.addAll(menuBar, canvas)
@@ -126,6 +146,14 @@ class NestlinApplication : FrameListener, App() {
                         nestlin.config.speedThrottlingEnabled = !nestlin.config.speedThrottlingEnabled
                         throttleMenuItem.isSelected = nestlin.config.speedThrottlingEnabled
                         println("[APP] Speed throttling ${if (nestlin.config.speedThrottlingEnabled) "enabled" else "disabled"}")
+                        event.consume()
+                    }
+                    // Ctrl+P: toggle pause
+                    event.code == javafx.scene.input.KeyCode.P && event.isControlDown -> {
+                        nestlin.config.paused = !nestlin.config.paused
+                        pauseMenuItem?.isSelected = nestlin.config.paused
+                        updateTitle()
+                        println("[APP] Emulation ${if (nestlin.config.paused) "paused" else "resumed"}")
                         event.consume()
                     }
                     // F5: quick save state (Mesen/FCEUX convention)
@@ -289,14 +317,22 @@ class NestlinApplication : FrameListener, App() {
             currentRomPath = romPath
             nestlin.load(romPath)
             nestlin.powerReset()
+            clearPauseState()
             updateTitle()
             startEmulation()
         }
     }
 
+    // Reset pause so a new game session always begins running.
+    private fun clearPauseState() {
+        nestlin.config.paused = false
+        pauseMenuItem?.isSelected = false
+    }
+
     private fun updateTitle() {
         val gameName = nestlin.currentGameName()
-        stage.title = if (gameName.isNotEmpty()) "Nestlin - $gameName" else "Nestlin"
+        val base = if (gameName.isNotEmpty()) "Nestlin - $gameName" else "Nestlin"
+        stage.title = if (nestlin.config.paused) "$base (Paused)" else base
     }
 
     private fun handleSaveState() {
@@ -415,6 +451,7 @@ class NestlinApplication : FrameListener, App() {
         stopEmulation()
         nestlin.load(currentRomPath!!)
         nestlin.powerReset()
+        clearPauseState()
         updateTitle()
         startEmulation()
     }
@@ -467,7 +504,9 @@ class NestlinApplication : FrameListener, App() {
                     val info = DataLine.Info(SourceDataLine::class.java, format)
                     val line = AudioSystem.getLine(info) as? SourceDataLine
                     if (line != null) {
-                        line.open(format, 4096)
+                        // ~93 ms headroom at 44.1 kHz 16-bit mono (~46 ms stereo) to absorb
+                        // emulation-thread throttle jitter.
+                        line.open(format, 8192)
                         line.start()
                         selectedFormat = format
                         bestMatch = line

@@ -292,11 +292,12 @@ class Ppu(var memory: Memory) {
     }
 
     private fun buildActiveSprite(entry: SecondaryOamEntry, low: Byte, high: Byte): ActiveSprite {
+        // +1 so the counter reaches zero on the cycle whose frame column equals OAM X.
         val active = ActiveSprite(
             data = entry.sprite,
             tileDataLow = low,
             tileDataHigh = high,
-            xCounter = entry.sprite.x
+            xCounter = entry.sprite.x + 1
         )
         if (entry.sprite.horizontalFlip) {
             active.shiftLow = reverseBits(low.toUnsignedInt() and 0xFF)
