@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 /**
  * Mapper 7 (AxROM) - Simple 32KB PRG bank switching with single-screen mirroring.
@@ -56,6 +58,18 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
         } else {
             Mapper.MirroringMode.ONE_SCREEN_UPPER
         }
+    }
+
+    override fun saveState(out: DataOutput) {
+        out.writeInt(prgBank)
+        out.writeInt(mirroringBit)
+        out.write(chrRam)
+    }
+
+    override fun loadState(input: DataInput) {
+        prgBank = input.readInt()
+        mirroringBit = input.readInt()
+        input.readFully(chrRam)
     }
 
     override fun snapshot(): MapperStateSnapshot {

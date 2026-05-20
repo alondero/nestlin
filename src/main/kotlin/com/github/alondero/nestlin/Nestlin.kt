@@ -5,6 +5,9 @@ import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.ppu.Ppu
 import com.github.alondero.nestlin.ui.FrameListener
+import java.io.InputStream
+import java.io.OutputStream
+import java.nio.file.Files
 import java.nio.file.Path
 
 class Nestlin {
@@ -50,6 +53,22 @@ class Nestlin {
 
     fun powerReset() {
         cpu.reset()
+    }
+
+    /** Write the current emulator state to [out]. Caller is responsible for closing. */
+    fun saveState(out: OutputStream) = SaveState.save(this, out)
+
+    /** Restore emulator state from [input]. Caller is responsible for closing. */
+    fun loadState(input: InputStream) = SaveState.load(this, input)
+
+    /** Convenience overload: write save state to a file path. */
+    fun saveState(path: Path) {
+        Files.newOutputStream(path).use { saveState(it) }
+    }
+
+    /** Convenience overload: read save state from a file path. */
+    fun loadState(path: Path) {
+        Files.newInputStream(path).use { loadState(it) }
     }
 
     fun start() {

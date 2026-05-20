@@ -1,5 +1,8 @@
 package com.github.alondero.nestlin.apu
 
+import java.io.DataInput
+import java.io.DataOutput
+
 class Sweep(val channelId: Int) {
     var enabled: Boolean = false
     var period: Int = 0
@@ -60,5 +63,23 @@ class Sweep(val channelId: Int) {
         }
 
         return targetPeriod > 0x7FF
+    }
+
+    fun saveState(out: DataOutput) {
+        out.writeBoolean(enabled)
+        out.writeInt(period)
+        out.writeBoolean(negate)
+        out.writeInt(shift)
+        out.writeBoolean(reloadFlag)
+        out.writeInt(divider)
+    }
+
+    fun loadState(input: DataInput) {
+        enabled = input.readBoolean()
+        period = input.readInt()
+        negate = input.readBoolean()
+        shift = input.readInt()
+        reloadFlag = input.readBoolean()
+        divider = input.readInt()
     }
 }

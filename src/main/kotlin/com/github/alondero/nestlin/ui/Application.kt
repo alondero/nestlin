@@ -2,6 +2,7 @@ package com.github.alondero.nestlin.ui
 
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Controller
+import com.github.alondero.nestlin.SaveState
 import com.github.alondero.nestlin.apu.AudioResampler
 import com.github.alondero.nestlin.input.GamepadInput
 import com.github.alondero.nestlin.input.InputConfig
@@ -87,10 +88,16 @@ class NestlinApplication : FrameListener, App() {
             val hardResetItem = MenuItem("Hard Reset Game")
             hardResetItem.setOnAction { handleHardReset() }
 
+            val saveStateItem = MenuItem("Save State...")
+            saveStateItem.setOnAction { handleSaveState() }
+
+            val loadStateItem = MenuItem("Load State...")
+            loadStateItem.setOnAction { handleLoadState() }
+
             val exitItem = MenuItem("Exit")
             exitItem.setOnAction { handleExit() }
 
-            fileMenu.items.addAll(loadGameItem, hardResetItem, exitItem)
+            fileMenu.items.addAll(loadGameItem, hardResetItem, saveStateItem, loadStateItem, exitItem)
             menuBar.menus.add(fileMenu)
 
             // Settings menu
@@ -113,14 +120,25 @@ class NestlinApplication : FrameListener, App() {
             scene = Scene(root)
 
             scene.setOnKeyPressed { event ->
-                // Check for Ctrl+T keyboard shortcut to toggle throttling
-                if (event.code == javafx.scene.input.KeyCode.T && event.isControlDown) {
-                    nestlin.config.speedThrottlingEnabled = !nestlin.config.speedThrottlingEnabled
-                    throttleMenuItem.isSelected = nestlin.config.speedThrottlingEnabled
-                    println("[APP] Speed throttling ${if (nestlin.config.speedThrottlingEnabled) "enabled" else "disabled"}")
-                    event.consume()
-                } else {
-                    handleInput(event.code, true)
+                when {
+                    // Ctrl+T: toggle throttling
+                    event.code == javafx.scene.input.KeyCode.T && event.isControlDown -> {
+                        nestlin.config.speedThrottlingEnabled = !nestlin.config.speedThrottlingEnabled
+                        throttleMenuItem.isSelected = nestlin.config.speedThrottlingEnabled
+                        println("[APP] Speed throttling ${if (nestlin.config.speedThrottlingEnabled) "enabled" else "disabled"}")
+                        event.consume()
+                    }
+                    // F5: quick save state (Mesen/FCEUX convention)
+                    event.code == javafx.scene.input.KeyCode.F5 -> {
+                        handleQuickSaveState()
+                        event.consume()
+                    }
+                    // F8: quick load state
+                    event.code == javafx.scene.input.KeyCode.F8 -> {
+                        handleQuickLoadState()
+                        event.consume()
+                    }
+                    else -> handleInput(event.code, true)
                 }
             }
             scene.setOnKeyReleased { event -> handleInput(event.code, false) }
@@ -221,7 +239,10 @@ class NestlinApplication : FrameListener, App() {
 
     private fun stopEmulation() {
         nestlin.stop()
-        emulationThread?.join(1000)
+        // Unbounded join: save state correctness requires the emulation thread to be fully stopped
+        // before mutable CPU/PPU/APU state is serialised. The loop has no blocking IO; only brief
+        // throttling sleeps (<=16ms), so this should return promptly.
+        emulationThread?.join()
         emulationThread = null
     }
 
@@ -276,6 +297,111 @@ class NestlinApplication : FrameListener, App() {
     private fun updateTitle() {
         val gameName = nestlin.currentGameName()
         stage.title = if (gameName.isNotEmpty()) "Nestlin - $gameName" else "Nestlin"
+    }
+
+    private fun handleSaveState() {
+        if (currentRomPath == null) {
+            showError("No ROM Loaded", "Load a game before saving state.")
+            return
+        }
+        val chooser = FileChooser()
+        chooser.title = "Save Nestlin State"
+        chooser.extensionFilters.add(FileChooser.ExtensionFilter("Nestlin Save (*.nstl)", "*.nstl"))
+        chooser.initialFileName = defaultSaveFileName()
+        val file = chooser.showSaveDialog(stage) ?: return
+        performWithEmulationPaused {
+            try {
+                nestlin.saveState(file.toPath())
+                println("[STATE] Saved to: ${file.absolutePath}")
+            } catch (e: Exception) {
+                println("[STATE] Save failed: ${e.message}")
+                e.printStackTrace()
+                Platform.runLater { showError("Save Failed", e.message ?: "Unknown error") }
+            }
+        }
+    }
+
+    private fun handleLoadState() {
+        if (currentRomPath == null) {
+            showError("No ROM Loaded", "Load a game before loading state.")
+            return
+        }
+        val chooser = FileChooser()
+        chooser.title = "Load Nestlin State"
+        chooser.extensionFilters.add(FileChooser.ExtensionFilter("Nestlin Save (*.nstl)", "*.nstl"))
+        val file = chooser.showOpenDialog(stage) ?: return
+        performWithEmulationPaused {
+            try {
+                nestlin.loadState(file.toPath())
+                println("[STATE] Loaded from: ${file.absolutePath}")
+            } catch (e: SaveState.IncompatibleSaveStateException) {
+                println("[STATE] Incompatible save: ${e.message}")
+                Platform.runLater { showError("Incompatible Save State", e.message ?: "") }
+            } catch (e: Exception) {
+                println("[STATE] Load failed: ${e.message}")
+                e.printStackTrace()
+                Platform.runLater { showError("Load Failed", e.message ?: "Unknown error") }
+            }
+        }
+    }
+
+    private fun handleQuickSaveState() {
+        if (currentRomPath == null) return
+        val path = quickSavePath() ?: return
+        performWithEmulationPaused {
+            try {
+                java.nio.file.Files.createDirectories(path.parent)
+                nestlin.saveState(path)
+                println("[STATE] Quick-saved to: $path")
+            } catch (e: Exception) {
+                println("[STATE] Quick-save failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun handleQuickLoadState() {
+        if (currentRomPath == null) return
+        val path = quickSavePath() ?: return
+        performWithEmulationPaused {
+            try {
+                nestlin.loadState(path)
+                println("[STATE] Quick-loaded from: $path")
+            } catch (e: java.nio.file.NoSuchFileException) {
+                println("[STATE] No quick-save at $path")
+            } catch (e: Exception) {
+                println("[STATE] Quick-load failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun defaultSaveFileName(): String {
+        val romName = currentRomPath?.fileName?.toString()
+            ?.removeSuffix(".nes")?.removeSuffix(".7z") ?: "state"
+        return "$romName.nstl"
+    }
+
+    private fun quickSavePath(): java.nio.file.Path? {
+        val rom = currentRomPath ?: return null
+        val name = rom.fileName.toString().removeSuffix(".nes").removeSuffix(".7z")
+        return Paths.get("savestates", "$name.quick.nstl")
+    }
+
+    /**
+     * Pause the emulation thread, run [action] synchronously, then resume.
+     * Avoids racing mutable CPU/PPU/APU state with the emulation loop.
+     */
+    private fun performWithEmulationPaused(action: () -> Unit) {
+        stopEmulation()
+        action()
+        startEmulation()
+    }
+
+    private fun showError(title: String, message: String) {
+        val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
+        alert.title = title
+        alert.headerText = null
+        alert.contentText = message
+        alert.showAndWait()
     }
 
     private fun handleHardReset() {

@@ -2,6 +2,8 @@ package com.github.alondero.nestlin.apu
 
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 class PulseChannel(val channelId: Int) {
     private val envelope = Envelope()
@@ -113,4 +115,26 @@ class PulseChannel(val channelId: Int) {
     }
 
     fun getLengthCounterValue(): Int = lengthCounter.value
+
+    fun saveState(out: DataOutput) {
+        out.writeBoolean(isEnabled)
+        out.writeInt(dutyCycle)
+        out.writeInt(timerPeriod)
+        out.writeInt(timerCounter)
+        out.writeInt(sequenceStep)
+        envelope.saveState(out)
+        lengthCounter.saveState(out)
+        sweep.saveState(out)
+    }
+
+    fun loadState(input: DataInput) {
+        isEnabled = input.readBoolean()
+        dutyCycle = input.readInt()
+        timerPeriod = input.readInt()
+        timerCounter = input.readInt()
+        sequenceStep = input.readInt()
+        envelope.loadState(input)
+        lengthCounter.loadState(input)
+        sweep.loadState(input)
+    }
 }

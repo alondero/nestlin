@@ -3,6 +3,8 @@ package com.github.alondero.nestlin
 import com.github.alondero.nestlin.apu.*
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.setBit
+import java.io.DataInput
+import java.io.DataOutput
 
 class Apu(private val dmaPort: DmaPort) {
     private val apuMemory = ApuAddressedMemory()
@@ -242,4 +244,29 @@ class Apu(private val dmaPort: DmaPort) {
         noise.clockLength()
     }
 
+    fun saveState(out: DataOutput) {
+        out.writeDouble(cycleAccumulator)
+        out.writeInt(cpuCycleCounter)
+        out.writeBoolean(frameIrq)
+        apuMemory.saveState(out)
+        frameCounter.saveState(out)
+        pulse1.saveState(out)
+        pulse2.saveState(out)
+        triangle.saveState(out)
+        noise.saveState(out)
+        dmc.saveState(out)
+    }
+
+    fun loadState(input: DataInput) {
+        cycleAccumulator = input.readDouble()
+        cpuCycleCounter = input.readInt()
+        frameIrq = input.readBoolean()
+        apuMemory.loadState(input)
+        frameCounter.loadState(input)
+        pulse1.loadState(input)
+        pulse2.loadState(input)
+        triangle.loadState(input)
+        noise.loadState(input)
+        dmc.loadState(input)
+    }
 }

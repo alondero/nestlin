@@ -1,5 +1,8 @@
 package com.github.alondero.nestlin.ppu
 
+import java.io.DataInput
+import java.io.DataOutput
+
 class PpuInternalMemory {
 
     private val patternTable0 = ByteArray(0x1000)
@@ -159,6 +162,31 @@ class PpuInternalMemory {
             )
         }
     }
+
+    fun saveState(out: DataOutput) {
+        // Pattern tables: only matter when no chrReadDelegate (Mapper 0 NROM with built-in CHR ROM
+        // copied here at load). For mapper-owned CHR ROM/RAM the mapper persists its own copy.
+        // Save them anyway for symmetry & to ride out future mappers that fall back to these.
+        out.write(patternTable0)
+        out.write(patternTable1)
+        out.write(nameTable0)
+        out.write(nameTable1)
+        paletteRam.saveState(out)
+        out.writeInt(mirroring.ordinal)
+        out.writeBoolean(lastA12High)
+        out.writeInt(m2CyclesSinceA12Low)
+    }
+
+    fun loadState(input: DataInput) {
+        input.readFully(patternTable0)
+        input.readFully(patternTable1)
+        input.readFully(nameTable0)
+        input.readFully(nameTable1)
+        paletteRam.loadState(input)
+        mirroring = Mirroring.values()[input.readInt()]
+        lastA12High = input.readBoolean()
+        m2CyclesSinceA12Low = input.readInt()
+    }
 }
 
 class PaletteRam {
@@ -177,4 +205,7 @@ class PaletteRam {
         val mirroredIndex = if (index and 0x13 == 0x10) index and 0x0F else index
         memory[mirroredIndex] = value
     }
+
+    fun saveState(out: DataOutput) { out.write(memory) }
+    fun loadState(input: DataInput) { input.readFully(memory) }
 }

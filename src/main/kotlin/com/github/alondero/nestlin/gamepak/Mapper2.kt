@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 /**
  * Mapper 2 (CNROM/UNROM) - CHR and PRG bank switching.
@@ -71,5 +73,19 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
             Header.Mirroring.HORIZONTAL -> Mapper.MirroringMode.HORIZONTAL
             Header.Mirroring.VERTICAL -> Mapper.MirroringMode.VERTICAL
         }
+    }
+
+    override fun saveState(out: DataOutput) {
+        out.writeInt(prgBank)
+        out.writeInt(chrBank)
+        out.writeBoolean(chrRam != null)
+        if (chrRam != null) out.write(chrRam)
+    }
+
+    override fun loadState(input: DataInput) {
+        prgBank = input.readInt()
+        chrBank = input.readInt()
+        val hasChrRam = input.readBoolean()
+        if (hasChrRam && chrRam != null) input.readFully(chrRam)
     }
 }

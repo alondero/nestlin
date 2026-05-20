@@ -3,6 +3,8 @@ package com.github.alondero.nestlin.cpu
 import com.github.alondero.nestlin.*
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.log.Logger
+import java.io.DataInput
+import java.io.DataOutput
 import java.io.File
 
 class Cpu(var memory: Memory)
@@ -184,6 +186,36 @@ class Cpu(var memory: Memory)
         memory.mapper?.acknowledgeIrq()
 
         return true
+    }
+
+    fun saveState(out: DataOutput) {
+        out.writeByte(registers.stackPointer.toInt())
+        out.writeByte(registers.accumulator.toInt())
+        out.writeByte(registers.indexX.toInt())
+        out.writeByte(registers.indexY.toInt())
+        out.writeShort(registers.programCounter.toInt())
+        out.writeByte(processorStatus.asByte().toInt())
+        // Workaround: ProcessorStatus.toFlags doesn't preserve breakCommand, so save explicitly.
+        out.writeBoolean(processorStatus.breakCommand)
+        out.writeInt(workCyclesLeft)
+        out.writeBoolean(pageBoundaryFlag)
+        out.writeBoolean(idle)
+        out.writeInt(interrupt?.ordinal ?: -1)
+    }
+
+    fun loadState(input: DataInput) {
+        registers.stackPointer = input.readByte()
+        registers.accumulator = input.readByte()
+        registers.indexX = input.readByte()
+        registers.indexY = input.readByte()
+        registers.programCounter = input.readShort()
+        processorStatus.toFlags(input.readByte())
+        processorStatus.breakCommand = input.readBoolean()
+        workCyclesLeft = input.readInt()
+        pageBoundaryFlag = input.readBoolean()
+        idle = input.readBoolean()
+        val interruptOrdinal = input.readInt()
+        interrupt = if (interruptOrdinal < 0) null else Interrupt.values()[interruptOrdinal]
     }
 
     fun push(value: Byte) { memory[0x100 + ((registers.stackPointer--).toUnsignedInt())] = value }

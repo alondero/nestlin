@@ -3,6 +3,8 @@ package com.github.alondero.nestlin.apu
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.letBit
 import com.github.alondero.nestlin.setBit
+import java.io.DataInput
+import java.io.DataOutput
 
 class ApuAddressedMemory {
     // Pulse 1 ($4000-$4003)
@@ -131,5 +133,40 @@ class ApuAddressedMemory {
         dmcSampleLength = 0
         status = 0
         frameCounter = 0
+    }
+
+    fun saveState(out: DataOutput) {
+        for (b in byteArrayOf(
+            pulse1Duty, pulse1Sweep, pulse1TimerLow, pulse1Length,
+            pulse2Duty, pulse2Sweep, pulse2TimerLow, pulse2Length,
+            triangleLinear, triangleTimerLow, triangleTimerHigh, triangleLength,
+            noiseEnvelope, noisePeriod, noiseLength,
+            dmcFlags, dmcDirectLoad, dmcSampleAddress, dmcSampleLength,
+            status, frameCounter
+        )) out.writeByte(b.toInt())
+    }
+
+    fun loadState(input: DataInput) {
+        pulse1Duty = input.readByte()
+        pulse1Sweep = input.readByte()
+        pulse1TimerLow = input.readByte()
+        pulse1Length = input.readByte()
+        pulse2Duty = input.readByte()
+        pulse2Sweep = input.readByte()
+        pulse2TimerLow = input.readByte()
+        pulse2Length = input.readByte()
+        triangleLinear = input.readByte()
+        triangleTimerLow = input.readByte()
+        triangleTimerHigh = input.readByte()
+        triangleLength = input.readByte()
+        noiseEnvelope = input.readByte()
+        noisePeriod = input.readByte()
+        noiseLength = input.readByte()
+        dmcFlags = input.readByte()
+        dmcDirectLoad = input.readByte()
+        dmcSampleAddress = input.readByte()
+        dmcSampleLength = input.readByte()
+        status = input.readByte()
+        frameCounter = input.readByte()
     }
 }

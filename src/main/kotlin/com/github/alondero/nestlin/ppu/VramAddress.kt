@@ -3,6 +3,8 @@ package com.github.alondero.nestlin.ppu
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 class VramAddress {
     /** 15 bit register
@@ -96,4 +98,20 @@ class VramAddress {
     }
 
     fun asAddress() = (((((fineYScroll shl 2) or getNameTable()) shl 5) or coarseYScroll) shl 5) or coarseXScroll
+
+    fun saveState(out: DataOutput) {
+        out.writeInt(coarseXScroll)
+        out.writeInt(coarseYScroll)
+        out.writeBoolean(horizontalNameTable)
+        out.writeBoolean(verticalNameTable)
+        out.writeInt(fineYScroll)
+    }
+
+    fun loadState(input: DataInput) {
+        coarseXScroll = input.readInt()
+        coarseYScroll = input.readInt()
+        horizontalNameTable = input.readBoolean()
+        verticalNameTable = input.readBoolean()
+        fineYScroll = input.readInt()
+    }
 }

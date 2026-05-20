@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.toUnsignedInt
+import java.io.DataInput
+import java.io.DataOutput
 
 /**
  * Mapper 4 (MMC3/TxROM) - Bank switching with scanline IRQ.
@@ -228,6 +230,39 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
      * Check if IRQ is pending (for CPU interrupt line).
      */
     override fun isIrqPending(): Boolean = scanlineCounter.isIrqPending()
+
+    override fun saveState(out: DataOutput) {
+        out.writeInt(prgBank6)
+        out.writeInt(prgBankA)
+        for (b in chrBanks) out.writeInt(b)
+        out.write(prgRam)
+        out.writeBoolean(prgRamEnabled)
+        out.writeBoolean(prgRamWriteProtect)
+        out.writeInt(bankSelect)
+        out.writeBoolean(chrPrgInvert)
+        out.writeBoolean(prgMode)
+        scanlineCounter.saveState(out)
+        out.writeInt(mirroringOverride?.ordinal ?: -1)
+        out.writeBoolean(chrRam != null)
+        if (chrRam != null) out.write(chrRam)
+    }
+
+    override fun loadState(input: DataInput) {
+        prgBank6 = input.readInt()
+        prgBankA = input.readInt()
+        for (i in chrBanks.indices) chrBanks[i] = input.readInt()
+        input.readFully(prgRam)
+        prgRamEnabled = input.readBoolean()
+        prgRamWriteProtect = input.readBoolean()
+        bankSelect = input.readInt()
+        chrPrgInvert = input.readBoolean()
+        prgMode = input.readBoolean()
+        scanlineCounter.loadState(input)
+        val mirrorOrd = input.readInt()
+        mirroringOverride = if (mirrorOrd < 0) null else Mapper.MirroringMode.values()[mirrorOrd]
+        val hasChrRam = input.readBoolean()
+        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+    }
 
     override fun snapshot(): MapperStateSnapshot {
         return MapperStateSnapshot(

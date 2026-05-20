@@ -1,5 +1,8 @@
 package com.github.alondero.nestlin
 
+import java.io.DataInput
+import java.io.DataOutput
+
 class Controller {
     var buttons: Int = 0 // Bitmap: Right Left Down Up Start Select B A (0..7)
                          // Wait, standard order read is A, B, Select, Start, Up, Down, Left, Right.
@@ -72,6 +75,18 @@ class Controller {
         // We'll return 0x40 | data for safety, though 0x00 | data usually works.
         // Nestopia uses 0x40.
         return (0x40 or data).toByte()
+    }
+
+    fun saveState(out: DataOutput) {
+        out.writeInt(buttons)
+        out.writeInt(shiftRegister)
+        out.writeBoolean(strobe)
+    }
+
+    fun loadState(input: DataInput) {
+        buttons = input.readInt()
+        shiftRegister = input.readInt()
+        strobe = input.readBoolean()
     }
 
     fun setButton(button: Button, pressed: Boolean) {
