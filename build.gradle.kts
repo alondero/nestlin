@@ -52,6 +52,7 @@ val mesenTests = listOf(
     "com.github.alondero.nestlin.compare.ScreenshotComparisonTest",
     "com.github.alondero.nestlin.compare.StateComparisonTest",
     "com.github.alondero.nestlin.compare.StateCaptureIntegrationTest",
+    "com.github.alondero.nestlin.compare.Mesen2StateCapturerSmokeTest",
     "com.github.alondero.nestlin.compare.DebugMesen2CaptureTest",
     "com.github.alondero.nestlin.compare.DebugStateCaptureTest",
     "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest"
