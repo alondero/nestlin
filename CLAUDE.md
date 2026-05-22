@@ -260,7 +260,7 @@ When adding significant features (like PPU rendering):
 
 ### Dependencies
 - kotlin-stdlib 1.1.0
-- TornadoFX (JavaFX wrapper)
+- JavaFX/OpenJFX (UI) via `org.openjfx.javafxplugin`
 - Apache Commons Compress (for .7z ROMs)
 - JUnit + Hamkrest (testing)
 
