@@ -183,26 +183,49 @@ The test will fail when it encounters:
 3. Set correct `workCyclesLeft` (check 6502 reference)
 4. Run golden log test to verify
 
-### Screenshot Comparison
-Frame-accurate pixel comparison against Mesen2 (the reference emulator) detects PPU/mapper regressions that CPU-only tests miss.
+### Cross-Emulator Regression Testing
 
-**Setup:** Set the `MESEN2_PATH` environment variable to your Mesen2 binary, or ensure `tools/Mesen/Mesen.exe` exists:
-```bash
-export MESEN2_PATH=/path/to/Mesen2.exe
-```
+**Read `docs/TESTING_STRATEGY.md` first.** It defines the test pyramid Nestlin
+follows, with explicit recipes per bug symptom in Section 6. The summary:
 
-**Running the tests:**
+**Default to structured-state comparison, not pixel diffs.** Mesen2 exposes
+`emu.getState()`, `emu.read(addr, nesPpuMemory)`, `nesSpriteRam`,
+`nesSecondarySpriteRam`, `nesPaletteRam`, `nesNametableRam`, `nesChrRom`,
+`mapper.chrMemoryOffset*`. Byte-compare these between Nestlin and Mesen2 at a
+frame boundary — that's the workhorse layer. The infra is in
+`src/test/kotlin/.../compare/`:
+
+- `Mesen2StateCapturer` — Lua → JSON CPU/PPU/RAM/OAM/palette snapshot at frame N (headless `--testRunner`, ~0.5s).
+- `NestlinStateCapturer` — same shape, in-process.
+- `EmulatorStateSnapshot` + `StateComparator` — payload-agnostic diff.
+- `Mapper*.snapshot()` — per-mapper bank/register/IRQ state (extend it when adding a new mapper).
+
+**Hook-based behaviour assertions** are the structured replacement for
+"compare pixels and hope" on cycle-sensitive bugs (MMC3 A12, NMI counts,
+$2002 polling). Use `emu.addMemoryCallback(cb, "read", "nesPpuMemory", 0x1000, 0x1FFF, …)`.
+
+**Pixel diffs are the last resort.** `ScreenshotComparisonTest` exists and works:
 ```bash
 ./gradlew test --tests ScreenshotComparisonTest
 ```
+but a passing pixel diff tells you nothing about *why* something is right, and a
+failing one buries the cause. Reach for it only when the bug is genuinely
+visual (palette glitch, raster effect) and you've already ruled out the structured
+levels. Don't add new pixel-diff cases — extend state diff coverage instead.
 
-**How it works:**
-- Runs Nestlin headless for N frames, saves PNG
-- Runs Mesen2 in GUI mode for N frames, captures screenshot via Lua script
-- Compares the PNGs pixel-for-pixel using zlib decompression
-- On mismatch: saves side-by-side diff to `build/reports/screenshot-diffs/<rom>-frame-<n>/`
+**Anti-patterns to avoid** (see strategy doc §2.4):
+- `assumeTrue(mesen2Available)` silent skips (false-greens CI without the oracle).
+- Tests that dump files to `build/` expecting a human to eyeball them — these aren't regression tests, they're debugging aides; if you write one, mark it clearly and don't put it under `test/`.
+- Reflection into private `Cpu`/`Ppu` fields — break on rename. Expose a stable testing API instead.
 
-**Without Mesen2:** Tests are automatically skipped, so CI without Mesen2 installed won't fail.
+**When you find a bug, follow Section 6's recipe table** for the cheapest test
+that reproduces it. CHR-banking bugs are state diffs on `mapper.chrMemoryOffset*` and
+`nesChrRom` — not screenshots (see Star Soldier `Mapper3Test` /
+`StarSoldierMapper3RegressionTest` for the worked example).
+
+**Mesen2 setup:** `MESEN2_PATH` env var, or absolute fallback to
+`X:\src\nestlin\tools\Mesen2\Mesen.exe`. Local-only paths and gotchas live in
+`CLAUDE.local.md` and the `mesen2-capture-harness-gotchas-*` memory entry.
 
 ## Development Workflow
 
