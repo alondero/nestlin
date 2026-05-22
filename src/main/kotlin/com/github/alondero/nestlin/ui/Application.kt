@@ -21,7 +21,6 @@ import javafx.scene.image.PixelFormat
 import javafx.scene.layout.StackPane
 import javafx.stage.FileChooser
 import javafx.stage.Stage
-import tornadofx.App
 import java.io.IOException
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -37,7 +36,7 @@ fun main(args: Array<String>) {
     Application.launch(NestlinApplication::class.java, *args)
 }
 
-class NestlinApplication : FrameListener, App() {
+class NestlinApplication : FrameListener, Application() {
     private lateinit var stage: Stage
     private val scaledWidth = RESOLUTION_WIDTH * DISPLAY_SCALE
     private val scaledHeight = RESOLUTION_HEIGHT * DISPLAY_SCALE

@@ -27,10 +27,6 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
     implementation("org.apache.commons:commons-compress:1.25.0")
     implementation("org.tukaani:xz:1.9")
-    implementation("no.tornado:tornadofx:1.7.20") {
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
-    }
 
     // Gamepad/controller support (JInput)
     implementation("net.java.jinput:jinput:2.0.10")
