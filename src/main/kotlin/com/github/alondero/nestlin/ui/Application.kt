@@ -14,12 +14,14 @@ import javafx.animation.AnimationTimer
 import javafx.application.Application
 import javafx.application.Platform
 import javafx.scene.Scene
+import javafx.scene.Group
 import javafx.scene.canvas.Canvas
 import javafx.scene.control.Menu
 import javafx.scene.control.MenuBar
 import javafx.scene.control.MenuItem
 import javafx.scene.image.PixelFormat
 import javafx.scene.layout.StackPane
+import javafx.scene.layout.VBox
 import javafx.stage.FileChooser
 import javafx.stage.Stage
 import tornadofx.App
@@ -32,23 +34,34 @@ import javax.sound.sampled.DataLine
 import javax.sound.sampled.SourceDataLine
 import kotlin.concurrent.thread
 
-const val DISPLAY_SCALE = 4  // 4x magnification for debugging
-
 fun main(args: Array<String>) {
     Application.launch(NestlinApplication::class.java, *args)
 }
 
 class NestlinApplication : FrameListener, App() {
     private lateinit var stage: Stage
-    private val scaledWidth = RESOLUTION_WIDTH * DISPLAY_SCALE
-    private val scaledHeight = RESOLUTION_HEIGHT * DISPLAY_SCALE
-    private var canvas = Canvas(scaledWidth.toDouble(), scaledHeight.toDouble())
+    private var canvas = Canvas(RESOLUTION_WIDTH.toDouble(), RESOLUTION_HEIGHT.toDouble())
+    // Group wraps the canvas so its visual scale contributes to layout bounds, letting the
+    // StackPane size to the scaled extent and centre the canvas in fullscreen / fit modes.
+    private val canvasGroup = Group(canvas)
+    private val canvasHolder = StackPane(canvasGroup)
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
     private var running = false
     // Frame buffer synchronization for thread-safe screenshot capture
     private val frameBufferLock = Any()
-    // 4x larger buffer to hold magnified pixels
-    private var nextFrame = ByteArray(scaledHeight * scaledWidth * 3)
+    // Native-resolution RGB buffer. Upscaling is handled by Canvas.scaleX/Y, not by replication.
+    private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
+
+    private var displayConfig = DisplayConfig.load()
+    private val scaleMenuItems = mutableMapOf<ScaleMode, javafx.scene.control.RadioMenuItem>()
+
+    // Cached windowed dimensions so we can restore the stage explicitly on fullscreen exit
+    // (JavaFX on Windows doesn't always restore prior size reliably, especially in Fit mode
+    // where the canvas scale is bound reactively to the holder width).
+    private var windowedWidth: Double = 0.0
+    private var windowedHeight: Double = 0.0
+
+    private val mouseNearTopProperty = javafx.beans.property.SimpleBooleanProperty(false)
 
     // Current ROM path for Hard Reset functionality
     private var currentRomPath: Path? = null
@@ -81,7 +94,9 @@ class NestlinApplication : FrameListener, App() {
     private val recentRomsMenu = Menu("Load Recent")
 
     override fun start(stage: Stage) {
-        this.stage = stage.apply {
+        // Assign lateinit *before* the apply block — applyScale (called inside) reads this.stage.
+        this.stage = stage
+        stage.apply {
             title = "Nestlin"
 
             // Create menu bar
@@ -119,7 +134,26 @@ class NestlinApplication : FrameListener, App() {
                 println("[APP] Speed throttling ${if (throttleMenuItem.isSelected) "enabled" else "disabled"}")
             }
 
-            settingsMenu.items.add(throttleMenuItem)
+            // Scale submenu (1x / 2x / 3x / 4x / Fit) as a mutually-exclusive radio group.
+            val scaleMenu = javafx.scene.control.Menu("Scale")
+            val scaleGroup = javafx.scene.control.ToggleGroup()
+            ScaleMode.values().forEach { mode ->
+                val item = javafx.scene.control.RadioMenuItem(mode.label())
+                item.toggleGroup = scaleGroup
+                item.isSelected = displayConfig.scale == mode
+                item.setOnAction {
+                    setScaleMode(mode)
+                }
+                scaleMenu.items.add(item)
+                scaleMenuItems[mode] = item
+            }
+
+            val fullscreenItem = javafx.scene.control.CheckMenuItem("Fullscreen")
+            fullscreenItem.isSelected = displayConfig.fullscreen
+            fullscreenItem.accelerator = javafx.scene.input.KeyCombination.keyCombination("F11")
+            fullscreenItem.setOnAction { setFullscreen(fullscreenItem.isSelected) }
+
+            settingsMenu.items.addAll(throttleMenuItem, scaleMenu, fullscreenItem)
             menuBar.menus.add(settingsMenu)
 
             // Emulation menu
@@ -138,11 +172,69 @@ class NestlinApplication : FrameListener, App() {
             emulationMenu.items.add(pauseItem)
             menuBar.menus.add(emulationMenu)
 
-            // Create layout with menu bar and canvas
-            val root = javafx.scene.layout.VBox()
-            root.children.addAll(menuBar, canvas)
+            // Create layout with menu bar and the canvas holder. VBox.setVgrow lets the
+            // holder expand to fill remaining vertical space in fullscreen / Fit mode.
+            val root = VBox()
+            root.children.addAll(menuBar, canvasHolder)
+            VBox.setVgrow(canvasHolder, javafx.scene.layout.Priority.ALWAYS)
+
+            // Letterbox area outside the scaled canvas paints black.
+            canvasHolder.style = "-fx-background-color: black;"
+            // Decouple holder's min size from the Group's bounds. Without this, the scaled
+            // canvas's visual extent propagates upward through the StackPane as a min-size
+            // constraint, preventing the stage from shrinking back after fullscreen exit
+            // and trapping Fit mode at the fullscreen scale value.
+            canvasHolder.minWidth = 0.0
+            canvasHolder.minHeight = 0.0
 
             scene = Scene(root)
+            scene.fill = javafx.scene.paint.Color.BLACK
+
+            // Apply persisted scale + fullscreen now that the scene exists.
+            applyScale(displayConfig.scale)
+            isFullScreen = displayConfig.fullscreen
+            fullScreenExitHint = ""
+            fullScreenExitKeyCombination = javafx.scene.input.KeyCombination.NO_MATCH
+
+            // Menu reveals when (a) not in fullscreen, (b) mouse is near the top edge, or
+            // (c) any submenu is already open (so dropdowns don't vanish mid-click).
+            // Accelerator F11 lives on the Scene and still fires while menu is hidden.
+            val anyMenuShowing = javafx.beans.binding.Bindings.createBooleanBinding(
+                { menuBar.menus.any { it.isShowing } },
+                *menuBar.menus.map { it.showingProperty() }.toTypedArray()
+            )
+            val menuRevealed = fullScreenProperty().not()
+                .or(mouseNearTopProperty)
+                .or(anyMenuShowing)
+            menuBar.visibleProperty().bind(menuRevealed)
+            menuBar.managedProperty().bind(menuRevealed)
+
+            // Reveal threshold: top 4 logical pixels. Tight enough not to interfere with
+            // gameplay; generous enough that a fast mouse-to-top motion still triggers.
+            scene.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_MOVED) { e ->
+                mouseNearTopProperty.set(stage.isFullScreen && e.sceneY < 4.0)
+            }
+
+            fullScreenProperty().addListener { _, wasFs, nowFs ->
+                if (nowFs && !wasFs) {
+                    // Capture pre-fullscreen size for explicit restore on exit.
+                    if (width > 0) windowedWidth = width
+                    if (height > 0) windowedHeight = height
+                } else if (wasFs && !nowFs && windowedWidth > 0) {
+                    // Explicitly restore — JavaFX's auto-restore isn't reliable on Windows,
+                    // and in Fit mode the canvas scale is bound to the holder so a stuck-large
+                    // stage means a stuck-large canvas that overflows the window frame.
+                    width = windowedWidth
+                    height = windowedHeight
+                }
+                if (displayConfig.fullscreen != nowFs) {
+                    displayConfig = displayConfig.copy(fullscreen = nowFs)
+                    DisplayConfig.save(displayConfig)
+                }
+                fullscreenItem.isSelected = nowFs
+                // Reset hover state on transition so the menu isn't stuck visible.
+                if (!nowFs) mouseNearTopProperty.set(false)
+            }
 
             scene.setOnKeyPressed { event ->
                 when {
@@ -171,6 +263,7 @@ class NestlinApplication : FrameListener, App() {
                         handleQuickLoadState()
                         event.consume()
                     }
+                    // F11 is handled by the Fullscreen menu accelerator (see Settings menu).
                     else -> handleInput(event.code, true)
                 }
             }
@@ -194,9 +287,9 @@ class NestlinApplication : FrameListener, App() {
                 val pixelWriter = canvas.graphicsContext2D.pixelWriter
                 val pixelFormat = PixelFormat.getByteRgbInstance()
 
-                // Thread-safe read of frame buffer
+                // Thread-safe read of frame buffer (native NES resolution; Canvas scale handles upscaling)
                 synchronized(frameBufferLock) {
-                    pixelWriter.setPixels(0, 0, scaledWidth, scaledHeight, pixelFormat, nextFrame, 0, scaledWidth*3)
+                    pixelWriter.setPixels(0, 0, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, pixelFormat, nextFrame, 0, RESOLUTION_WIDTH * 3)
                 }
             }
 
@@ -334,6 +427,56 @@ class NestlinApplication : FrameListener, App() {
     private fun clearPauseState() {
         nestlin.config.paused = false
         pauseMenuItem?.isSelected = false
+    }
+
+    private fun setScaleMode(mode: ScaleMode) {
+        if (displayConfig.scale != mode) {
+            displayConfig = displayConfig.copy(scale = mode)
+            DisplayConfig.save(displayConfig)
+        }
+        scaleMenuItems[mode]?.isSelected = true
+        applyScale(mode)
+        println("[APP] Display scale set to ${mode.label()}")
+    }
+
+    private fun setFullscreen(enable: Boolean) {
+        stage.isFullScreen = enable
+        // fullScreenProperty listener persists the change.
+    }
+
+    private fun applyScale(mode: ScaleMode) {
+        val factor = mode.factor()
+        // Drop any previous binding before swapping mode to avoid leaking listeners.
+        canvas.scaleXProperty().unbind()
+        canvas.scaleYProperty().unbind()
+        if (factor != null) {
+            canvas.scaleX = factor.toDouble()
+            canvas.scaleY = factor.toDouble()
+            // Resize the window to the canvas's natural extent unless fullscreen owns it.
+            if (!stage.isFullScreen) {
+                stage.sizeToScene()
+            }
+        } else {
+            // Fit: seed the window at 3x when entering Fit while windowed, so the user
+            // always gets a usable starting size before the binding takes over.
+            if (!stage.isFullScreen) {
+                canvas.scaleX = 3.0
+                canvas.scaleY = 3.0
+                stage.sizeToScene()
+            }
+            // Then bind scale to live holder dimensions, preserving aspect ratio.
+            val widthFactor = javafx.beans.binding.Bindings.createDoubleBinding(
+                { (canvasHolder.width / RESOLUTION_WIDTH).coerceAtLeast(1.0) },
+                canvasHolder.widthProperty()
+            )
+            val heightFactor = javafx.beans.binding.Bindings.createDoubleBinding(
+                { (canvasHolder.height / RESOLUTION_HEIGHT).coerceAtLeast(1.0) },
+                canvasHolder.heightProperty()
+            )
+            val fitBinding = javafx.beans.binding.Bindings.min(widthFactor, heightFactor)
+            canvas.scaleXProperty().bind(fitBinding)
+            canvas.scaleYProperty().bind(fitBinding)
+        }
     }
 
     private fun updateTitle() {
@@ -646,24 +789,14 @@ class NestlinApplication : FrameListener, App() {
 
     override fun frameUpdated(frame: Frame) {
         synchronized(frameBufferLock) {
-            // Replicate each pixel DISPLAY_SCALE times in both X and Y dimensions
+            // Write directly at native 256x240 — upscaling is the Canvas's job.
             frame.scanlines.withIndex().forEach { (y, scanline) ->
+                val rowBase = y * RESOLUTION_WIDTH * 3
                 scanline.withIndex().forEach { (x, pixel) ->
-                    val r = (pixel shr 16).toByte()
-                    val g = (pixel shr 8).toByte()
-                    val b = pixel.toByte()
-
-                    // Write this pixel DISPLAY_SCALE x DISPLAY_SCALE times
-                    for (dy in 0 until DISPLAY_SCALE) {
-                        for (dx in 0 until DISPLAY_SCALE) {
-                            val scaledX = x * DISPLAY_SCALE + dx
-                            val scaledY = y * DISPLAY_SCALE + dy
-                            val pixIdx = (scaledY * scaledWidth + scaledX) * 3
-                            nextFrame[pixIdx] = r
-                            nextFrame[pixIdx + 1] = g
-                            nextFrame[pixIdx + 2] = b
-                        }
-                    }
+                    val idx = rowBase + x * 3
+                    nextFrame[idx] = (pixel shr 16).toByte()
+                    nextFrame[idx + 1] = (pixel shr 8).toByte()
+                    nextFrame[idx + 2] = pixel.toByte()
                 }
             }
         }
@@ -698,7 +831,7 @@ class NestlinApplication : FrameListener, App() {
         // Run file I/O on background thread to avoid blocking the UI
         thread {
             try {
-                val path = screenshotManager.saveScreenshot(frameData, scaledWidth, scaledHeight)
+                val path = screenshotManager.saveScreenshot(frameData, RESOLUTION_WIDTH, RESOLUTION_HEIGHT)
                 println("[SCREENSHOT] Saved to: $path")
             } catch (e: IOException) {
                 println("[SCREENSHOT] File I/O error: ${e.message}")
