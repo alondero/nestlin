@@ -1,89 +1,129 @@
 package com.github.alondero.nestlin.compare
 
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 
 /**
  * Captures CPU, PPU, and memory state from Mesen2 at a specific frame boundary.
- * Uses Lua scripting with emu.getState() and emu.read(). Setup details in
- * [Mesen2Process] and `.claude/skills/mesen/SKILL.md`.
+ * Uses Lua scripting with emu.getState() and emu.read().
  */
 object Mesen2StateCapturer {
 
-    private const val SCRIPT_NAME = "state_capture"
+    private const val ENV_VAR = "MESEN2_PATH"
+    private val MESEN_ARGS = listOf("--testRunner", "--doNotSaveSettings")
 
-    fun getMesen2Path(): Path = Mesen2Process.mesen2Path()
-    fun isMesen2Available(): Boolean = Mesen2Process.isAvailable()
+    fun getMesen2Path(): Path {
+        val path = System.getenv(ENV_VAR) ?: System.getProperty("mesen2.path")
+        return path?.let { Paths.get(it) } ?: Paths.get("tools/Mesen2/Mesen.exe")
+    }
+
+    fun isMesen2Available(): Boolean = getMesen2Path().toFile().exists()
 
     fun captureState(romPath: Path, frameNumber: Int): EmulatorStateSnapshot {
-        val scriptDataDir = Mesen2Process.runScript(
-            generateCaptureScript(frameNumber),
-            romPath,
-            SCRIPT_NAME
-        )
-        val stateJsonPath = scriptDataDir.resolve("state.json")
-        if (!Files.exists(stateJsonPath)) {
-            throw Mesen2ScreenshotException(
-                "Mesen2 script ran but state.json not found at $stateJsonPath. " +
-                "I/O access may not be enabled."
+        val mesenPath = getMesen2Path()
+        val mesenDir = mesenPath.parent.toFile()
+
+        // Create a unique temp directory for this run's script
+        val runDir = Files.createTempDirectory("mesen_state_")
+        val scriptPath = runDir.resolve("state_capture.lua")
+
+        // Generate the Lua script for state capture
+        val luaScript = generateCaptureScript(frameNumber)
+        Files.writeString(scriptPath, luaScript)
+
+        try {
+            // Run Mesen2 with the state capture script
+            val absoluteRom = romPath.toAbsolutePath()
+            val process = ProcessBuilder().apply {
+                command(mesenPath.toString(), *MESEN_ARGS.toTypedArray(),
+                        scriptPath.toString(), absoluteRom.toString())
+                directory(mesenDir)
+                redirectError(ProcessBuilder.Redirect.INHERIT)
+                redirectOutput(ProcessBuilder.Redirect.INHERIT)
+            }.start()
+
+            val exitCode = process.waitFor()
+
+            if (exitCode != 0) {
+                throw Mesen2ExecutionException("Mesen2 --testRunner exited with code $exitCode.")
+            }
+
+            // Read the state JSON - Lua script tries session folder and mesen_dir
+            val possiblePaths = listOf(
+                guessScriptDataFolder().resolve("state.json"),
+                mesenPath.parent.resolve("mesen_state.json"),
+                Paths.get("test_state.json")
             )
+            val stateJsonPath = possiblePaths.firstOrNull { Files.exists(it) }
+                ?: throw Mesen2ScreenshotException(
+                    "Mesen2 script ran but state not found. Tried: ${possiblePaths.joinToString { it.toString() }}"
+                )
+            val json = Files.readString(stateJsonPath)
+            return parseMesen2State(json, romPath.fileName.toString(), frameNumber)
+        } finally {
+            // Cleanup temp script directory
+            scriptPath.toFile().delete()
+            runDir.toFile().deleteRecursively()
         }
-        val json = Files.readString(stateJsonPath)
-        return parseMesen2State(json, romPath.fileName.toString(), frameNumber)
     }
 
     private fun generateCaptureScript(targetFrame: Int): String {
-        // os.exit() instead of emu.stop() since emu.stop() hangs in Mesen2.
-        // basePath separator fixup: emu.getScriptDataFolder() returns no
-        // trailing separator on Windows, so naive concatenation lands the
-        // file outside the script's data folder.
-        return """
+        // --testRunner mode. Mesen2 v2 returns getState() as a FLAT table with
+        // dotted string keys: state["cpu.pc"], state["ppu.frameCount"], etc.
+        // NOT state.cpu.pc (that throws nil-index). Confirmed by Phase 0 spike
+        // 2026-05-20 in docs/TESTING_STRATEGY.md.
+        // getScriptDataFolder() has no trailing separator — insert "/".
+        val luaScript = """
 local targetFrame = $targetFrame
 local frame = 0
 
 local function writeState()
-    local state = emu.getState()
-    local cpu = state.cpu
-    local ppu = state.ppu
+    local s = emu.getState()
 
+    local function n(k) return s[k] or 0 end
     local json = "{" ..
-        "\"pc\":" .. cpu.pc .. "," ..
-        "\"a\":" .. cpu.a .. "," ..
-        "\"x\":" .. cpu.x .. "," ..
-        "\"y\":" .. cpu.y .. "," ..
-        "\"sp\":" .. cpu.sp .. "," ..
-        "\"status\":" .. cpu.status .. "," ..
-        "\"cycleCount\":" .. cpu.cycleCount .. "," ..
-        "\"scanline\":" .. ppu.scanline .. "," ..
-        "\"ppuCycle\":" .. ppu.cycle .. "," ..
-        "\"ppuFrameCount\":" .. ppu.frameCount .. "," ..
-        "\"control\":" .. (ppu.control or 0) .. "," ..
-        "\"mask\":" .. (ppu.mask or 0) .. "," ..
-        "\"ppuStatus\":" .. (ppu.status or 0) ..
+        "\"pc\":" .. n("cpu.pc") .. "," ..
+        "\"a\":" .. n("cpu.a") .. "," ..
+        "\"x\":" .. n("cpu.x") .. "," ..
+        "\"y\":" .. n("cpu.y") .. "," ..
+        "\"sp\":" .. n("cpu.sp") .. "," ..
+        "\"status\":" .. n("cpu.ps") .. "," ..
+        "\"cycleCount\":" .. n("cpu.cycleCount") .. "," ..
+        "\"scanline\":" .. n("ppu.scanline") .. "," ..
+        "\"ppuCycle\":" .. n("ppu.cycle") .. "," ..
+        "\"ppuFrameCount\":" .. n("ppu.frameCount") ..
     "}"
 
-    local basePath = emu.getScriptDataFolder()
-    local last = string.sub(basePath, -1)
-    if last ~= "\\" and last ~= "/" then
-        basePath = basePath .. "\\"
-    end
-    local f = io.open(basePath .. "state.json", "w")
-    if f then
-        f:write(json)
-        f:close()
-    end
+    local fullPath = emu.getScriptDataFolder() .. "/state.json"
+    local f = io.open(fullPath, "w")
+    if f then f:write(json); f:close() end
 end
 
 function onEndFrame()
     frame = frame + 1
     if frame == targetFrame then
-        writeState()
-        os.exit()
+        local ok, err = pcall(writeState)
+        if not ok then
+            print("state capture error: " .. tostring(err))
+            emu.stop(2)
+        else
+            emu.stop(0)
+        end
     end
 end
 
 emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
 """.trimIndent()
+        return luaScript
+    }
+
+    private fun guessScriptDataFolder(): Path {
+        val mesenPath = getMesen2Path()
+        // Mesen2 creates a session folder: <mesen_dir>/LuaScriptData/<script_name>/
+        // where <script_name> is derived from the script filename
+        return mesenPath.parent.resolve("LuaScriptData").resolve("state_capture")
     }
 
     private fun parseMesen2State(json: String, romName: String, frameNumber: Int): EmulatorStateSnapshot {
