@@ -1,4 +1,7 @@
 # Nestlin
+
+![Nestlin Logo](src/main/resources/images/nestlin-logo.png)
+
 An NES emulator written in Kotlin.
 
 ## Building
