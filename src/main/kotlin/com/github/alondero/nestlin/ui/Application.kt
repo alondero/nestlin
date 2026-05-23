@@ -33,6 +33,12 @@ import javax.sound.sampled.DataLine
 import javax.sound.sampled.SourceDataLine
 import kotlin.concurrent.thread
 
+const val DISPLAY_SCALE = 4  // 4x magnification for debugging
+
+// Periodic SRAM flush interval. 10s matches RetroArch's default and means a crash
+// loses at most ~10s of in-game saves. Skipped when batteryDirty is false (no cost).
+private const val BATTERY_FLUSH_INTERVAL_MS = 10_000L
+
 fun main(args: Array<String>) {
     Application.launch(NestlinApplication::class.java, *args)
 }
@@ -80,6 +86,10 @@ class NestlinApplication : FrameListener, Application() {
     private var screenshotDurationSeconds: Int = 0
     private var screenshotElapsedSeconds: Int = 0
     private var screenshotTimer: java.util.Timer? = null
+
+    // Periodic battery-backed SRAM flush. Writes <rom>.sav every 10s if dirty,
+    // so a crash or force-kill costs at most ~10s of in-game saves.
+    private var batteryFlushTimer: java.util.Timer? = null
 
     // Input configuration and gamepad support
     private val inputConfig = InputConfig.load()
@@ -268,8 +278,14 @@ class NestlinApplication : FrameListener, Application() {
             }
             scene.setOnKeyReleased { event -> handleInput(event.code, false) }
 
+            // Window close (X button) goes through handleExit so battery RAM gets flushed.
+            // Without this the JavaFX runtime would jump straight to stop() and bypass the flush.
+            setOnCloseRequest { handleExit() }
+
             show()
         }
+
+        startBatteryFlushTimer()
 
         // Initialize gamepad input
         gamepadInput = GamepadInput(nestlin.getController1(), inputConfig.gamepad)
@@ -356,6 +372,7 @@ class NestlinApplication : FrameListener, Application() {
                 currentRomPath = Paths.get(romPath)
                 load(currentRomPath!!)
                 powerReset()
+                loadBatteryRam(currentRomPath!!)
                 Platform.runLater { updateTitle() }
                 startEmulation()
             }
@@ -375,6 +392,20 @@ class NestlinApplication : FrameListener, Application() {
         emulationThread = thread {
             nestlin.start()
         }
+    }
+
+    private fun startBatteryFlushTimer() {
+        batteryFlushTimer = java.util.Timer("nestlin-sram-flush", true)
+        batteryFlushTimer?.scheduleAtFixedRate(object : java.util.TimerTask() {
+            override fun run() {
+                val rom = currentRomPath ?: return
+                try {
+                    nestlin.flushBatteryRamIfDirty(rom)
+                } catch (e: Exception) {
+                    System.err.println("[SRAM] Periodic flush failed: ${e.message}")
+                }
+            }
+        }, BATTERY_FLUSH_INTERVAL_MS, BATTERY_FLUSH_INTERVAL_MS)
     }
 
     private fun startScreenshotTimer() {
@@ -411,9 +442,12 @@ class NestlinApplication : FrameListener, Application() {
         if (file != null) {
             val romPath = file.toPath()
             stopEmulation()
+            // Flush the previous ROM's SRAM before its mapper is replaced.
+            currentRomPath?.let { nestlin.saveBatteryRam(it) }
             currentRomPath = romPath
             nestlin.load(romPath)
             nestlin.powerReset()
+            nestlin.loadBatteryRam(romPath)
             clearPauseState()
             updateTitle()
             EmulatorConfig.addRecentRom(romPath)
@@ -623,8 +657,12 @@ class NestlinApplication : FrameListener, Application() {
             return
         }
         stopEmulation()
+        // Real cartridges keep their battery alive across a power-cycle.
+        // Mirror that: persist current SRAM, then reload it post-reset.
+        nestlin.saveBatteryRam(currentRomPath!!)
         nestlin.load(currentRomPath!!)
         nestlin.powerReset()
+        nestlin.loadBatteryRam(currentRomPath!!)
         clearPauseState()
         updateTitle()
         startEmulation()
@@ -632,6 +670,7 @@ class NestlinApplication : FrameListener, Application() {
 
     private fun handleExit() {
         stopEmulation()
+        currentRomPath?.let { nestlin.saveBatteryRam(it) }
         Platform.exit()
     }
 
@@ -642,6 +681,12 @@ class NestlinApplication : FrameListener, Application() {
         // Clean up screenshot timer
         screenshotTimer?.cancel()
         screenshotTimer = null
+
+        // Clean up battery-flush timer; defensive final flush in case handleExit()
+        // wasn't the entry point (e.g. JavaFX runtime tears us down through stop() directly).
+        batteryFlushTimer?.cancel()
+        batteryFlushTimer = null
+        currentRomPath?.let { nestlin.saveBatteryRam(it) }
 
         // Clean up gamepad
         gamepadInput.shutdown()

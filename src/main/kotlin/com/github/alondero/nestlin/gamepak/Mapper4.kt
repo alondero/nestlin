@@ -37,6 +37,8 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
     private val prgRam = ByteArray(0x2000)
     private var prgRamEnabled = true
     private var prgRamWriteProtect = false
+    override var batteryDirty: Boolean = false
+    override fun batteryBackedRam(): ByteArray? = prgRam
 
     // Bank select register ($8000)
     private var bankSelect = 0
@@ -89,6 +91,7 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
         if (address in 0x6000..0x7FFF) {
             if (prgRamEnabled && !prgRamWriteProtect) {
                 prgRam[address - 0x6000] = value
+                batteryDirty = true
             }
             return
         }
