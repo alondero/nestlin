@@ -33,6 +33,8 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
 
     // PRG RAM ($6000-$7FFF)
     private val prgRam = ByteArray(0x2000)
+    override var batteryDirty: Boolean = false
+    override fun batteryBackedRam(): ByteArray? = prgRam
 
     override fun cpuRead(address: Int): Byte {
         if (address in 0x6000..0x7FFF) {
@@ -75,6 +77,7 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     override fun cpuWrite(address: Int, value: Byte) {
         if (address in 0x6000..0x7FFF) {
             prgRam[address - 0x6000] = value
+            batteryDirty = true
             return
         }
         if (address < 0x8000) return

@@ -50,8 +50,12 @@ class Mapper10(private val gamePak: GamePak) : Mapper {
     private val prgBankCount = programRom.size / 0x4000  // 16KB units
     private val chrMask = if (chrRom.isEmpty()) 0 else chrRom.size - 1
 
-    // 8KB PRG RAM ($6000-$7FFF). Volatile (no battery persistence on this branch).
+    // 8KB PRG RAM ($6000-$7FFF). Battery-backed on FxROM boards; the Nestlin layer
+    // gates actual persistence on Header.hasBattery (so Famicom Wars stays volatile,
+    // Fire Emblem Gaiden persists).
     private val prgRam = ByteArray(0x2000)
+    override var batteryDirty: Boolean = false
+    override fun batteryBackedRam(): ByteArray? = prgRam
 
     private var prgBank = 0          // 16KB, $8000-$BFFF
     private var chrBank0FD = 0       // 4KB, $0000-$0FFF when latch0 = FD
@@ -81,6 +85,7 @@ class Mapper10(private val gamePak: GamePak) : Mapper {
     override fun cpuWrite(address: Int, value: Byte) {
         if (address in 0x6000..0x7FFF) {
             prgRam[address - 0x6000] = value
+            batteryDirty = true
             return
         }
         if (address < 0x8000) return

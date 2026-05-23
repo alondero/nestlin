@@ -36,6 +36,8 @@ class Mapper5(private val gamePak: GamePak) : Mapper {
     // PRG RAM at $6000-$7FFF (8KB)
     private val prgRam = ByteArray(0x2000)
     private var prgRamEnabled = true
+    override var batteryDirty: Boolean = false
+    override fun batteryBackedRam(): ByteArray? = prgRam
 
     // exRAM at $5C00-$5FFF (8KB) - for fill mode and ExGrafix
     private val exRam = ByteArray(0x400)
@@ -148,6 +150,7 @@ class Mapper5(private val gamePak: GamePak) : Mapper {
         if (address in 0x6000..0x7FFF) {
             if (prgRamEnabled && (control and 0x04) == 0) {  // Bit 2: write protect
                 prgRam[address - 0x6000] = value
+                batteryDirty = true
             }
             return
         }

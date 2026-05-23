@@ -9,6 +9,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 
 class Nestlin {
 
@@ -70,6 +71,41 @@ class Nestlin {
     /** Convenience overload: read save state from a file path. */
     fun loadState(path: Path) {
         Files.newInputStream(path).use { loadState(it) }
+    }
+
+    /**
+     * Load battery-backed SRAM from `saves/<rom-basename>.sav` into the current mapper's PRG-RAM.
+     * No-op if the cartridge has no battery flag, no mapper PRG-RAM, or the file is absent/wrong size.
+     * Must be called AFTER [powerReset] so the mapper exists.
+     */
+    fun loadBatteryRam(romPath: Path) {
+        val game = cpu.currentGame ?: return
+        if (!game.header.hasBattery) return
+        val mapper = memory.mapper ?: return
+        SaveRam.load(batteryRamPath(romPath), mapper)
+    }
+
+    /**
+     * Persist the current mapper's battery-backed PRG-RAM to `saves/<rom-basename>.sav`.
+     * No-op if the cartridge has no battery flag or the mapper has no PRG-RAM.
+     */
+    fun saveBatteryRam(romPath: Path) {
+        val game = cpu.currentGame ?: return
+        if (!game.header.hasBattery) return
+        val mapper = memory.mapper ?: return
+        SaveRam.save(batteryRamPath(romPath), mapper)
+    }
+
+    /** Flush only if the mapper reports its battery RAM has been written since the last flush. */
+    fun flushBatteryRamIfDirty(romPath: Path) {
+        val mapper = memory.mapper ?: return
+        if (!mapper.batteryDirty) return
+        saveBatteryRam(romPath)
+    }
+
+    private fun batteryRamPath(romPath: Path): Path {
+        val base = romPath.fileName.toString().removeSuffix(".nes").removeSuffix(".7z")
+        return Paths.get("saves", "$base.sav")
     }
 
     fun start() {
