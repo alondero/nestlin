@@ -7,7 +7,7 @@ import java.nio.file.Path
 
 fun Path.load(): ByteArray? {
     return when {
-        this.toString().toLowerCase().endsWith(".7z") -> SevenZFile(this.toFile()).use {
+        this.toString().lowercase().endsWith(".7z") -> SevenZFile(this.toFile()).use {
             ByteArray(it.nextEntry.size.toInt()).apply { it.read(this) }
         }
         else -> Files.readAllBytes(this)

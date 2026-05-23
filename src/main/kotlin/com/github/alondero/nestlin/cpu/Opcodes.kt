@@ -419,15 +419,15 @@ class Opcodes {
         }
     }
 
-    private fun compareOp(mem: (Cpu) -> Byte, op: (Registers) -> Byte) = Opcode {
+    private fun compareOp(memFn: (Cpu) -> Byte, op: (Registers) -> Byte) = Opcode {
         it.apply {
             val register = op(it.registers)
-            val mem = mem(it)
-            val comparison: Int = register - mem
+            val memValue = memFn(it)
+            val comparison: Int = register - memValue
             processorStatus.apply {
                 negative = comparison.toSignedByte().isBitSet(7)
                 zero = comparison == 0
-                carry = register.toUnsignedInt() >= mem.toUnsignedInt()
+                carry = register.toUnsignedInt() >= memValue.toUnsignedInt()
             }
 
             workCyclesLeft += 2
@@ -482,69 +482,69 @@ class Opcodes {
         }
     }
 
-    private fun shiftRight(addr: (Cpu) -> Int) = Opcode {
+    private fun shiftRight(addrFn: (Cpu) -> Int) = Opcode {
         it.apply {
-            val addr = addr(it)
-            val result = memory[addr]
+            val address = addrFn(it)
+            val result = memory[address]
 
             processorStatus.carry = result.isBitSet(0)
             val shiftedResult = result.shiftRight()
-            memory[addr] = shiftedResult
+            memory[address] = shiftedResult
             processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
 
             workCyclesLeft += 2
         }
     }
 
-    private fun shiftLeft(addr: (Cpu) -> Int) = Opcode {
+    private fun shiftLeft(addrFn: (Cpu) -> Int) = Opcode {
         it.apply {
-            val addr = addr(it)
-            val result = memory[addr]
+            val address = addrFn(it)
+            val result = memory[address]
 
             processorStatus.carry = result.isBitSet(7)
             val shiftedResult = ((result.toUnsignedInt() shl 1) and 0xFF).toSignedByte()
-            memory[addr] = shiftedResult
+            memory[address] = shiftedResult
             processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
 
             workCyclesLeft += 2
         }
     }
 
-    private fun rotateRight(addr: (Cpu) -> Int) = Opcode {
+    private fun rotateRight(addrFn: (Cpu) -> Int) = Opcode {
         it.apply {
-            val addr = addr(it)
-            val result = memory[addr]
+            val address = addrFn(it)
+            val result = memory[address]
 
             val oldCarry = processorStatus.carry
             processorStatus.carry = result.isBitSet(0)
             val rotatedResult = ((result.toUnsignedInt() shr 1) or (if (oldCarry) 0x80 else 0)).toSignedByte()
-            memory[addr] = rotatedResult
+            memory[address] = rotatedResult
             processorStatus.resolveZeroAndNegativeFlags(rotatedResult)
 
             workCyclesLeft += 2
         }
     }
 
-    private fun rotateLeft(addr: (Cpu) -> Int) = Opcode {
+    private fun rotateLeft(addrFn: (Cpu) -> Int) = Opcode {
         it.apply {
-            val addr = addr(it)
-            val result = memory[addr]
+            val address = addrFn(it)
+            val result = memory[address]
 
             val rotatedResult = (result.toUnsignedInt() shl 1) or (if (processorStatus.carry) 1 else 0)
             processorStatus.carry = (rotatedResult and 0xFF00) > 0
-            memory[addr] = (rotatedResult and 0xFF).toSignedByte()
+            memory[address] = (rotatedResult and 0xFF).toSignedByte()
             processorStatus.resolveZeroAndNegativeFlags((rotatedResult and 0xFF).toSignedByte())
 
             workCyclesLeft += 2
         }
     }
 
-    private fun unary(addr: (Cpu) -> Int, op: Int.() -> Int) = Opcode {
+    private fun unary(addrFn: (Cpu) -> Int, op: Int.() -> Int) = Opcode {
         it.apply {
-            val addr = addr(it)
-            val result = (op((memory[addr].toUnsignedInt())) and 0xFF).toSignedByte()
+            val address = addrFn(it)
+            val result = (op((memory[address].toUnsignedInt())) and 0xFF).toSignedByte()
 
-            memory[addr] = result
+            memory[address] = result
             processorStatus.resolveZeroAndNegativeFlags(result)
 
             workCyclesLeft += 6

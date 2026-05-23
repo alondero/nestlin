@@ -132,14 +132,14 @@ class PpuAddressedMemory {
             5 -> scroll
             6 -> address
             else /*7*/ -> {
-                val addr = vRamAddress.asAddress() and 0x3FFF
+                val vramAddr = vRamAddress.asAddress() and 0x3FFF
                 val result = data
-                data = ppuInternalMemory[addr]
+                data = ppuInternalMemory[vramAddr]
                 vRamAddress.increment(controller.vramAddressIncrement())
 
                 // Palette reads are not buffered, they return immediately.
                 // However, they still update the buffer with mirrored nametable data (handled above).
-                if (addr >= 0x3F00) {
+                if (vramAddr >= 0x3F00) {
                     return data
                 }
                 result

@@ -24,7 +24,7 @@ class PpuInternalMemory {
     private var m2CyclesSinceA12Low: Int = 0
     var a12EdgeListener: ((Boolean) -> Unit)? = null
 
-    private inline fun emitA12(addr: Int) {
+    private fun emitA12(addr: Int) {
         val high = (addr and 0x1000) != 0
         if (high != lastA12High) {
             if (!high) {
