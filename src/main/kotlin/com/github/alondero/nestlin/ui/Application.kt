@@ -21,6 +21,7 @@ import javafx.scene.control.MenuItem
 import javafx.scene.image.ImageView
 import javafx.scene.image.PixelFormat
 import javafx.scene.image.WritableImage
+import javafx.scene.image.Image
 import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 import javafx.stage.FileChooser
@@ -112,6 +113,18 @@ class NestlinApplication : FrameListener, Application() {
         this.stage = stage
         stage.apply {
             title = "Nestlin"
+
+            // Set the application icon
+            try {
+                val iconStream = NestlinApplication::class.java.getResourceAsStream("/images/app-icon.png")
+                if (iconStream != null) {
+                    val iconImage = Image(iconStream)
+                    icons.add(iconImage)
+                    iconStream.close()
+                }
+            } catch (e: Exception) {
+                println("[APP] Warning: Could not load application icon: ${e.message}")
+            }
 
             // Create menu bar
             val menuBar = javafx.scene.control.MenuBar()
