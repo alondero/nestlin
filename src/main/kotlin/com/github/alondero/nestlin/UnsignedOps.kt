@@ -23,9 +23,9 @@ fun Short.toUnsignedInt(): Int {
     else return this.toInt()
 }
 
-fun Short.toHexString() = "%04X".format(this.toUnsignedInt()).toUpperCase()
-fun Byte.toHexString() = "%02X".format(this.toUnsignedInt()).toUpperCase()
-fun Int.toHexString() = "%02X".format(this).toUpperCase()
+fun Short.toHexString() = "%04X".format(this.toUnsignedInt()).uppercase()
+fun Byte.toHexString() = "%02X".format(this.toUnsignedInt()).uppercase()
+fun Int.toHexString() = "%02X".format(this).uppercase()
 
 fun Byte.isBitSet(i: Int) = (this.toUnsignedInt() shr i and 1) == 1
 fun Int.isBitSet(i: Int) = (this shr i and 1) == 1
