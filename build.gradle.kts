@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "1.9.22"
     application
     id("org.openjfx.javafxplugin") version "0.1.0"
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 repositories {
