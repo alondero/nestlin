@@ -15,11 +15,12 @@ import javafx.application.Application
 import javafx.application.Platform
 import javafx.scene.Scene
 import javafx.scene.Group
-import javafx.scene.canvas.Canvas
 import javafx.scene.control.Menu
 import javafx.scene.control.MenuBar
 import javafx.scene.control.MenuItem
+import javafx.scene.image.ImageView
 import javafx.scene.image.PixelFormat
+import javafx.scene.image.WritableImage
 import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 import javafx.stage.FileChooser
@@ -39,16 +40,20 @@ fun main(args: Array<String>) {
 
 class NestlinApplication : FrameListener, Application() {
     private lateinit var stage: Stage
-    private var canvas = Canvas(RESOLUTION_WIDTH.toDouble(), RESOLUTION_HEIGHT.toDouble())
-    // Group wraps the canvas so its visual scale contributes to layout bounds, letting the
-    // StackPane size to the scaled extent and centre the canvas in fullscreen / fit modes.
-    private val canvasGroup = Group(canvas)
+    // Native-resolution backing image; the ImageView's fitWidth/fitHeight drives upscaling.
+    // isSmooth=false selects nearest-neighbor when stretching to the fit-rect, giving crisp
+    // pixel-art edges. (Note: smooth is honored only on the fitWidth/fitHeight path, NOT on
+    // scene-graph scaleX/scaleY transforms — that's why we drive size via fitWidth, not scale.)
+    private val frameImage = WritableImage(RESOLUTION_WIDTH, RESOLUTION_HEIGHT)
+    private val imageView = ImageView(frameImage).apply { isSmooth = false }
+    // Group wraps the view so its bounds participate normally in StackPane sizing.
+    private val canvasGroup = Group(imageView)
     private val canvasHolder = StackPane(canvasGroup)
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
     private var running = false
     // Frame buffer synchronization for thread-safe screenshot capture
     private val frameBufferLock = Any()
-    // Native-resolution RGB buffer. Upscaling is handled by Canvas.scaleX/Y, not by replication.
+    // Native-resolution RGB buffer. Upscaling is handled by ImageView.fitWidth/Height, not by replication.
     private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
 
     private var displayConfig = DisplayConfig.load()
@@ -283,10 +288,10 @@ class NestlinApplication : FrameListener, Application() {
                 // Poll gamepad input
                 gamepadInput.poll()
 
-                val pixelWriter = canvas.graphicsContext2D.pixelWriter
+                val pixelWriter = frameImage.pixelWriter
                 val pixelFormat = PixelFormat.getByteRgbInstance()
 
-                // Thread-safe read of frame buffer (native NES resolution; Canvas scale handles upscaling)
+                // Thread-safe read of frame buffer (native NES resolution; ImageView fit-rect handles upscaling)
                 synchronized(frameBufferLock) {
                     pixelWriter.setPixels(0, 0, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, pixelFormat, nextFrame, 0, RESOLUTION_WIDTH * 3)
                 }
@@ -446,12 +451,12 @@ class NestlinApplication : FrameListener, Application() {
     private fun applyScale(mode: ScaleMode) {
         val factor = mode.factor()
         // Drop any previous binding before swapping mode to avoid leaking listeners.
-        canvas.scaleXProperty().unbind()
-        canvas.scaleYProperty().unbind()
+        imageView.fitWidthProperty().unbind()
+        imageView.fitHeightProperty().unbind()
         if (factor != null) {
-            canvas.scaleX = factor.toDouble()
-            canvas.scaleY = factor.toDouble()
-            // Resize the window to the canvas's natural extent unless fullscreen owns it.
+            imageView.fitWidth = (RESOLUTION_WIDTH * factor).toDouble()
+            imageView.fitHeight = (RESOLUTION_HEIGHT * factor).toDouble()
+            // Resize the window to the view's natural extent unless fullscreen owns it.
             if (!stage.isFullScreen) {
                 stage.sizeToScene()
             }
@@ -459,11 +464,14 @@ class NestlinApplication : FrameListener, Application() {
             // Fit: seed the window at 3x when entering Fit while windowed, so the user
             // always gets a usable starting size before the binding takes over.
             if (!stage.isFullScreen) {
-                canvas.scaleX = 3.0
-                canvas.scaleY = 3.0
+                imageView.fitWidth = (RESOLUTION_WIDTH * 3).toDouble()
+                imageView.fitHeight = (RESOLUTION_HEIGHT * 3).toDouble()
                 stage.sizeToScene()
             }
-            // Then bind scale to live holder dimensions, preserving aspect ratio.
+            // Then bind fit-rect to live holder dimensions, preserving aspect ratio.
+            // Computed as an integer-or-fractional scale factor, then multiplied back out to
+            // pixel dimensions — keeps the aspect ratio locked to 256:240 regardless of
+            // window letterboxing.
             val widthFactor = javafx.beans.binding.Bindings.createDoubleBinding(
                 { (canvasHolder.width / RESOLUTION_WIDTH).coerceAtLeast(1.0) },
                 canvasHolder.widthProperty()
@@ -472,9 +480,9 @@ class NestlinApplication : FrameListener, Application() {
                 { (canvasHolder.height / RESOLUTION_HEIGHT).coerceAtLeast(1.0) },
                 canvasHolder.heightProperty()
             )
-            val fitBinding = javafx.beans.binding.Bindings.min(widthFactor, heightFactor)
-            canvas.scaleXProperty().bind(fitBinding)
-            canvas.scaleYProperty().bind(fitBinding)
+            val fitFactor = javafx.beans.binding.Bindings.min(widthFactor, heightFactor)
+            imageView.fitWidthProperty().bind(fitFactor.multiply(RESOLUTION_WIDTH.toDouble()))
+            imageView.fitHeightProperty().bind(fitFactor.multiply(RESOLUTION_HEIGHT.toDouble()))
         }
     }
 
