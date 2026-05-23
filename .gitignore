@@ -32,6 +32,9 @@ CLAUDE.local.md
 # Screenshot directory (generated at runtime)
 screenshots/
 
+# OS-level window captures from ad-hoc debugging (root only)
+/windows-capture*.png
+
 # Save state directory (generated at runtime by F5 quicksave) and any stray save files
 savestates/
 *.nstl
