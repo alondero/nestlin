@@ -87,6 +87,26 @@
 - **Implementation notes:** MMC2's latch is the only mechanism in the codebase where CHR banking is driven by PPU read addresses rather than CPU writes. The same latch design generalises to Mapper 10 (MMC4) — only PRG banking granularity differs.
 - **Verification:** `Mapper9Test` covers PRG fixed-bank invariant, PRG bank select, both CHR latches with read-then-flip ordering, latch independence, latch trigger range, and mirroring control.
 
+## Mapper 10 (MMC4 / FxROM)
+**Status:** Working (Added 2026-05-23)
+
+- **Games:** Fire Emblem Gaiden, Famicom Wars (the only two commercial games using MMC4)
+- **Behavior:**
+  - PRG: a single switchable 16KB bank at `$8000-$BFFF` (selected by writes to `$A000-$AFFF`, low 4 bits); `$C000-$FFFF` fixed to the last 16KB bank.
+    (This is the only difference from MMC2/Mapper 9, which instead switches an 8KB window and fixes the last three 8KB banks.)
+  - 8KB PRG RAM at `$6000-$7FFF`, exposed as battery-backed via `batteryBackedRam()`/`batteryDirty`. The Nestlin layer gates actual `.sav` persistence on `Header.hasBattery`, so Fire Emblem Gaiden persists saves while Famicom Wars (no battery) stays volatile.
+  - CHR: two 4KB windows (`$0000-$0FFF`, `$1000-$1FFF`), each with a 2-state latch (`FD`/`FE`) selecting one of two CHR bank registers. **Identical to MMC2.**
+  - Latch transitions fire on PPU pattern-table reads at coarse tile-row boundaries:
+    - Read in `$0FD8-$0FDF` → `latch0 = FD`; `$0FE8-$0FEF` → `latch0 = FE`
+    - Read in `$1FD8-$1FDF` → `latch1 = FD`; `$1FE8-$1FEF` → `latch1 = FE`
+  - **Read-then-flip ordering is critical:** the triggering read returns data from the current bank; the latch flip affects only subsequent reads in that window.
+  - Mirroring: writes to `$F000-$FFFF` (bit 0) select vertical (0) or horizontal (1).
+  - No IRQ.
+- **Implementation notes:** `Mapper10` shares MMC2's CHR-latch design verbatim (see [[mmc2-mmc4-latch-read-then-flip-ordering-2026-05-20]]); only `cpuRead`'s PRG geometry and the added PRG RAM differ from `Mapper9`.
+- **Verification:**
+  - `Mapper10Test` — PRG fixed-bank invariant, 16KB switchable window, low-4-bit bank select, PRG RAM read/write, both CHR latches with read-then-flip ordering, latch independence, latch trigger range, mirroring control.
+  - `Mapper10RegressionTest` (Mesen-comparison group) — boots Fire Emblem Gaiden on the real ROM and asserts (1) the MMC4 PRG bank actually pages during boot, and (2) Nestlin's render-output state (OAM, palette, PPUCTRL, PPUMASK) is byte-identical to the Mesen2 oracle at frame 120.
+
 ## Mapper 7 (AxROM)
 **Status:** Working (Verified 2026-04-27)
 
