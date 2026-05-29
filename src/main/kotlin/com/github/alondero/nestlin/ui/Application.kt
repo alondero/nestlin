@@ -57,6 +57,18 @@ class NestlinApplication : FrameListener, Application() {
     private val canvasGroup = Group(imageView)
     private val canvasHolder = StackPane(canvasGroup)
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
+    // Hold-Tab fast-forward: disables throttling while held, restores it on release.
+    private val fastForward = FastForwardController(nestlin.config)
+    // On-screen fast-forward indicator. A scene-graph node (not pixels drawn into frameImage)
+    // so it stays a crisp 16px regardless of the ImageView upscale factor. Gold glyph with a
+    // black outline stays legible over both light and dark scenes. Toggled by the render loop.
+    private val fastForwardIndicator = javafx.scene.text.Text(">>").apply {
+        font = javafx.scene.text.Font.font("Monospaced", javafx.scene.text.FontWeight.BOLD, 16.0)
+        fill = javafx.scene.paint.Color.web("#FFD700")
+        stroke = javafx.scene.paint.Color.BLACK
+        strokeWidth = 1.0
+        isVisible = false
+    }
     private var running = false
     // Frame buffer synchronization for thread-safe screenshot capture
     private val frameBufferLock = Any()
@@ -205,6 +217,11 @@ class NestlinApplication : FrameListener, Application() {
             root.children.addAll(menuBar, canvasHolder)
             VBox.setVgrow(canvasHolder, javafx.scene.layout.Priority.ALWAYS)
 
+            // Overlay the fast-forward indicator on top of the game image, pinned top-right.
+            canvasHolder.children.add(fastForwardIndicator)
+            StackPane.setAlignment(fastForwardIndicator, javafx.geometry.Pos.TOP_RIGHT)
+            StackPane.setMargin(fastForwardIndicator, javafx.geometry.Insets(4.0, 6.0, 0.0, 0.0))
+
             // Letterbox area outside the scaled canvas paints black.
             canvasHolder.style = "-fx-background-color: black;"
             // Decouple holder's min size from the Group's bounds. Without this, the scaled
@@ -296,6 +313,30 @@ class NestlinApplication : FrameListener, Application() {
             }
             scene.setOnKeyReleased { event -> handleInput(event.code, false) }
 
+            // Tab is a focus-traversal key in JavaFX, so it must be intercepted in the
+            // capturing phase (event filter) and consumed before the traversal engine
+            // sees it — otherwise holding Tab would walk focus into the menu bar instead
+            // of fast-forwarding. KEY_PRESSED auto-repeats while held; engage() is idempotent.
+            scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED) { event ->
+                if (event.code == javafx.scene.input.KeyCode.TAB) {
+                    fastForward.engage()
+                    event.consume()
+                }
+            }
+            scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_RELEASED) { event ->
+                if (event.code == javafx.scene.input.KeyCode.TAB) {
+                    fastForward.release()
+                    event.consume()
+                }
+            }
+
+            // Safety net for the "stuck turbo" problem: if the window loses focus while
+            // Tab is held, the OS stops delivering key events so KEY_RELEASED never fires.
+            // Force-release on focus loss so fast-forward can't latch on indefinitely.
+            focusedProperty().addListener { _, _, focused ->
+                if (!focused) fastForward.release()
+            }
+
             // Window close (X button) goes through handleExit so battery RAM gets flushed.
             // Without this the JavaFX runtime would jump straight to stop() and bypass the flush.
             setOnCloseRequest { handleExit() }
@@ -323,6 +364,12 @@ class NestlinApplication : FrameListener, Application() {
                 // Thread-safe read of frame buffer (native NES resolution; ImageView fit-rect handles upscaling)
                 synchronized(frameBufferLock) {
                     pixelWriter.setPixels(0, 0, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, pixelFormat, nextFrame, 0, RESOLUTION_WIDTH * 3)
+                }
+
+                // Show/hide the fast-forward indicator. It's a StackPane-overlaid scene node,
+                // so toggling visibility is all that's needed — no per-frame drawing.
+                if (fastForwardIndicator.isVisible != fastForward.active) {
+                    fastForwardIndicator.isVisible = fastForward.active
                 }
             }
 
