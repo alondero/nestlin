@@ -45,6 +45,11 @@ class NestlinApplication : FrameListener, Application() {
     private val canvasGroup = Group(canvas)
     private val canvasHolder = StackPane(canvasGroup)
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
+    // Hold-Tab fast-forward: disables throttling while held, restores it on release.
+    private val fastForward = FastForwardController(nestlin.config)
+    // Indicator render assets, built once rather than per-frame while fast-forward is active.
+    private val fastForwardFont = javafx.scene.text.Font.font("Monospaced", javafx.scene.text.FontWeight.BOLD, 16.0)
+    private val fastForwardColor = javafx.scene.paint.Color.web("#FFD700")
     private var running = false
     // Frame buffer synchronization for thread-safe screenshot capture
     private val frameBufferLock = Any()
@@ -268,6 +273,30 @@ class NestlinApplication : FrameListener, Application() {
             }
             scene.setOnKeyReleased { event -> handleInput(event.code, false) }
 
+            // Tab is a focus-traversal key in JavaFX, so it must be intercepted in the
+            // capturing phase (event filter) and consumed before the traversal engine
+            // sees it — otherwise holding Tab would walk focus into the menu bar instead
+            // of fast-forwarding. KEY_PRESSED auto-repeats while held; engage() is idempotent.
+            scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED) { event ->
+                if (event.code == javafx.scene.input.KeyCode.TAB) {
+                    fastForward.engage()
+                    event.consume()
+                }
+            }
+            scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_RELEASED) { event ->
+                if (event.code == javafx.scene.input.KeyCode.TAB) {
+                    fastForward.release()
+                    event.consume()
+                }
+            }
+
+            // Safety net for the "stuck turbo" problem: if the window loses focus while
+            // Tab is held, the OS stops delivering key events so KEY_RELEASED never fires.
+            // Force-release on focus loss so fast-forward can't latch on indefinitely.
+            focusedProperty().addListener { _, _, focused ->
+                if (!focused) fastForward.release()
+            }
+
             show()
         }
 
@@ -289,6 +318,19 @@ class NestlinApplication : FrameListener, Application() {
                 // Thread-safe read of frame buffer (native NES resolution; Canvas scale handles upscaling)
                 synchronized(frameBufferLock) {
                     pixelWriter.setPixels(0, 0, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, pixelFormat, nextFrame, 0, RESOLUTION_WIDTH * 3)
+                }
+
+                // Overlay the fast-forward indicator after the frame so it sits on top.
+                // Drawn in native canvas coordinates; the Canvas's scaleX/Y upscales it
+                // along with the game image, keeping it pinned to the top-right corner.
+                if (fastForward.active) {
+                    val gc = canvas.graphicsContext2D
+                    gc.font = fastForwardFont
+                    // Black drop-shadow then yellow glyph: legible over both light and dark scenes.
+                    gc.fill = javafx.scene.paint.Color.BLACK
+                    gc.fillText(">>", RESOLUTION_WIDTH - 27.0, 19.0)
+                    gc.fill = fastForwardColor
+                    gc.fillText(">>", RESOLUTION_WIDTH - 28.0, 18.0)
                 }
             }
 
