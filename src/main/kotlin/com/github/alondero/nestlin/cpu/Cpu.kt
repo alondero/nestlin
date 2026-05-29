@@ -68,15 +68,26 @@ class Cpu(var memory: Memory)
         if (readyForNextInstruction()) {
             // Check for NMI interrupt before executing next instruction
             if (checkAndHandleNmi()) {
+                // An interrupt redirects the PC, breaking any spin loop the CPU
+                // was parked in.
+                idle = false
                 // NMI was handled, skip regular instruction execution
                 workCyclesLeft--
                 return
             }
 
             if (checkAndHandleIrq()) {
+                idle = false
                 workCyclesLeft--
                 return
             }
+
+            // The CPU has branched/jumped to its own address — a spin loop that
+            // can only be broken by an interrupt (handled above). Re-decoding the
+            // same instruction every cycle just burns the host CPU, so park here.
+            // workCyclesLeft stays at 0 so the interrupt checks keep running each
+            // tick, and the PPU/APU keep advancing in the main loop to deliver one.
+            if (idle) return
 
             val initialPC = registers.programCounter
             val opcodeVal = readByteAtPC().toUnsignedInt()
