@@ -55,7 +55,8 @@ val mesenTests = listOf(
     "com.github.alondero.nestlin.compare.Mesen2StateCapturerSmokeTest",
     "com.github.alondero.nestlin.compare.DebugMesen2CaptureTest",
     "com.github.alondero.nestlin.compare.DebugStateCaptureTest",
-    "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest"
+    "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest",
+    "com.github.alondero.nestlin.compare.Mapper10RegressionTest"
 )
 
 // Also exclude debug/investigation tests that can hang or have pre-existing issues
@@ -106,6 +107,12 @@ tasks.register<Test>("testMesenComparison") {
     val mesen2Path = System.getenv("MESEN2_PATH")
     if (mesen2Path != null) {
         environment("MESEN2_PATH", mesen2Path)
+    }
+    // Forward the optional Fire Emblem Gaiden ROM override (Mapper10RegressionTest)
+    // for the same daemon-env-inheritance reason.
+    val fireEmblemRom = System.getenv("NESTLIN_FIRE_EMBLEM_ROM")
+    if (fireEmblemRom != null) {
+        environment("NESTLIN_FIRE_EMBLEM_ROM", fireEmblemRom)
     }
     // Show stdout/stderr from tests (e.g. the diff% println) so we can see results.
     testLogging {

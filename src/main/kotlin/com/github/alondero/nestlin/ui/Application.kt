@@ -15,11 +15,13 @@ import javafx.application.Application
 import javafx.application.Platform
 import javafx.scene.Scene
 import javafx.scene.Group
-import javafx.scene.canvas.Canvas
 import javafx.scene.control.Menu
 import javafx.scene.control.MenuBar
 import javafx.scene.control.MenuItem
+import javafx.scene.image.ImageView
 import javafx.scene.image.PixelFormat
+import javafx.scene.image.WritableImage
+import javafx.scene.image.Image
 import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 import javafx.stage.FileChooser
@@ -33,22 +35,32 @@ import javax.sound.sampled.DataLine
 import javax.sound.sampled.SourceDataLine
 import kotlin.concurrent.thread
 
+const val DISPLAY_SCALE = 4  // 4x magnification for debugging
+
+// Periodic SRAM flush interval. 10s matches RetroArch's default and means a crash
+// loses at most ~10s of in-game saves. Skipped when batteryDirty is false (no cost).
+private const val BATTERY_FLUSH_INTERVAL_MS = 10_000L
+
 fun main(args: Array<String>) {
     Application.launch(NestlinApplication::class.java, *args)
 }
 
 class NestlinApplication : FrameListener, Application() {
     private lateinit var stage: Stage
-    private var canvas = Canvas(RESOLUTION_WIDTH.toDouble(), RESOLUTION_HEIGHT.toDouble())
-    // Group wraps the canvas so its visual scale contributes to layout bounds, letting the
-    // StackPane size to the scaled extent and centre the canvas in fullscreen / fit modes.
-    private val canvasGroup = Group(canvas)
+    // Native-resolution backing image; the ImageView's fitWidth/fitHeight drives upscaling.
+    // isSmooth=false selects nearest-neighbor when stretching to the fit-rect, giving crisp
+    // pixel-art edges. (Note: smooth is honored only on the fitWidth/fitHeight path, NOT on
+    // scene-graph scaleX/scaleY transforms — that's why we drive size via fitWidth, not scale.)
+    private val frameImage = WritableImage(RESOLUTION_WIDTH, RESOLUTION_HEIGHT)
+    private val imageView = ImageView(frameImage).apply { isSmooth = false }
+    // Group wraps the view so its bounds participate normally in StackPane sizing.
+    private val canvasGroup = Group(imageView)
     private val canvasHolder = StackPane(canvasGroup)
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
     private var running = false
     // Frame buffer synchronization for thread-safe screenshot capture
     private val frameBufferLock = Any()
-    // Native-resolution RGB buffer. Upscaling is handled by Canvas.scaleX/Y, not by replication.
+    // Native-resolution RGB buffer. Upscaling is handled by ImageView.fitWidth/Height, not by replication.
     private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
 
     private var displayConfig = DisplayConfig.load()
@@ -81,6 +93,10 @@ class NestlinApplication : FrameListener, Application() {
     private var screenshotElapsedSeconds: Int = 0
     private var screenshotTimer: java.util.Timer? = null
 
+    // Periodic battery-backed SRAM flush. Writes <rom>.sav every 10s if dirty,
+    // so a crash or force-kill costs at most ~10s of in-game saves.
+    private var batteryFlushTimer: java.util.Timer? = null
+
     // Input configuration and gamepad support
     private val inputConfig = InputConfig.load()
     private lateinit var gamepadInput: GamepadInput
@@ -97,6 +113,18 @@ class NestlinApplication : FrameListener, Application() {
         this.stage = stage
         stage.apply {
             title = "Nestlin"
+
+            // Set the application icon
+            try {
+                val iconStream = NestlinApplication::class.java.getResourceAsStream("/images/app-icon.png")
+                if (iconStream != null) {
+                    val iconImage = Image(iconStream)
+                    icons.add(iconImage)
+                    iconStream.close()
+                }
+            } catch (e: Exception) {
+                println("[APP] Warning: Could not load application icon: ${e.message}")
+            }
 
             // Create menu bar
             val menuBar = javafx.scene.control.MenuBar()
@@ -268,8 +296,14 @@ class NestlinApplication : FrameListener, Application() {
             }
             scene.setOnKeyReleased { event -> handleInput(event.code, false) }
 
+            // Window close (X button) goes through handleExit so battery RAM gets flushed.
+            // Without this the JavaFX runtime would jump straight to stop() and bypass the flush.
+            setOnCloseRequest { handleExit() }
+
             show()
         }
+
+        startBatteryFlushTimer()
 
         // Initialize gamepad input
         gamepadInput = GamepadInput(nestlin.getController1(), inputConfig.gamepad)
@@ -283,10 +317,10 @@ class NestlinApplication : FrameListener, Application() {
                 // Poll gamepad input
                 gamepadInput.poll()
 
-                val pixelWriter = canvas.graphicsContext2D.pixelWriter
+                val pixelWriter = frameImage.pixelWriter
                 val pixelFormat = PixelFormat.getByteRgbInstance()
 
-                // Thread-safe read of frame buffer (native NES resolution; Canvas scale handles upscaling)
+                // Thread-safe read of frame buffer (native NES resolution; ImageView fit-rect handles upscaling)
                 synchronized(frameBufferLock) {
                     pixelWriter.setPixels(0, 0, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, pixelFormat, nextFrame, 0, RESOLUTION_WIDTH * 3)
                 }
@@ -356,6 +390,7 @@ class NestlinApplication : FrameListener, Application() {
                 currentRomPath = Paths.get(romPath)
                 load(currentRomPath!!)
                 powerReset()
+                loadBatteryRam(currentRomPath!!)
                 Platform.runLater { updateTitle() }
                 startEmulation()
             }
@@ -375,6 +410,20 @@ class NestlinApplication : FrameListener, Application() {
         emulationThread = thread {
             nestlin.start()
         }
+    }
+
+    private fun startBatteryFlushTimer() {
+        batteryFlushTimer = java.util.Timer("nestlin-sram-flush", true)
+        batteryFlushTimer?.scheduleAtFixedRate(object : java.util.TimerTask() {
+            override fun run() {
+                val rom = currentRomPath ?: return
+                try {
+                    nestlin.flushBatteryRamIfDirty(rom)
+                } catch (e: Exception) {
+                    System.err.println("[SRAM] Periodic flush failed: ${e.message}")
+                }
+            }
+        }, BATTERY_FLUSH_INTERVAL_MS, BATTERY_FLUSH_INTERVAL_MS)
     }
 
     private fun startScreenshotTimer() {
@@ -411,9 +460,12 @@ class NestlinApplication : FrameListener, Application() {
         if (file != null) {
             val romPath = file.toPath()
             stopEmulation()
+            // Flush the previous ROM's SRAM before its mapper is replaced.
+            currentRomPath?.let { nestlin.saveBatteryRam(it) }
             currentRomPath = romPath
             nestlin.load(romPath)
             nestlin.powerReset()
+            nestlin.loadBatteryRam(romPath)
             clearPauseState()
             updateTitle()
             EmulatorConfig.addRecentRom(romPath)
@@ -446,12 +498,12 @@ class NestlinApplication : FrameListener, Application() {
     private fun applyScale(mode: ScaleMode) {
         val factor = mode.factor()
         // Drop any previous binding before swapping mode to avoid leaking listeners.
-        canvas.scaleXProperty().unbind()
-        canvas.scaleYProperty().unbind()
+        imageView.fitWidthProperty().unbind()
+        imageView.fitHeightProperty().unbind()
         if (factor != null) {
-            canvas.scaleX = factor.toDouble()
-            canvas.scaleY = factor.toDouble()
-            // Resize the window to the canvas's natural extent unless fullscreen owns it.
+            imageView.fitWidth = (RESOLUTION_WIDTH * factor).toDouble()
+            imageView.fitHeight = (RESOLUTION_HEIGHT * factor).toDouble()
+            // Resize the window to the view's natural extent unless fullscreen owns it.
             if (!stage.isFullScreen) {
                 stage.sizeToScene()
             }
@@ -459,11 +511,14 @@ class NestlinApplication : FrameListener, Application() {
             // Fit: seed the window at 3x when entering Fit while windowed, so the user
             // always gets a usable starting size before the binding takes over.
             if (!stage.isFullScreen) {
-                canvas.scaleX = 3.0
-                canvas.scaleY = 3.0
+                imageView.fitWidth = (RESOLUTION_WIDTH * 3).toDouble()
+                imageView.fitHeight = (RESOLUTION_HEIGHT * 3).toDouble()
                 stage.sizeToScene()
             }
-            // Then bind scale to live holder dimensions, preserving aspect ratio.
+            // Then bind fit-rect to live holder dimensions, preserving aspect ratio.
+            // Computed as an integer-or-fractional scale factor, then multiplied back out to
+            // pixel dimensions — keeps the aspect ratio locked to 256:240 regardless of
+            // window letterboxing.
             val widthFactor = javafx.beans.binding.Bindings.createDoubleBinding(
                 { (canvasHolder.width / RESOLUTION_WIDTH).coerceAtLeast(1.0) },
                 canvasHolder.widthProperty()
@@ -472,9 +527,9 @@ class NestlinApplication : FrameListener, Application() {
                 { (canvasHolder.height / RESOLUTION_HEIGHT).coerceAtLeast(1.0) },
                 canvasHolder.heightProperty()
             )
-            val fitBinding = javafx.beans.binding.Bindings.min(widthFactor, heightFactor)
-            canvas.scaleXProperty().bind(fitBinding)
-            canvas.scaleYProperty().bind(fitBinding)
+            val fitFactor = javafx.beans.binding.Bindings.min(widthFactor, heightFactor)
+            imageView.fitWidthProperty().bind(fitFactor.multiply(RESOLUTION_WIDTH.toDouble()))
+            imageView.fitHeightProperty().bind(fitFactor.multiply(RESOLUTION_HEIGHT.toDouble()))
         }
     }
 
@@ -623,8 +678,12 @@ class NestlinApplication : FrameListener, Application() {
             return
         }
         stopEmulation()
+        // Real cartridges keep their battery alive across a power-cycle.
+        // Mirror that: persist current SRAM, then reload it post-reset.
+        nestlin.saveBatteryRam(currentRomPath!!)
         nestlin.load(currentRomPath!!)
         nestlin.powerReset()
+        nestlin.loadBatteryRam(currentRomPath!!)
         clearPauseState()
         updateTitle()
         startEmulation()
@@ -632,6 +691,7 @@ class NestlinApplication : FrameListener, Application() {
 
     private fun handleExit() {
         stopEmulation()
+        currentRomPath?.let { nestlin.saveBatteryRam(it) }
         Platform.exit()
     }
 
@@ -642,6 +702,12 @@ class NestlinApplication : FrameListener, Application() {
         // Clean up screenshot timer
         screenshotTimer?.cancel()
         screenshotTimer = null
+
+        // Clean up battery-flush timer; defensive final flush in case handleExit()
+        // wasn't the entry point (e.g. JavaFX runtime tears us down through stop() directly).
+        batteryFlushTimer?.cancel()
+        batteryFlushTimer = null
+        currentRomPath?.let { nestlin.saveBatteryRam(it) }
 
         // Clean up gamepad
         gamepadInput.shutdown()

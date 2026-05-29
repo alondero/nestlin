@@ -27,6 +27,14 @@ interface Mapper {
     fun saveState(out: DataOutput) {}
     fun loadState(input: DataInput) {}
 
+    /** The cartridge's PRG-RAM ($6000-$7FFF) for battery persistence. Null when the mapper has none. */
+    fun batteryBackedRam(): ByteArray? = null
+
+    /** True when battery-backed RAM has been written since the last flush. */
+    var batteryDirty: Boolean
+        get() = false
+        set(_) {}
+
     enum class MirroringMode {
         HORIZONTAL,
         VERTICAL,
