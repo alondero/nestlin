@@ -15,6 +15,11 @@ interface Mapper {
     fun acknowledgeIrq() {}
     fun isIrqPending(): Boolean = false
 
+    // Clocked once per CPU (M2) cycle. Mappers whose IRQ counter is driven by
+    // CPU cycles rather than PPU A12 edges (e.g. Sunsoft FME-7 / mapper 69) use
+    // this; A12-clocked mappers (MMC3) leave it as a no-op.
+    fun tickCpuCycle() {}
+
     // State snapshot for debugging
     fun snapshot(): MapperStateSnapshot? = null
 

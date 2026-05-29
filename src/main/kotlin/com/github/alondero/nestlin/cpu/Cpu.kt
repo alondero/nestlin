@@ -65,6 +65,10 @@ class Cpu(var memory: Memory)
     }
 
     fun tick() {
+        // Clock any CPU-cycle-driven mapper IRQ counter (e.g. FME-7) exactly once
+        // per CPU cycle, before instruction/interrupt processing for this cycle.
+        memory.mapper?.tickCpuCycle()
+
         if (readyForNextInstruction()) {
             // Check for NMI interrupt before executing next instruction
             if (checkAndHandleNmi()) {

@@ -113,6 +113,43 @@
 
 ---
 
+## Mapper 69 (Sunsoft FME-7 / 5A / 5B)
+**Status:** Working — NTSC titles (Added 2026-05-29)
+
+- **Games:** Batman: Return of the Joker, Gimmick! (Mr. Gimmick), Gremlins 2, Hebereke
+- **Register protocol:** command/parameter pair.
+  - `$8000-$9FFF` Command register — low 4 bits select the command.
+  - `$A000-$BFFF` Parameter register — writing here invokes the selected command.
+- **Commands:**
+  - `$0-$7`: CHR bank for one of the eight 1KB windows (`$0000-$1FFF`), 8-bit bank number.
+  - `$8`: `$6000-$7FFF` bank — bits 0-5 = bank, bit 6 = RAM(1)/ROM(0) select, bit 7 = RAM enable.
+    When RAM is selected but disabled the region is open bus (power-on write protection).
+  - `$9/$A/$B`: 8KB PRG banks for `$8000` / `$A000` / `$C000` (bits 0-5). `$E000-$FFFF` is fixed to the last bank.
+  - `$C`: mirroring — 0=Vertical, 1=Horizontal, 2=1-screen lower, 3=1-screen upper.
+  - `$D`: IRQ control — bit 7 = counter-enable (decrement), bit 0 = IRQ-enable (assert line).
+    Any write to `$D` also acknowledges a pending IRQ.
+  - `$E`/`$F`: IRQ counter low / high byte.
+- **IRQ (the differentiator vs MMC3):** a 16-bit counter decremented once per CPU (M2)
+  cycle. When it underflows from `$0000` to `$FFFF` an IRQ is generated (if IRQ-enable is
+  set). This is the first CPU-cycle-clocked mapper IRQ in Nestlin: the `Mapper` interface
+  gained `tickCpuCycle()` (default no-op; A12-clocked mappers like MMC3 ignore it) and
+  `Cpu.tick()` calls it exactly once per CPU cycle. The line is held until software writes
+  command `$D`, so `acknowledgeIrq()` is intentionally **not** overridden.
+- **5B expansion audio** (`$C000-$FFFF`, three square channels) is out of scope and ignored
+  — a follow-up that depends on the expansion-audio mixer API (see issue #51).
+- **Verification:**
+  - `Mapper69Test` — PRG/CHR banking, `$6000` RAM/ROM enable+protect, mirroring, the full
+    16-bit per-cycle IRQ (load, enable/disable gating, underflow, acknowledge), and save/load.
+  - `Mapper69BootRenderTest` — Batman (USA) boots, enables rendering, draws substantial
+    content, and drives the FME-7 IRQ.
+- **Known limitation — PAL ROMs:** Gimmick! is only available locally as the European (PAL)
+  release. It disables NMI and times its entire raster/frame loop from the FME-7 cycle IRQ
+  using PAL-tuned counter values. Nestlin's core is NTSC-only, so that ROM desyncs and hangs
+  at boot. This is a PAL-timing limitation of the emulator core, not a mapper defect; an NTSC
+  (Japanese) Gimmick! dump would be expected to boot.
+
+---
+
 ## Adding New Mappers
 
 1. Implement in `gamepak/` directory
