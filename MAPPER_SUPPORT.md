@@ -87,6 +87,26 @@
 - **Implementation notes:** MMC2's latch is the only mechanism in the codebase where CHR banking is driven by PPU read addresses rather than CPU writes. The same latch design generalises to Mapper 10 (MMC4) — only PRG banking granularity differs.
 - **Verification:** `Mapper9Test` covers PRG fixed-bank invariant, PRG bank select, both CHR latches with read-then-flip ordering, latch independence, latch trigger range, and mirroring control.
 
+## Mapper 10 (MMC4 / FxROM)
+**Status:** Working (Added 2026-05-23)
+
+- **Games:** Fire Emblem Gaiden, Famicom Wars (the only two commercial games using MMC4)
+- **Behavior:**
+  - PRG: a single switchable 16KB bank at `$8000-$BFFF` (selected by writes to `$A000-$AFFF`, low 4 bits); `$C000-$FFFF` fixed to the last 16KB bank.
+    (This is the only difference from MMC2/Mapper 9, which instead switches an 8KB window and fixes the last three 8KB banks.)
+  - 8KB PRG RAM at `$6000-$7FFF`, exposed as battery-backed via `batteryBackedRam()`/`batteryDirty`. The Nestlin layer gates actual `.sav` persistence on `Header.hasBattery`, so Fire Emblem Gaiden persists saves while Famicom Wars (no battery) stays volatile.
+  - CHR: two 4KB windows (`$0000-$0FFF`, `$1000-$1FFF`), each with a 2-state latch (`FD`/`FE`) selecting one of two CHR bank registers. **Identical to MMC2.**
+  - Latch transitions fire on PPU pattern-table reads at coarse tile-row boundaries:
+    - Read in `$0FD8-$0FDF` → `latch0 = FD`; `$0FE8-$0FEF` → `latch0 = FE`
+    - Read in `$1FD8-$1FDF` → `latch1 = FD`; `$1FE8-$1FEF` → `latch1 = FE`
+  - **Read-then-flip ordering is critical:** the triggering read returns data from the current bank; the latch flip affects only subsequent reads in that window.
+  - Mirroring: writes to `$F000-$FFFF` (bit 0) select vertical (0) or horizontal (1).
+  - No IRQ.
+- **Implementation notes:** `Mapper10` shares MMC2's CHR-latch design verbatim (see [[mmc2-mmc4-latch-read-then-flip-ordering-2026-05-20]]); only `cpuRead`'s PRG geometry and the added PRG RAM differ from `Mapper9`.
+- **Verification:**
+  - `Mapper10Test` — PRG fixed-bank invariant, 16KB switchable window, low-4-bit bank select, PRG RAM read/write, both CHR latches with read-then-flip ordering, latch independence, latch trigger range, mirroring control.
+  - `Mapper10RegressionTest` (Mesen-comparison group) — boots Fire Emblem Gaiden on the real ROM and asserts (1) the MMC4 PRG bank actually pages during boot, and (2) Nestlin's render-output state (OAM, palette, PPUCTRL, PPUMASK) is byte-identical to the Mesen2 oracle at frame 120.
+
 ## Mapper 7 (AxROM)
 **Status:** Working (Verified 2026-04-27)
 
@@ -113,6 +133,20 @@
 
 ---
 
+## Battery-Backed Save RAM (.sav files)
+
+**Status:** Supported on mappers 1, 4, 5 (Added 2026-05-23)
+
+- **Format:** Raw bytes, no header. Bit-for-bit compatible with FCEUX / Nestopia / Mesen / Mesen2.
+- **Location:** `saves/<rom-basename>.sav` next to the working directory.
+- **Trigger:** iNES header byte 6 bit 1 (battery flag). When unset, no `.sav` file is created even if the cartridge has PRG-RAM.
+- **Flush policy:** every 10 seconds if PRG-RAM is dirty, plus on clean shutdown, ROM switch, and hard reset. Atomic file replace (write `.sav.tmp` then move) keeps the existing save intact if the JVM dies mid-write.
+- **Coverage:** Mapper 1 (MMC1 — Zelda, Final Fantasy, Kid Icarus), Mapper 4 (MMC3 — Mega Man 4-6, StarTropics, Crystalis), Mapper 5 (MMC5 — Castlevania III when battery-flagged). Mappers without `$6000-$7FFF` PRG-RAM (0, 2, 3, 7, 9, 11, 34) cannot host battery saves and are unaffected.
+- **Known limitations:**
+  - PRG-RAM size is treated as 8 KB regardless of iNES byte 8 / NES 2.0 byte 10. Games with 16/32 KB battery RAM (some MMC5 titles) won't save their full state.
+  - MMC5 extended RAM (`$5C00-$5FFF`) is not persisted. Only the `$6000-$7FFF` PRG-RAM window is.
+  - FDS (Famicom Disk System) saves use the `.fds` disk-image format and are out of scope.
+
 ## Adding New Mappers
 
 1. Implement in `gamepak/` directory
@@ -120,3 +154,4 @@
 3. Update `GamePak.kt` to instantiate new mapper
 4. Add entry to `MAPPER_SUPPORT.md`
 5. Test with known-good ROM
+6. If the mapper has `$6000-$7FFF` PRG-RAM, override `batteryBackedRam()` and set `batteryDirty = true` on successful writes (see `Mapper1.kt`, `Mapper4.kt`).

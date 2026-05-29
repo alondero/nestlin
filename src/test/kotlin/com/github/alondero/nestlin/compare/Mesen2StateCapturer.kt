@@ -83,6 +83,44 @@ local function writeState()
     local s = emu.getState()
 
     local function n(k) return s[k] or 0 end
+    -- Boolean flag -> 0/1. (Lua treats 0 as truthy, so this is only safe for genuine booleans.)
+    local function b(k) if s[k] then return 1 else return 0 end end
+    -- Numeric "address" flag (e.g. patternAddr is 0 or 0x1000) -> 0/1.
+    local function nz(k) local v = s[k]; if type(v) == "number" and v ~= 0 then return 1 else return 0 end end
+
+    -- Mesen2 stores PPUCTRL/MASK/STATUS decomposed; rebuild the raw register bytes
+    -- so they line up with Nestlin's raw $2000/$2001/$2002 snapshot. Base-nametable
+    -- bits live in the t register, not in the decomposed control struct.
+    local control = b("ppu.control.nmiOnVerticalBlank") * 128
+        + b("ppu.control.largeSprites") * 32
+        + nz("ppu.control.backgroundPatternAddr") * 16
+        + nz("ppu.control.spritePatternAddr") * 8
+        + b("ppu.control.verticalWrite") * 4
+        + (math.floor(n("ppu.tmpVideoRamAddr") / 1024) % 4)
+    local mask = b("ppu.mask.grayscale")
+        + b("ppu.mask.backgroundMask") * 2
+        + b("ppu.mask.spriteMask") * 4
+        + b("ppu.mask.backgroundEnabled") * 8
+        + b("ppu.mask.spritesEnabled") * 16
+        + b("ppu.mask.intensifyRed") * 32
+        + b("ppu.mask.intensifyGreen") * 64
+        + b("ppu.mask.intensifyBlue") * 128
+    local ppuStatus = b("ppu.statusFlags.spriteOverflow") * 32
+        + b("ppu.statusFlags.sprite0Hit") * 64
+        + b("ppu.statusFlags.verticalBlank") * 128
+
+    -- Arrays in the {idx:val,...} shape the Kotlin parseIntArray() expects.
+    local function dumpMem(memType, size)
+        local parts = {}
+        for i = 0, size - 1 do parts[#parts + 1] = i .. ":" .. emu.read(i, memType) end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    local function dumpPalette()
+        local parts = {}
+        for i = 0, 31 do parts[#parts + 1] = i .. ":" .. n("ppu.paletteRam" .. i) end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+
     local json = "{" ..
         "\"pc\":" .. n("cpu.pc") .. "," ..
         "\"a\":" .. n("cpu.a") .. "," ..
@@ -93,7 +131,13 @@ local function writeState()
         "\"cycleCount\":" .. n("cpu.cycleCount") .. "," ..
         "\"scanline\":" .. n("ppu.scanline") .. "," ..
         "\"ppuCycle\":" .. n("ppu.cycle") .. "," ..
-        "\"ppuFrameCount\":" .. n("ppu.frameCount") ..
+        "\"ppuFrameCount\":" .. n("ppu.frameCount") .. "," ..
+        "\"control\":" .. control .. "," ..
+        "\"mask\":" .. mask .. "," ..
+        "\"ppuStatus\":" .. ppuStatus .. "," ..
+        "\"cpuRam\":" .. dumpMem(emu.memType.nesInternalRam, 2048) .. "," ..
+        "\"oam\":" .. dumpMem(emu.memType.nesSpriteRam, 256) .. "," ..
+        "\"paletteRam\":" .. dumpPalette() ..
     "}"
 
     local fullPath = emu.getScriptDataFolder() .. "/state.json"

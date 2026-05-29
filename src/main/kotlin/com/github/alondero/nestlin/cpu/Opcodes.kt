@@ -568,8 +568,10 @@ class Opcodes {
             val temp = registers.programCounter
             registers.programCounter = mem(it)
 
+            // A jump back to the opcode's own address is a spin loop (JMP *).
+            // Flag it so tick() can park the CPU instead of re-executing forever.
             if (registers.programCounter == (temp - 1).toSignedShort()) {
-                // TODO: Set idle
+                idle = true
             }
 
             workCyclesLeft += 3
