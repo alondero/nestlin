@@ -18,6 +18,7 @@ import javafx.scene.Group
 import javafx.scene.control.Menu
 import javafx.scene.control.MenuBar
 import javafx.scene.control.MenuItem
+import com.github.alondero.nestlin.Region
 import javafx.scene.image.ImageView
 import javafx.scene.image.PixelFormat
 import javafx.scene.image.WritableImage
@@ -432,6 +433,14 @@ class NestlinApplication : FrameListener, Application() {
                 val debugEnabled = !parameters.named["debug"].isNullOrEmpty() ||
                         parameters.unnamed.any { it.startsWith("--debug") }
                 if (debugEnabled) enableLogging()
+                // Optional region override: --region=pal | --region=ntsc (default: auto-detect).
+                parameters.named["region"]?.lowercase()?.let {
+                    nestlin.config.regionOverride = when (it) {
+                        "pal" -> Region.PAL
+                        "ntsc" -> Region.NTSC
+                        else -> null
+                    }
+                }
                 // Take only the first non-flag parameter as the ROM path (rest are other arguments)
                 val romPath = nonFlagParams.firstOrNull() ?: throw IllegalStateException("No ROM file provided")
                 currentRomPath = Paths.get(romPath)

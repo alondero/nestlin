@@ -31,7 +31,14 @@ data class EmulatorConfig(
      * Pause emulation. When true, the emulation loop short-circuits each
      * iteration without ticking CPU/PPU/APU. Toggled from the UI's Emulation menu.
      */
-    var paused: Boolean = false
+    var paused: Boolean = false,
+
+    /**
+     * Manual region override. When null (the default), the region auto-detected
+     * from the ROM header/filename is used. Set to force NTSC or PAL regardless of
+     * detection — surfaced via the UI's Emulation menu and the `--region` CLI flag.
+     */
+    var regionOverride: Region? = null
 ) {
     /**
      * Target time per frame in nanoseconds.

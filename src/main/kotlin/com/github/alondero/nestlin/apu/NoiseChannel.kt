@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.apu
 
+import com.github.alondero.nestlin.Region
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toUnsignedInt
 import java.io.DataInput
@@ -15,10 +16,9 @@ class NoiseChannel {
     var timerCounter: Int = 0
     var shiftRegister: Int = 1  // 15-bit LFSR (starts at 1)
 
-    // NTSC noise period table (in CPU cycles)
-    private val noisePeriodTable = intArrayOf(
-        4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
-    )
+    // Noise period lookup table (CPU cycles) — values differ between NTSC and PAL.
+    var region: Region = Region.NTSC
+    private val noisePeriodTable get() = region.noisePeriods
 
     fun write400C(value: Byte) {
         // --lc vvvv

@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.apu
 
+import com.github.alondero.nestlin.Region
 import com.github.alondero.nestlin.apu.DmaPort
 import com.github.alondero.nestlin.isBitSet
 import com.github.alondero.nestlin.toUnsignedInt
@@ -23,11 +24,9 @@ class DmcChannel(private val dmaPort: DmaPort) {
     var timerCounter: Int = 428  // Initialize to rate[0] to avoid immediate trigger
     var silenceFlag: Boolean = true
 
-    // NTSC DMC rate table (in CPU cycles)
-    private val dmcRateTable = intArrayOf(
-        428, 380, 340, 320, 286, 254, 226, 214,
-        190, 160, 142, 128, 106,  84,  72,  54
-    )
+    // DMC rate lookup table (CPU cycles) — values differ between NTSC and PAL.
+    var region: Region = Region.NTSC
+    private val dmcRateTable get() = region.dmcRates
 
     fun write4010(value: Byte) {
         // IL-- rrrr

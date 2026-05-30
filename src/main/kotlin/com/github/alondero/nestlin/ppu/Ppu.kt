@@ -7,16 +7,25 @@ import java.io.DataOutput
 
 const val RESOLUTION_WIDTH = 256
 const val RESOLUTION_HEIGHT = 240
-const val NTSC_SCANLINES = 262
 
 const val IDLE_SCANLINE = 0
-const val PRE_RENDER_SCANLINE = 261
 const val POST_RENDER_SCANLINE = 240
 
 class Ppu(var memory: Memory) {
 
     private var cycle = 0
     private var scanline = 0
+
+    // Active timing region. NTSC has 262 scanlines (pre-render at 261); PAL has
+    // 312 (pre-render at 311). VBlank still begins at scanline 241 dot 1 for both;
+    // only the pre-render line index and total line count change.
+    var region: Region = Region.NTSC
+
+    // Stable testing hook: total dots ticked since construction. Lets timing tests
+    // verify the PPU:CPU ratio and per-frame dot count without reflecting into
+    // private cycle/scanline state. Not used by emulation.
+    var ticksElapsed: Long = 0L
+        private set
 
     private fun reverseBits(value: Int): Int {
         var result = 0
@@ -73,6 +82,7 @@ class Ppu(var memory: Memory) {
     private var frameCompletionListener: (() -> Unit)? = null
 
     fun tick() {
+        ticksElapsed++
 //       println("Rendering ($cycle, $scanline)")
         if (cycle == 341) {
             endLine()
@@ -81,13 +91,13 @@ class Ppu(var memory: Memory) {
 
 
         val renderingEnabled = rendering()
-        val renderingActive = renderingEnabled && (scanline in 0 until RESOLUTION_HEIGHT || scanline == PRE_RENDER_SCANLINE)
+        val renderingActive = renderingEnabled && (scanline in 0 until RESOLUTION_HEIGHT || scanline == region.preRenderScanline)
 
         if (renderingActive) {
             if (cycle == 0) {
                 // Copy horizontal scroll from temp register BEFORE preloading
                 with(memory.ppuAddressedMemory) {
-                    if (scanline in 0..239 || scanline == PRE_RENDER_SCANLINE) {
+                    if (scanline in 0..239 || scanline == region.preRenderScanline) {
                         vRamAddress.coarseXScroll = tempVRamAddress.coarseXScroll
                         vRamAddress.horizontalNameTable = tempVRamAddress.horizontalNameTable
                     }
@@ -120,7 +130,7 @@ class Ppu(var memory: Memory) {
             memory.ppuAddressedMemory.setVBlank()
         }
 
-        if (scanline == PRE_RENDER_SCANLINE && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
+        if (scanline == region.preRenderScanline && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
 
         // MMC3 scanline IRQ is triggered solely by A12 rising edges from pattern fetches.
 
@@ -164,7 +174,7 @@ class Ppu(var memory: Memory) {
             256 -> memory.ppuAddressedMemory.vRamAddress.incrementVerticalPosition()
         }
 
-        if (scanline == PRE_RENDER_SCANLINE && cycle in 280..304) {
+        if (scanline == region.preRenderScanline && cycle in 280..304) {
             with (memory.ppuAddressedMemory) {
                 vRamAddress.coarseYScroll = tempVRamAddress.coarseYScroll
                 vRamAddress.verticalNameTable = tempVRamAddress.verticalNameTable
@@ -182,7 +192,7 @@ class Ppu(var memory: Memory) {
         secondaryOam.clear()
 
         when (scanline) {
-            NTSC_SCANLINES - 1 -> endFrame()
+            region.totalScanlines - 1 -> endFrame()
             else -> scanline++
         }
         cycle = 0
@@ -206,7 +216,7 @@ class Ppu(var memory: Memory) {
      * For pre-render (261), prep is for scanline 0 of the next frame.
      */
     private fun targetScanlineForSpriteEval(): Int =
-        if (scanline == PRE_RENDER_SCANLINE) 0 else scanline + 1
+        if (scanline == region.preRenderScanline) 0 else scanline + 1
 
     /**
      * Sprite evaluation: scan primary OAM, pick up to 8 sprites visible on the target scanline.

@@ -162,11 +162,19 @@
     16-bit per-cycle IRQ (load, enable/disable gating, underflow, acknowledge), and save/load.
   - `Mapper69BootRenderTest` — Batman (USA) boots, enables rendering, draws substantial
     content, and drives the FME-7 IRQ.
-- **Known limitation — PAL ROMs:** Gimmick! is only available locally as the European (PAL)
-  release. It disables NMI and times its entire raster/frame loop from the FME-7 cycle IRQ
-  using PAL-tuned counter values. Nestlin's core is NTSC-only, so that ROM desyncs and hangs
-  at boot. This is a PAL-timing limitation of the emulator core, not a mapper defect; an NTSC
-  (Japanese) Gimmick! dump would be expected to boot.
+- **PAL ROMs:** Nestlin now has a PAL timing core (issue #77 — `Region.kt`, 3.2:1 PPU:CPU
+  ratio, PAL APU tables; auto-detected from header/filename, overridable, fully unit-tested).
+  Validated end-to-end on a real PAL game with a simple mapper: **Kick Off (Europe)**
+  auto-detects PAL and boots to a rendered screen (rendering on by frame 10, PPUMASK $FE) —
+  see `KickOffPalSmokeTest`.
+- **Gimmick! still does not boot — separate FME-7 IRQ bug, not the PAL core.** Diagnosis
+  (2026-05-30): the only local dump (European/PAL) sets up the FME-7 IRQ during early init
+  (irqEnable=1, counter running), then spins forever at `$F2B8` (`LDA $F0 / BNE`) with the IRQ
+  disabled, waiting for zero-page `$F0` to be cleared by an interrupt-driven routine (~`$E9C6`)
+  that never runs. Same under forced NTSC. OAM DMA is NOT involved (zero `$4014` transfers).
+  Control ROMs kirby/lolo1/tetris and **Batman (same FME-7 mapper, NTSC)** all boot through the
+  same harness, so this is mapper-69/raster-IRQ-specific, not a PAL-timing or harness issue.
+  Harness `GimmickPalBootTest` is in place but `@Ignore`d until the FME-7 IRQ behaviour is fixed.
 
 ---
 
