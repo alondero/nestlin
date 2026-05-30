@@ -1,7 +1,10 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
 plugins {
     kotlin("jvm") version "1.9.22"
     application
     id("org.openjfx.javafxplugin") version "0.1.0"
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 repositories {
@@ -21,6 +24,17 @@ javafx {
 
 application {
     mainClass.set("com.github.alondero.nestlin.ui.ApplicationKt")
+}
+
+tasks.named<ShadowJar>("shadowJar") {
+    archiveClassifier.set("standalone")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    archiveBaseName.set("nestlin")
+}
+
+tasks.register("uberJar") {
+    group = "build"
+    dependsOn("shadowJar")
 }
 
 dependencies {
