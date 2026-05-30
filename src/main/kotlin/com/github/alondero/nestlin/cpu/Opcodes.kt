@@ -216,9 +216,21 @@ class Opcodes {
             ((hiByte.toUnsignedInt() shl 8) or it.memory[addr].toUnsignedInt()).toSignedShort()
         }
 
-        // NOP - No Operation
+// NOP - No Operation (official)
         map[0xea] = Opcode {
             it.workCyclesLeft = 2
+        }
+
+//  ROL - Rotate One Bit Left (M or A)
+        map[0x2a] = Opcode {
+            it.apply {
+                val newAccumulator = (registers.accumulator.toUnsignedInt() shl 1) or (if (processorStatus.carry) 1 else 0)
+                processorStatus.carry = (newAccumulator and 0xFF00) > 0
+                registers.accumulator = (newAccumulator and 0xFF).toSignedByte()
+                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+
+workCyclesLeft = 2
+            }
         }
 
         //  RTS - Return from Subroutine
@@ -338,17 +350,150 @@ class Opcodes {
             }
         }
 
-        //  ROL - Rotate One Bit Left (M or A)
-        map[0x2a] = Opcode {
-            it.apply {
-                val newAccumulator = (registers.accumulator.toUnsignedInt() shl 1) or (if (processorStatus.carry) 1 else 0)
-                processorStatus.carry = (newAccumulator and 0xFF00) > 0
-                registers.accumulator = (newAccumulator and 0xFF).toSignedByte()
-                processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+        //  ----- UNOFFICIAL NOP FAMILY -----
+        // NOP zp (3 bytes, 3 cycles) — 0x04, 0x44, 0x64
+        map[0x04] = nopZp()
+        map[0x44] = nopZp()
+        map[0x64] = nopZp()
 
-                workCyclesLeft = 2
-            }
-        }
+        // NOP abs (4 bytes, 4 cycles) — 0x0C
+        map[0x0C] = nopAbs()
+
+        // NOP abs,X (4 bytes, 4 cycles) — 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC
+        map[0x1C] = nopAbsX()
+        map[0x3C] = nopAbsX()
+        map[0x5C] = nopAbsX()
+        map[0x7C] = nopAbsX()
+        map[0xDC] = nopAbsX()
+        map[0xFC] = nopAbsX()
+
+        // NOP zp,X (4 bytes, 4 cycles) — 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4
+        map[0x14] = nopZpX()
+        map[0x34] = nopZpX()
+        map[0x54] = nopZpX()
+        map[0x74] = nopZpX()
+        map[0xD4] = nopZpX()
+        map[0xF4] = nopZpX()
+
+        // NOP imm (3 bytes, 2 cycles) — 0x80, 0x82, 0x89, 0xC2, 0xE2, 0xEB
+        map[0x80] = nopImm()
+        map[0x82] = nopImm()
+        map[0x89] = nopImm()
+        map[0xC2] = nopImm()
+        map[0xE2] = nopImm()
+        map[0xEB] = nopImm()
+
+        // NOP (implied) (2 bytes, 2 cycles) — 0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA
+        map[0x1A] = nopImplied()
+        map[0x3A] = nopImplied()
+        map[0x5A] = nopImplied()
+        map[0x7A] = nopImplied()
+        map[0xDA] = nopImplied()
+        map[0xFA] = nopImplied()
+
+        //  ----- COMPLEX LOAD/STORE FAMILY (LAX/SAX/AHX/SHX/SHY) -----
+        // LAX - Load A and X combined (2-5 cycles depending on addressing)
+        map[0xA3] = lax(indirectX())
+        map[0xA7] = lax(zeroPaged())
+        map[0xAF] = lax(absolute())
+        map[0xB3] = lax(indirectY())
+        map[0xB7] = lax(zeroPaged { it.registers.indexY })
+        map[0xBF] = lax(absolute { it.registers.indexY })
+
+        // SAX - Store A AND X (4-6 cycles)
+        map[0x83] = sax(indirectXAdr())
+        map[0x87] = sax(zeroPagedAdr())
+        map[0x8F] = sax(absoluteAdr())
+        map[0x97] = sax(zeroPagedAdr { it.registers.indexY })
+
+        // AHX - Store A AND X AND H (4-5 cycles)
+        map[0x93] = ahx(indirectYAdr())
+        map[0x9F] = ahx(absoluteAdr { it.registers.indexY })
+
+        // XAA - ANE: A = A AND X AND operand (2 cycles, very unstable)
+        map[0x9B] = xaa()
+        map[0xAB] = xaa()
+
+        // TAS/LAS - Load A and S (or A and X from memory) (4-5 cycles)
+        map[0xBB] = las(absolute { it.registers.indexY })
+
+        //  ----- DCP/ISC/RLA/RRA/SLO/SRE (ALR/ARR already covered) -----
+        // DCP - DEC then CMP (6-8 cycles)
+        map[0xC7] = dcp(zeroPagedAdr())
+        map[0xD7] = dcp(zeroPagedAdr { it.registers.indexX })
+        map[0xCF] = dcp(absoluteAdr())
+        map[0xDF] = dcp(absoluteAdr { it.registers.indexX })
+        map[0xDB] = dcp(zeroPagedAdr { it.registers.indexY })
+        map[0xD3] = dcp(indirectXAdr())
+        map[0xE3] = dcp(indirectXAdr())
+        map[0xF3] = dcp(indirectYAdr())
+
+        // ISC - INC then SBC (6-8 cycles)
+        map[0xE7] = isc(zeroPagedAdr())
+        map[0xF7] = isc(zeroPagedAdr { it.registers.indexX })
+        map[0xEF] = isc(absoluteAdr())
+        map[0xFF] = isc(absoluteAdr { it.registers.indexX })
+        map[0xFB] = isc(zeroPagedAdr { it.registers.indexY })
+        map[0xE3] = isc(indirectXAdr())
+        map[0xF3] = isc(indirectYAdr())
+
+        // RLA - ROL then AND (5-7 cycles)
+        map[0x27] = rla(zeroPagedAdr())
+        map[0x37] = rla(zeroPagedAdr { it.registers.indexX })
+        map[0x2F] = rla(absoluteAdr())
+        map[0x3F] = rla(absoluteAdr { it.registers.indexX })
+        map[0x3B] = rla(absoluteAdr { it.registers.indexY })
+        map[0x23] = rla(indirectXAdr())
+        map[0x33] = rla(indirectYAdr())
+
+        // RRA - ROR then ADC (5-7 cycles)
+        map[0x67] = rra(zeroPagedAdr())
+        map[0x77] = rra(zeroPagedAdr { it.registers.indexX })
+        map[0x6F] = rra(absoluteAdr())
+        map[0x7F] = rra(absoluteAdr { it.registers.indexX })
+        map[0x7B] = rra(absoluteAdr { it.registers.indexY })
+        map[0x63] = rra(indirectXAdr())
+        map[0x73] = rra(indirectYAdr())
+
+        // SLO - ASL then ORA (5-7 cycles)
+        map[0x07] = slo(zeroPagedAdr())
+        map[0x17] = slo(zeroPagedAdr { it.registers.indexX })
+        map[0x0F] = slo(absoluteAdr())
+        map[0x1F] = slo(absoluteAdr { it.registers.indexX })
+        map[0x1B] = slo(absoluteAdr { it.registers.indexY })
+        map[0x03] = slo(indirectXAdr())
+        map[0x13] = slo(indirectYAdr())
+
+        // SRE - LSR then EOR (5-7 cycles)
+        map[0x47] = sre(zeroPagedAdr())
+        map[0x57] = sre(zeroPagedAdr { it.registers.indexX })
+        map[0x4F] = sre(absoluteAdr())
+        map[0x5F] = sre(absoluteAdr { it.registers.indexX })
+        map[0x5B] = sre(absoluteAdr { it.registers.indexY })
+        map[0x43] = sre(indirectXAdr())
+        map[0x53] = sre(indirectYAdr())
+
+        // ALR - ASL then LSR (2 cycles) - already covered as 0x4B
+        map[0x4B] = alr()
+
+        // ARR - (same as 0x6A ROR with special behavior)
+        map[0x6B] = arr()
+
+        //  ----- KIL (HALT) OPCODES -----
+        // KIL - Halt the CPU (no operation, locks up)
+        map[0x02] = kil()
+        map[0x12] = kil()
+        map[0x22] = kil()
+        map[0x32] = kil()
+        map[0x42] = kil()
+        map[0x52] = kil()
+        map[0x62] = kil()
+        map[0x72] = kil()
+        map[0x92] = kil()
+        map[0xB2] = kil()
+        map[0xC3] = kil()
+        map[0xD2] = kil()
+        map[0xF2] = kil()
 
     }
 
@@ -560,6 +705,233 @@ class Opcodes {
             }
 
             workCyclesLeft += 3
+        }
+    }
+
+    private fun nopZp() = Opcode {
+        it.apply {
+            it.memory[zeroPagedAdr()(it)]
+            workCyclesLeft = 3
+        }
+    }
+
+    private fun nopAbs() = Opcode {
+        it.apply {
+            it.memory[absoluteAdr()(it)]
+            workCyclesLeft = 4
+        }
+    }
+
+    private fun nopAbsX() = Opcode {
+        it.apply {
+            it.memory[absoluteAdr { it.registers.indexX }(it)]
+            workCyclesLeft = 4
+        }
+    }
+
+    private fun nopZpX() = Opcode {
+        it.apply {
+            it.memory[zeroPagedAdr { it.registers.indexX }(it)]
+            workCyclesLeft = 4
+        }
+    }
+
+    private fun nopImm() = Opcode {
+        it.apply {
+            it.readByteAtPC()
+            workCyclesLeft = 2
+        }
+    }
+
+    private fun nopImplied() = Opcode {
+        it.workCyclesLeft = 2
+    }
+
+    private fun lax(mem: (Cpu) -> Byte) = Opcode {
+        it.apply {
+            val value = mem(it)
+            registers.accumulator = value
+            registers.indexX = value
+            processorStatus.resolveZeroAndNegativeFlags(value)
+            workCyclesLeft += 2
+        }
+    }
+
+    private fun sax(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            memory[addrFn(it)] = (registers.accumulator.toUnsignedInt() and registers.indexX.toUnsignedInt()).toSignedByte()
+            workCyclesLeft += 4
+        }
+    }
+
+    private fun ahx(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val value = (registers.accumulator.toUnsignedInt() and registers.indexX.toUnsignedInt() and 0x07).toSignedByte()
+            memory[addrFn(it)] = value
+            workCyclesLeft += 4
+        }
+    }
+
+    private fun xaa() = Opcode {
+        it.apply {
+            registers.accumulator = (registers.accumulator.toUnsignedInt() and registers.indexX.toUnsignedInt()).toSignedByte()
+            workCyclesLeft = 2
+        }
+    }
+
+    private fun tas(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            registers.stackPointer = registers.accumulator
+            memory[addrFn(it)]
+            workCyclesLeft = 4
+        }
+    }
+
+    private fun shx(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val address = addrFn(it)
+            val highByte = ((address shr 8) + 1) and 0xFF
+            memory[address] = (registers.indexX.toUnsignedInt() and highByte).toSignedByte()
+            workCyclesLeft = 5
+        }
+    }
+
+    private fun shy(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val address = addrFn(it)
+            val highByte = ((address shr 8) + 1) and 0xFF
+            memory[address] = (registers.indexY.toUnsignedInt() and highByte).toSignedByte()
+            workCyclesLeft = 5
+        }
+    }
+
+    private fun kil() = Opcode {
+        it.apply {
+            // Halt - loop forever (treat as NOP that consumes 2 cycles but doesn't advance PC)
+            workCyclesLeft = 2
+        }
+    }
+
+    private fun las(mem: (Cpu) -> Byte) = Opcode {
+        it.apply {
+            val value = mem(it)
+            registers.accumulator = value
+            registers.indexX = value
+            registers.stackPointer = value
+            processorStatus.resolveZeroAndNegativeFlags(value)
+            workCyclesLeft += 4
+        }
+    }
+
+    private fun dcp(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val address = addrFn(it)
+            val result = ((memory[address].toUnsignedInt() - 1) and 0xFF).toSignedByte()
+            memory[address] = result
+            val comparison = registers.accumulator.toUnsignedInt() - result.toUnsignedInt()
+            processorStatus.carry = comparison >= 0
+            processorStatus.zero = comparison == 0
+            processorStatus.negative = comparison.toSignedByte().isBitSet(7)
+            workCyclesLeft += 6
+        }
+    }
+
+    private fun isc(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val address = addrFn(it)
+            val result = ((memory[address].toUnsignedInt() + 1) and 0xFF).toSignedByte()
+            memory[address] = result
+            val currentAccumulator = registers.accumulator
+            var res = currentAccumulator.toUnsignedInt() - result.toUnsignedInt()
+            if (!processorStatus.carry) res--
+            registers.accumulator = (res and 0xFF).toSignedByte()
+            processorStatus.carry = (res shr 8) == 0
+            processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor result.toUnsignedInt()) and 0x80 == 0x80) &&
+                    ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            workCyclesLeft += 6
+        }
+    }
+
+    private fun rla(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val address = addrFn(it)
+            val result = memory[address]
+            val newCarry = result.isBitSet(7)
+            val rotated = ((result.toUnsignedInt() shl 1) or (if (processorStatus.carry) 1 else 0)).toSignedByte()
+            memory[address] = rotated
+            processorStatus.carry = newCarry
+            registers.accumulator = (registers.accumulator.toUnsignedInt() and rotated.toUnsignedInt()).toSignedByte()
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            workCyclesLeft += 5
+        }
+    }
+
+    private fun rra(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val address = addrFn(it)
+            val result = memory[address]
+            val oldCarry = processorStatus.carry
+            processorStatus.carry = result.isBitSet(0)
+            val rotated = ((result.toUnsignedInt() shr 1) or (if (oldCarry) 0x80 else 0)).toSignedByte()
+            memory[address] = rotated
+            val currentAccumulator = registers.accumulator
+            var res = currentAccumulator.toUnsignedInt() + rotated.toUnsignedInt()
+            if (processorStatus.carry) res++
+            registers.accumulator = res.toSignedByte()
+            processorStatus.carry = (res shr 8) != 0
+            processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor rotated.toUnsignedInt()) and 0x80 == 0x00) &&
+                    ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            workCyclesLeft += 5
+        }
+    }
+
+    private fun slo(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val address = addrFn(it)
+            val result = memory[address]
+            processorStatus.carry = result.isBitSet(7)
+            val shifted = ((result.toUnsignedInt() shl 1) and 0xFF).toSignedByte()
+            memory[address] = shifted
+            registers.accumulator = (registers.accumulator.toUnsignedInt() or shifted.toUnsignedInt()).toSignedByte()
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            workCyclesLeft += 5
+        }
+    }
+
+    private fun sre(addrFn: (Cpu) -> Int) = Opcode {
+        it.apply {
+            val address = addrFn(it)
+            val result = memory[address]
+            processorStatus.carry = result.isBitSet(0)
+            val shifted = (result.toUnsignedInt() shr 1).toSignedByte()
+            memory[address] = shifted
+            registers.accumulator = (registers.accumulator.toUnsignedInt() xor shifted.toUnsignedInt()).toSignedByte()
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            workCyclesLeft += 5
+        }
+    }
+
+    private fun alr() = Opcode {
+        it.apply {
+            registers.accumulator = (registers.accumulator.toUnsignedInt() and it.readByteAtPC().toUnsignedInt()).toSignedByte()
+            processorStatus.carry = registers.accumulator.isBitSet(7)
+            registers.accumulator = (registers.accumulator.toUnsignedInt() shr 1).toSignedByte()
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            workCyclesLeft = 2
+        }
+    }
+
+    private fun arr() = Opcode {
+        it.apply {
+            registers.accumulator = (registers.accumulator.toUnsignedInt() and it.readByteAtPC().toUnsignedInt()).toSignedByte()
+            val oldCarry = processorStatus.carry
+            processorStatus.carry = registers.accumulator.isBitSet(0)
+            registers.accumulator = (registers.accumulator.toUnsignedInt() shr 1).toSignedByte()
+            if (oldCarry) registers.accumulator = (registers.accumulator.toUnsignedInt() or 0x80).toSignedByte()
+            processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
+            workCyclesLeft = 2
         }
     }
 
