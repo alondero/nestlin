@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.apu
 
+import com.github.alondero.nestlin.Region
 import com.github.alondero.nestlin.isBitSet
 import java.io.DataInput
 import java.io.DataOutput
@@ -15,9 +16,11 @@ class FrameCounter {
     var step: Int = 0
     var cyclesSinceReset: Int = 0
 
-    // Cycle counts for frame counter steps (NTSC)
-    private val fourStepSequence = intArrayOf(7457, 14913, 22371, 29829)
-    private val fiveStepSequence = intArrayOf(7457, 14913, 22371, 29829, 37281)
+    // Frame-counter step boundaries and wrap point differ between NTSC and PAL.
+    var region: Region = Region.NTSC
+
+    private val fourStepSequence get() = region.apuFourStepSequence
+    private val fiveStepSequence get() = region.apuFiveStepSequence
 
     data class Result(val quarterFrame: Boolean, val halfFrame: Boolean, val irq: Boolean)
 
@@ -86,7 +89,7 @@ class FrameCounter {
         cyclesSinceReset = 0
     }
 
-    fun maxCycles(): Int = if (mode == Mode.FOUR_STEP) 29830 else 37282
+    fun maxCycles(): Int = if (mode == Mode.FOUR_STEP) region.apuFourStepMaxCycles else region.apuFiveStepMaxCycles
 
     fun saveState(out: DataOutput) {
         out.writeInt(mode.ordinal)

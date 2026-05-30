@@ -148,6 +148,7 @@ Kotlin doesn't have unsigned primitives (pre-1.3), so use extension functions:
 - **Full APU audio**: 5 channels (2 Pulse, Triangle, Noise, DMC) with proper mixing formulas
 - **Controller input**: $4016/$4017 implemented with strobe functionality
 - **Frame rate throttling**: Configurable speed throttling with toggle
+- **NTSC and PAL timing**: Region auto-detected from the iNES/NES 2.0 header and NO-INTRO filename, with a manual override (Emulation → Region menu, or `--region=pal|ntsc`). PAL uses 312 scanlines, 50 Hz, the 3.2:1 PPU:CPU ratio, and PAL APU frame-counter/noise/DMC tables. All region constants live in `Region.kt`; subsystems read them via `Nestlin.applyRegion()`. Covered by `RegionDetectionTest`, `RegionTimingTest`, `PalApuTimingTest`, and validated end-to-end by `KickOffPalSmokeTest` (Kick Off (Europe) auto-detects PAL and boots to a rendered screen — rendering on by frame 10, PPUMASK $FE). NOTE: Mr. Gimmick (Europe) still does **not** boot, but that's a **separate FME-7 IRQ bug**, not the PAL timing core: it sets up the FME-7 IRQ then spins at `$F2B8` (`LDA $F0 / BNE`) waiting for `$F0` to be cleared by an interrupt routine that never runs (same under NTSC; no OAM DMA involved). `GimmickPalBootTest` is `@Ignore`d pending that.
 - **Screenshot capture**: PNG screenshot saving with timestamp
 - **File menu**: Load Game, Hard Reset Game, and Exit via UI menu
 - **Window title**: Displays game name (NO-INTRO field or filename) or "Nestlin" when no game loaded

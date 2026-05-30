@@ -22,6 +22,12 @@ class Nestlin {
     private var nextSyncDeadlineNanos: Long = 0
     private var ticksSinceLastSync: Int = 0
 
+    // Active timing region, derived from the ROM (and any user override) at load/reset.
+    private var region: Region = Region.NTSC
+    // PPU "dot credit" accumulator (×10). Each CPU cycle adds region.ppuDotsPerCpuTimes10
+    // and we emit one PPU tick per 10 credits: NTSC = exactly 3, PAL = 3,3,3,3,4 (avg 3.2).
+    private var ppuDotCredit: Int = 0
+
     init {
         memory = Memory()
         cpu = Cpu(memory)
@@ -36,6 +42,22 @@ class Nestlin {
         val data = romPath.load()
         val displayName = romPath.fileName.toString().removeSuffix(".nes").removeSuffix(".7z")
         cpu.currentGame = data?.let { GamePak(it, displayName) }
+        applyRegion()
+    }
+
+    /** The region currently in effect (after override + detection). */
+    fun currentRegion(): Region = region
+
+    /**
+     * Resolve the effective region (manual override beats ROM auto-detection, which
+     * beats NTSC) and push it into every timing-sensitive subsystem. Also aligns the
+     * throttle's target frame rate with the region. Safe to call repeatedly.
+     */
+    fun applyRegion() {
+        region = config.regionOverride ?: cpu.currentGame?.region ?: Region.NTSC
+        ppu.region = region
+        apu.region = region
+        config.targetFps = region.refreshRateHz
     }
 
     fun currentGameName(): String = cpu.currentGame?.name ?: "No Game Loaded"
@@ -55,6 +77,7 @@ class Nestlin {
 
     fun powerReset() {
         cpu.reset()
+        applyRegion()
     }
 
     /** Write the current emulator state to [out]. Caller is responsible for closing. */
@@ -108,10 +131,27 @@ class Nestlin {
         return Paths.get("saves", "$base.sav")
     }
 
+    /**
+     * Advance the machine by exactly one CPU cycle, ticking the PPU the correct
+     * number of dots for the active region (3 for NTSC, 3-or-4 for PAL averaging
+     * 3.2). Extracted so tests can drive emulation at the right ratio without
+     * re-implementing the loop. APU and CPU each tick once per CPU cycle.
+     */
+    fun stepCpuCycle() {
+        ppuDotCredit += region.ppuDotsPerCpuTimes10
+        while (ppuDotCredit >= 10) {
+            ppu.tick()
+            ppuDotCredit -= 10
+        }
+        apu.tick()
+        cpu.tick()
+    }
+
     fun start() {
         running = true
         nextSyncDeadlineNanos = System.nanoTime()
         ticksSinceLastSync = 0
+        ppuDotCredit = 0
 
         try {
             while (running) {
@@ -123,9 +163,7 @@ class Nestlin {
                     ticksSinceLastSync = 0
                     continue
                 }
-                (1..3).forEach { ppu.tick() }
-                apu.tick()
-                cpu.tick()
+                stepCpuCycle()
                 ticksSinceLastSync++
 
                 if (ticksSinceLastSync >= TICKS_PER_SYNC_CHUNK) {
@@ -146,7 +184,7 @@ class Nestlin {
     private fun syncToWallClock() {
         if (!config.speedThrottlingEnabled) return
 
-        val nanosPerTick = config.targetFrameTimeNanos / TICKS_PER_FRAME
+        val nanosPerTick = config.targetFrameTimeNanos / region.cpuCyclesPerFrame
         nextSyncDeadlineNanos += TICKS_PER_SYNC_CHUNK * nanosPerTick
 
         val now = System.nanoTime()
@@ -172,8 +210,6 @@ class Nestlin {
     fun stop() {running = false}
 
     companion object {
-        // NTSC NES CPU ticks per frame, used to derive nanos-per-tick from targetFps.
-        private const val TICKS_PER_FRAME = 29830L
         // Sync to wall clock every ~1 ms of emulated time (1789 ticks at 1.79 MHz).
         // Small enough that APU production gaps are barely perceptible to the audio
         // thread, large enough that sync overhead stays negligible.

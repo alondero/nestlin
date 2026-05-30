@@ -21,9 +21,22 @@ class Apu(private val dmaPort: DmaPort) {
     private var cpuCycleCounter = 0
     private var frameIrq = false
 
-    // NES APU CPU frequency (1.789773 MHz)
-    private val CPU_FREQ = 1789773.0
     private val SAMPLE_RATE = 44100.0
+
+    /**
+     * Active timing region. Setting it cascades to the frame counter and the
+     * channels whose period/rate tables are region-dependent, and changes the CPU
+     * clock used to pace audio sampling.
+     */
+    var region: Region = Region.NTSC
+        set(value) {
+            field = value
+            frameCounter.region = value
+            noise.region = value
+            dmc.region = value
+        }
+
+    private val cpuFreq: Double get() = region.cpuFrequencyHz
 
     fun outputSampleRateHz(): Double = SAMPLE_RATE
     fun cpuCycles(): Int = cpuCycleCounter
@@ -64,7 +77,7 @@ class Apu(private val dmaPort: DmaPort) {
         dmc.clockTimer()
 
         // Mix audio at 44.1 kHz sampling rate
-        cycleAccumulator += SAMPLE_RATE / CPU_FREQ
+        cycleAccumulator += SAMPLE_RATE / cpuFreq
         if (cycleAccumulator >= 1.0) {
             cycleAccumulator -= 1.0
             mixAndBuffer()
