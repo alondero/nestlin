@@ -17,7 +17,8 @@ data class EmulatorStateSnapshot(
     val ppuRegisters: PpuRegisters, // $2000-$2007
     val oam: IntArray,             // 256 bytes as unsigned values
     val paletteRam: IntArray,      // 32 bytes as unsigned values
-    val timestamp: Long
+    val timestamp: Long,
+    val chr: IntArray = IntArray(0) // active 8KB PPU pattern data ($0000-$1FFF); empty when not captured
 ) {
     fun toJson(): String = gson.toJson(this)
 

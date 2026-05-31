@@ -63,63 +63,78 @@ class Mapper66Test {
     @Test
     fun `write to $8000 selects PRG and CHR banks`() {
         val m = newMapper66()
-        m.cpuWrite(0x8000, 0x09.toSignedByte())
+        // xxPP xxCC: PRG bank 1 (bits 4-5), CHR bank 1 (bits 0-1) => 0x11
+        m.cpuWrite(0x8000, 0x11.toSignedByte())
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(1))
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
     }
 
     @Test
-    fun `PRG bank 1 selected via bit 0`() {
+    fun `PRG bank 1 selected via bit 4`() {
         val m = newMapper66()
-        m.cpuWrite(0x8000, 0x01.toSignedByte())
+        m.cpuWrite(0x8000, 0x10.toSignedByte())
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
         assertThat(m.cpuRead(0xFFFF).toUnsignedInt(), equalTo(1 xor 0xFF))
     }
 
     @Test
-    fun `CHR bank 1 selected via bit 3`() {
+    fun `CHR bank 1 selected via bit 0`() {
         val m = newMapper66()
-        m.cpuWrite(0x8000, 0x08.toSignedByte())
+        m.cpuWrite(0x8000, 0x01.toSignedByte())
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(1))
         assertThat(m.ppuRead(0x1FFF).toUnsignedInt(), equalTo(1 xor 0xFF))
     }
 
     @Test
-    fun `PRG bits 0-2 select 32KB bank`() {
-        val m = newMapper66(prgBanks = 8)
-        for (bank in 0..7) {
-            m.cpuWrite(0x8000, bank.toSignedByte())
+    fun `PRG bits 4-5 select 32KB bank`() {
+        val m = newMapper66(prgBanks = 4)
+        for (bank in 0..3) {
+            m.cpuWrite(0x8000, (bank shl 4).toSignedByte())
             assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(bank))
         }
     }
 
     @Test
-    fun `CHR bits 3-4 select 8KB bank`() {
+    fun `CHR bits 0-1 select 8KB bank`() {
         val m = newMapper66(chrBanks = 4)
         for (bank in 0..3) {
-            m.cpuWrite(0x8000, (bank shl 3).toSignedByte())
+            m.cpuWrite(0x8000, bank.toSignedByte())
             assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(bank))
         }
     }
 
     @Test
+    fun `PRG and CHR bank fields are independent`() {
+        // Writing PRG bits must not disturb the CHR bank and vice-versa —
+        // the original decode aliased them because the fields overlapped.
+        val m = newMapper66(prgBanks = 4, chrBanks = 4)
+        m.cpuWrite(0x8000, 0x30.toSignedByte()) // PRG bank 3, CHR bank 0
+        assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(3))
+        assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(0))
+        m.cpuWrite(0x8000, 0x03.toSignedByte()) // PRG bank 0, CHR bank 3
+        assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(0))
+        assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(3))
+    }
+
+    @Test
     fun `write to $C000 selects bank (upper PRG window)`() {
         val m = newMapper66()
-        m.cpuWrite(0xC000, 1.toSignedByte())
+        m.cpuWrite(0xC000, 0x10.toSignedByte()) // PRG bank 1
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
     }
 
     @Test
     fun `write to $FFFF selects bank (top of PRG window)`() {
         val m = newMapper66()
-        m.cpuWrite(0xFFFF, 1.toSignedByte())
+        m.cpuWrite(0xFFFF, 0x10.toSignedByte()) // PRG bank 1
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
     }
 
     @Test
     fun `combined PRG and CHR bank selection`() {
         val m = newMapper66(prgBanks = 4, chrBanks = 4)
-        m.cpuWrite(0x8000, 0x09.toSignedByte())
+        // PRG bank 1 (bits 4-5), CHR bank 1 (bits 0-1) => 0x11
+        m.cpuWrite(0x8000, 0x11.toSignedByte())
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(1))
     }
@@ -127,7 +142,8 @@ class Mapper66Test {
     @Test
     fun `snapshot contains correct banks`() {
         val m = newMapper66()
-        m.cpuWrite(0x8000, 0x0B.toSignedByte())
+        // PRG bank 3 (bits 4-5 = 11), CHR bank 1 (bits 0-1 = 01) => 0x31
+        m.cpuWrite(0x8000, 0x31.toSignedByte())
         val snap = m.snapshot()
         assertThat(snap.banks["prg"], equalTo(3))
         assertThat(snap.banks["chr"], equalTo(1))

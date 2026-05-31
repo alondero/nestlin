@@ -10,8 +10,17 @@ import java.io.DataOutput
  * Used by Super Mario Bros. + Duck Hunt, Dragon Power, Gumshoe, and other
  * simple discrete-logic cartridges.
  *
- * - PRG ROM: 32KB banks switched via bits 0-2 of $8000-$FFFF writes
- * - CHR ROM: 8KB banks switched via bits 3-4 of $8000-$FFFF writes
+ * Bank-select register (written anywhere in $8000-$FFFF):
+ *
+ *     7  bit  0
+ *     ---- ----
+ *     xxPP xxCC
+ *       ||   ||
+ *       ||   ++- Select 8KB CHR ROM bank for PPU $0000-$1FFF
+ *       ++------ Select 32KB PRG ROM bank for CPU $8000-$FFFF
+ *
+ * - PRG ROM: 32KB banks switched via bits 4-5 of $8000-$FFFF writes
+ * - CHR ROM: 8KB banks switched via bits 0-1 of $8000-$FFFF writes
  * - No PRG RAM
  * - Fixed mirroring from iNES header
  */
@@ -25,28 +34,17 @@ class Mapper66(private val gamePak: GamePak) : Mapper {
 
     private val prgBankCount = programRom.size / 0x8000
 
-    // Debug trace
-    var cpuReadTrace: MutableList<String>? = null
-
     override fun cpuRead(address: Int): Byte {
-        if (address < 0x8000) {
-            cpuReadTrace?.add("READ $%04X -> 0 (below $8000)".format(address))
-            return 0
-        }
+        if (address < 0x8000) return 0
         val bankOffset = (prgBank % prgBankCount) * 0x8000
-        val offset = address - 0x8000
-        val actualOffset = bankOffset + offset
-        cpuReadTrace?.add("READ $%04X -> prgBank=%d offset=$%04X actual=$%04X".format(
-            address, prgBank, offset, actualOffset))
-        return programRom[actualOffset]
+        return programRom[bankOffset + (address - 0x8000)]
     }
 
     override fun cpuWrite(address: Int, value: Byte) {
         if (address in 0x8000..0xFFFF) {
-            cpuReadTrace?.add("WRITE $%04X <- $%02X".format(address, value.toUnsignedInt()))
             val v = value.toUnsignedInt()
-            prgBank = v and 0x07
-            chrBank = (v shr 3) and 0x03
+            prgBank = (v shr 4) and 0x03
+            chrBank = v and 0x03
         }
     }
 

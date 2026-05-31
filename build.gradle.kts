@@ -75,7 +75,8 @@ val mesenTests = listOf(
     "com.github.alondero.nestlin.compare.DebugMesen2CaptureTest",
     "com.github.alondero.nestlin.compare.DebugStateCaptureTest",
     "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest",
-    "com.github.alondero.nestlin.compare.Mapper10RegressionTest"
+    "com.github.alondero.nestlin.compare.Mapper10RegressionTest",
+    "com.github.alondero.nestlin.compare.GxRomStateComparisonTest"
 )
 
 // Also exclude debug/investigation tests that can hang or have pre-existing issues

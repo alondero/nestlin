@@ -137,7 +137,7 @@ class MapperVerificationTest {
         println("[MapperVerification] SMB+Duck Hunt: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
                 "CHR ROM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
 
-        verifyMapper(romPath, mapperId = 66, durationSeconds = 20, requiredFrames = 0)
+        verifyMapper(romPath, mapperId = 66, durationSeconds = 20, requiredFrames = 3)
     }
 
     @Test
@@ -152,6 +152,36 @@ class MapperVerificationTest {
         println("[MapperVerification] Dragon Power: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
                 "CHR ROM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
 
-        verifyMapper(romPath, mapperId = 66, durationSeconds = 15, requiredFrames = 0)
+        verifyMapper(romPath, mapperId = 66, durationSeconds = 15, requiredFrames = 3)
+    }
+
+    @Test
+    fun `Mapper 66 - Gumshoe runs without black screen`() {
+        val romPath = Path.of("S:\\Media\\Nintendo NES\\Games\\Gumshoe (USA, Europe).nes")
+        if (!Files.exists(romPath)) {
+            println("[SKIP] ROM not found: $romPath")
+            return
+        }
+
+        val gamePak = GamePak(Files.readAllBytes(romPath))
+        println("[MapperVerification] Gumshoe: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
+                "CHR ROM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
+
+        verifyMapper(romPath, mapperId = 66, durationSeconds = 15, requiredFrames = 3)
+    }
+
+    @Test
+    fun `Mapper 66 - Doraemon runs without black screen`() {
+        val romPath = Path.of("S:\\Media\\Nintendo NES\\Games\\Doraemon (Japan) (Rev A).nes")
+        if (!Files.exists(romPath)) {
+            println("[SKIP] ROM not found: $romPath")
+            return
+        }
+
+        val gamePak = GamePak(Files.readAllBytes(romPath))
+        println("[MapperVerification] Doraemon: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
+                "CHR ROM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
+
+        verifyMapper(romPath, mapperId = 66, durationSeconds = 15, requiredFrames = 3)
     }
 }
