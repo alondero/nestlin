@@ -131,6 +131,17 @@
 - **Format (per NESdev wiki):** `CCCC LLPP` where CCCC = 8KB CHR bank (bits 4-7), LL = unused/lockout, PP = 32KB PRG bank (bits 0-1)
 - **Verified:** Bible Adventures now shows gameplay content (was all-black before fix)
 
+## Mapper 66 (GxROM)
+**Status:** Working (Added 2026-05-30)
+
+- **Games:** Super Mario Bros. + Duck Hunt, Dragon Power, Gumshoe
+- **Behavior:**
+  - 32KB PRG banks switched via bits 0-2 of $8000-$FFFF writes
+  - 8KB CHR banks switched via bits 3-4 of $8000-$FFFF writes
+  - No PRG RAM
+  - Fixed mirroring from iNES header
+- **Notes:** Simple discrete mapper. PRG window at $8000-$FFFF is one 32KB bank. CHR banks are 8KB.
+
 ---
 
 ## Mapper 69 (Sunsoft FME-7 / 5A / 5B)
