@@ -7,6 +7,10 @@ import com.github.alondero.nestlin.cpu.Registers
 import com.github.alondero.nestlin.ppu.Ppu
 import com.github.alondero.nestlin.toUnsignedInt
 import com.github.alondero.nestlin.ui.FrameListener
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.nio.file.Path
 
 /**
@@ -69,6 +73,22 @@ object NestlinStateCapturer {
             memory.ppuAddressedMemory.ppuInternalMemory[0x3F00 + i].toUnsignedInt()
         }
 
+        // Capture the active 8KB PPU pattern data ($0000-$1FFF) straight through the
+        // mapper's CHR banking. This reflects whichever CHR bank is currently mapped,
+        // so a wrong CHR-bank decode shows up as a byte diff here.
+        //
+        // Some mappers (MMC2/MMC4) flip a CHR latch as a *read* side effect, so
+        // sweeping the pattern table would mutate mapper state and yield a
+        // self-inconsistent dump. Snapshot the mapper's state, read, then restore it
+        // so capturing is non-destructive for any mapper.
+        val mapper = memory.mapper
+        val chr = if (mapper != null) {
+            val saved = ByteArrayOutputStream().also { mapper.saveState(DataOutputStream(it)) }.toByteArray()
+            val data = IntArray(0x2000) { i -> mapper.ppuRead(i).toUnsignedInt() }
+            mapper.loadState(DataInputStream(ByteArrayInputStream(saved)))
+            data
+        } else IntArray(0)
+
         return EmulatorStateSnapshot(
             emulator = "Nestlin",
             romName = romName,
@@ -79,7 +99,8 @@ object NestlinStateCapturer {
             ppuRegisters = ppuRegisters,
             oam = oam,
             paletteRam = paletteRam,
-            timestamp = System.currentTimeMillis()
+            timestamp = System.currentTimeMillis(),
+            chr = chr
         )
     }
 

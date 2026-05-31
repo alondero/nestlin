@@ -21,7 +21,7 @@ class MapperVerificationTest {
     /**
      * Verifies that a ROM with the given mapper produces valid graphical output.
      */
-    private fun verifyMapper(romPath: Path, mapperId: Int, durationSeconds: Int = 15) {
+    private fun verifyMapper(romPath: Path, mapperId: Int, durationSeconds: Int = 15, requiredFrames: Int = 3) {
         val nonBlackFrameCount = AtomicInteger(0)
         val frameCountRef = intArrayOf(0)
         val nestlin = Nestlin().apply {
@@ -53,8 +53,8 @@ class MapperVerificationTest {
         nestlin.start()
 
         println("[MapperVerification] Mapper $mapperId: nonBlackFrameCount = ${nonBlackFrameCount.get()} (at frame ${frameCountRef[0]})")
-        assert(nonBlackFrameCount.get() >= 3) {
-            "Expected at least 3 non-black frames, got ${nonBlackFrameCount.get()}. " +
+        assert(nonBlackFrameCount.get() >= requiredFrames) {
+            "Expected at least $requiredFrames non-black frames, got ${nonBlackFrameCount.get()}. " +
                     "Mapper $mapperId may not be working correctly."
         }
     }
@@ -123,5 +123,65 @@ class MapperVerificationTest {
                 "CHR RAM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
 
         verifyMapper(romPath, mapperId = 7)
+    }
+
+    @Test
+    fun `Mapper 66 - Super Mario Bros Duck Hunt runs without black screen`() {
+        val romPath = Path.of("S:\\Media\\Nintendo NES\\Games\\Super Mario Bros. + Duck Hunt (USA).nes")
+        if (!Files.exists(romPath)) {
+            println("[SKIP] ROM not found: $romPath")
+            return
+        }
+
+        val gamePak = GamePak(Files.readAllBytes(romPath))
+        println("[MapperVerification] SMB+Duck Hunt: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
+                "CHR ROM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
+
+        verifyMapper(romPath, mapperId = 66, durationSeconds = 20, requiredFrames = 3)
+    }
+
+    @Test
+    fun `Mapper 66 - Dragon Power runs without black screen`() {
+        val romPath = Path.of("S:\\Media\\Nintendo NES\\Games\\Dragon Power (USA).nes")
+        if (!Files.exists(romPath)) {
+            println("[SKIP] ROM not found: $romPath")
+            return
+        }
+
+        val gamePak = GamePak(Files.readAllBytes(romPath))
+        println("[MapperVerification] Dragon Power: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
+                "CHR ROM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
+
+        verifyMapper(romPath, mapperId = 66, durationSeconds = 15, requiredFrames = 3)
+    }
+
+    @Test
+    fun `Mapper 66 - Gumshoe runs without black screen`() {
+        val romPath = Path.of("S:\\Media\\Nintendo NES\\Games\\Gumshoe (USA, Europe).nes")
+        if (!Files.exists(romPath)) {
+            println("[SKIP] ROM not found: $romPath")
+            return
+        }
+
+        val gamePak = GamePak(Files.readAllBytes(romPath))
+        println("[MapperVerification] Gumshoe: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
+                "CHR ROM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
+
+        verifyMapper(romPath, mapperId = 66, durationSeconds = 15, requiredFrames = 3)
+    }
+
+    @Test
+    fun `Mapper 66 - Doraemon runs without black screen`() {
+        val romPath = Path.of("S:\\Media\\Nintendo NES\\Games\\Doraemon (Japan) (Rev A).nes")
+        if (!Files.exists(romPath)) {
+            println("[SKIP] ROM not found: $romPath")
+            return
+        }
+
+        val gamePak = GamePak(Files.readAllBytes(romPath))
+        println("[MapperVerification] Doraemon: PRG ROM = ${gamePak.programRom.size / 1024}KB, " +
+                "CHR ROM = ${gamePak.chrRom.size / 1024}KB, mapper = ${gamePak.header.mapper}")
+
+        verifyMapper(romPath, mapperId = 66, durationSeconds = 15, requiredFrames = 3)
     }
 }
