@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "1.9.22"
     application
     id("org.openjfx.javafxplugin") version "0.1.0"
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 repositories {
@@ -90,6 +91,11 @@ tasks.test {
     auxiliaryTests.forEach { testClass ->
         exclude("**/${testClass.replace('.', '/')}.class")
     }
+}
+
+tasks.register<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("uberJar") {
+    archiveBaseName.set("nestlin-standalone")
+    archiveClassifier.set("")
 }
 
 // Separate task to run Mesen comparison tests only when explicitly invoked
