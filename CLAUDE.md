@@ -56,7 +56,7 @@ An NES emulator written in Kotlin for learning purposes. The emulator simulates 
 - **JInputNatives.kt** - JInput native library loader for controller support
 
 ### UI & Testing
-- **ui/Application.kt** - JavaFX UI with 256×240 canvas and File menu (Load Game, Hard Reset, Exit)
+- **ui/Application.kt** - JavaFX UI with Canvas-based nearest-neighbor scaling (see `knowledge/javafx-pixel-scaling.md`), scale modes (1x-4x, Fit), fullscreen, and menus
 - **GoldenLogTest.kt** - Validates CPU execution against nestest.log golden output
 - **testroms/** - Test ROMs (nestest.nes for CPU validation)
 
