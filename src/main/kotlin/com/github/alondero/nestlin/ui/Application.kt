@@ -36,8 +36,6 @@ import javax.sound.sampled.DataLine
 import javax.sound.sampled.SourceDataLine
 import kotlin.concurrent.thread
 
-const val DISPLAY_SCALE = 4  // 4x magnification for debugging (legacy constant, kept for compatibility)
-
 // Periodic SRAM flush interval. 10s matches RetroArch's default and means a crash
 // loses at most ~10s of in-game saves. Skipped when batteryDirty is false (no cost).
 private const val BATTERY_FLUSH_INTERVAL_MS = 10_000L
