@@ -11,6 +11,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # softprops/action-gh-release needs write access to create the release.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -23,15 +26,15 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build uberJar
-        run: ./gradlew shadowJar
+        run: ./gradlew uberJar
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
-          release_name: Nestlin v${{ inputs.version }}
+          name: Nestlin v${{ inputs.version }}
           draft: true
-          artifacts: build/libs/nestlin-all.jar
-          artifact_errors: fail
+          files: build/libs/nestlin-all.jar
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
