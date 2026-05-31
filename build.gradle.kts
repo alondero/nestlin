@@ -26,14 +26,19 @@ application {
     mainClass.set("com.github.alondero.nestlin.ui.ApplicationKt")
 }
 
+// The built-in shadowJar IS the runnable fat JAR. The application plugin makes
+// the shadow plugin set Main-Class from application.mainClass automatically.
+// archiveFileName pins the output to build/libs/nestlin-all.jar regardless of
+// version/classifier, so the release workflow has a stable path to attach.
 tasks.named<ShadowJar>("shadowJar") {
-    archiveClassifier.set("standalone")
+    archiveFileName.set("nestlin-all.jar")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    archiveBaseName.set("nestlin")
 }
 
+// Friendly alias so `./gradlew uberJar` still works for humans and the CI step.
 tasks.register("uberJar") {
     group = "build"
+    description = "Builds the standalone runnable fat JAR (build/libs/nestlin-all.jar)"
     dependsOn("shadowJar")
 }
 
@@ -105,11 +110,6 @@ tasks.test {
     auxiliaryTests.forEach { testClass ->
         exclude("**/${testClass.replace('.', '/')}.class")
     }
-}
-
-tasks.register<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("uberJar") {
-    archiveBaseName.set("nestlin-standalone")
-    archiveClassifier.set("")
 }
 
 // Separate task to run Mesen comparison tests only when explicitly invoked
