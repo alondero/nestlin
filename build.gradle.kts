@@ -107,6 +107,11 @@ tasks.test {
     }
 }
 
+tasks.register<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("uberJar") {
+    archiveBaseName.set("nestlin-standalone")
+    archiveClassifier.set("")
+}
+
 // Separate task to run Mesen comparison tests only when explicitly invoked
 tasks.register<Test>("testMesenComparison") {
     group = "verification"
