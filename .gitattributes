@@ -1,0 +1,42 @@
+# Force source/text files to be treated as text by Git.
+#
+# Git auto-detects binary vs text by scanning the first ~8KB of each file
+# for NUL bytes. A single stray U+0000 (e.g. an editor/paste accident) flips
+# a file to "binary" — which silently disables 3-way text merging and turns
+# otherwise auto-mergeable edits into "Cannot merge binary files" errors
+# during git merge/rebase/cherry-pick. See issue #106.
+#
+# These explicit `text` attributes override that content-sniffing heuristic,
+# so a rogue byte yields an immediate localized diff failure (and we notice
+# the offending file) rather than a confusing merge surprise later.
+
+# Kotlin — primary source language
+*.kt          text
+*.kts         text
+
+# Build scripts
+*.gradle      text
+build.gradle* text
+settings.gradle* text
+
+# Python tooling (dump_analyzer.py etc.)
+*.py          text
+
+# Lua scripts (Mesen2 harness, tracer scripts)
+*.lua         text
+
+# Docs
+*.md          text
+
+# Config
+*.json        text
+*.yml         text
+*.yaml        text
+*.toml        text
+
+# Shell / batch helpers
+*.sh          text eol=lf
+*.bat         text eol=crlf
+
+# GitHub Actions
+.github/**    text
