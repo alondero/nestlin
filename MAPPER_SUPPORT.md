@@ -194,15 +194,55 @@
 
 ---
 
+## Mapper 206 (DxROM / Namcot 108 / Namcot 109 / Namcot 118 / Namcot 119)
+**Status:** Working (Added 2026-06-01)
+
+- **Games:** Gauntlet (DRROM — 4-screen, 128 KB PRG, 64 KB CHR), Ring King, RBI Baseball
+  (DEROM), Dragon Buster, Pac-Man (Namco), Mappy-Land, Berzerk, and other Namco/Tengen titles.
+- **What it is:** a stripped-down MMC3. The Namco 108 family removes the
+  configurable bits that the simplified chips don't expose:
+  - **PRG mode is hardwired** to MMC3 PRG mode 0: `$8000-$9FFF` = R6 (switchable),
+    `$A000-$BFFF` = R7 (switchable), `$C000-$DFFF` = second-to-last bank (fixed),
+    `$E000-$FFFF` = last bank (fixed). Bit 6 of the bank-select register is ignored.
+  - **CHR mode is hardwired** to MMC3 CHR mode 0: R0/R1 select 2 KB banks at
+    `$0000-$0FFF` (low bit ignored, so adjacent 1 KB pages pair), R2-R5 select
+    four 1 KB banks at `$1000-$1FFF`. Bit 7 of the bank-select register is ignored.
+  - **Mirroring is hardwired** from the iNES header — there is no `$A000` mirroring
+    register. (DRROM Gauntlet uses 4-screen, signalled via the header's 4-screen bit;
+    the cartridge board wires it physically.)
+  - **No scanline IRQ counter** — writes to `$C000`/`$C001` (latch/reload) and
+    `$E000`/`$E001` (enable/disable) are accepted as no-ops. Mapper 206 inherits
+    Mapper's default `isIrqPending() = false` and `acknowledgeIrq() = {}`.
+- **Register protocol:** identical to MMC3 from the CPU's point of view.
+  - `$8000` (even address) Bank select — bits 0-2 pick R0-R7. Bits 6-7 are masked off
+    in the value before being stored, but the address is decoded normally.
+  - `$8001` (odd address) Bank data — low 7 bits become the bank number.
+  - The whole `$8000-$FFFF` window collapses to the `$8000`/`$8001` register pair
+    (i.e. `addr &= 0x8001`), matching the Mesen reference.
+- **PRG-RAM:** 8 KB at `$6000-$7FFF`, always enabled (Namco 108 has no `$A001`
+  protect register). When the iNES header has the battery bit set, the page is
+  exposed via `batteryBackedRam()` and writes set `batteryDirty`, so `.sav` persistence
+  works the same as for Mapper 1/4/5.
+- **Verification:** `Mapper206Test` covers PRG mode 0 (R6 at `$8000`, R7 at `$A000`,
+  second-to-last at `$C000`, last at `$E000`), CHR mode 0 (R0/R1 2 KB with low-bit
+  ignored, R2-R5 1 KB), the bank-select/data protocol across the full `$8000-$FFFF`
+  decode, hardwired PRG/CHR modes (writes with bits 6/7 set in `$8000` do not flip
+  into mode 1 / invert), header-driven mirroring, PRG-RAM read/write, the missing
+  IRQ, CHR-RAM fallback, and save/load round-trip. End-to-end ROM boot/render
+  verification is left for a follow-up Mesen2 comparison (see `MapperVerificationTest`
+  pattern) — Gauntlet and RBI Baseball are the natural oracles.
+
+---
+
 ## Battery-Backed Save RAM (.sav files)
 
-**Status:** Supported on mappers 1, 4, 5 (Added 2026-05-23)
+**Status:** Supported on mappers 1, 4, 5, 206 (Added 2026-06-01 for mapper 206)
 
 - **Format:** Raw bytes, no header. Bit-for-bit compatible with FCEUX / Nestopia / Mesen / Mesen2.
 - **Location:** `saves/<rom-basename>.sav` next to the working directory.
 - **Trigger:** iNES header byte 6 bit 1 (battery flag). When unset, no `.sav` file is created even if the cartridge has PRG-RAM.
 - **Flush policy:** every 10 seconds if PRG-RAM is dirty, plus on clean shutdown, ROM switch, and hard reset. Atomic file replace (write `.sav.tmp` then move) keeps the existing save intact if the JVM dies mid-write.
-- **Coverage:** Mapper 1 (MMC1 — Zelda, Final Fantasy, Kid Icarus), Mapper 4 (MMC3 — Mega Man 4-6, StarTropics, Crystalis), Mapper 5 (MMC5 — Castlevania III when battery-flagged). Mappers without `$6000-$7FFF` PRG-RAM (0, 2, 3, 7, 9, 11, 34) cannot host battery saves and are unaffected.
+- **Coverage:** Mapper 1 (MMC1 — Zelda, Final Fantasy, Kid Icarus), Mapper 4 (MMC3 — Mega Man 4-6, StarTropics, Crystalis), Mapper 5 (MMC5 — Castlevania III when battery-flagged), Mapper 206 (Namcot 108/109/118 — Gauntlet, RBI Baseball). Mappers without `$6000-$7FFF` PRG-RAM (0, 2, 3, 7, 9, 11, 34) cannot host battery saves and are unaffected.
 - **Known limitations:**
   - PRG-RAM size is treated as 8 KB regardless of iNES byte 8 / NES 2.0 byte 10. Games with 16/32 KB battery RAM (some MMC5 titles) won't save their full state.
   - MMC5 extended RAM (`$5C00-$5FFF`) is not persisted. Only the `$6000-$7FFF` PRG-RAM window is.
