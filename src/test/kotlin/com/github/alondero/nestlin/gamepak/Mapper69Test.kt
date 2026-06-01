@@ -177,6 +177,48 @@ class Mapper69Test {
         assertThat(mapper.snapshot().irqState!!["irqCounter"], equalTo(0x1234 as Any))
     }
 
+    // ---- $D enable bits are live, not sticky ----
+
+    /**
+     * Writing $D=0x00 (a "pure acknowledge") clears bit 7 and bit 0, so the
+     * counter HALTS and the IRQ will not re-assert until the game re-enables.
+     * This is hardware-accurate FME-7 behaviour (the enable bits are level, not
+     * latched). An earlier sticky-latch workaround asserted the opposite as a
+     * failed attempt at Mr. Gimmick #82; that game's boot is actually driven by
+     * its NMI handler (which fires zero IRQs during boot — see the PPU
+     * pre-render nmiOccurred fix), so the sticky behaviour was both wrong and
+     * unnecessary, and would spuriously re-fire one-shot raster IRQs in other
+     * FME-7 titles (Batman, Gremlins 2).
+     */
+    @Test
+    fun `writing D=00 halts the counter and the IRQ does not re-assert`() {
+        val mapper = Mapper69(createTestGamePak())
+        mapper.command(0xE, 0x02)
+        mapper.command(0xF, 0x00)   // counter = 2
+        mapper.command(0xD, 0x81)   // counter-enable + IRQ-enable
+
+        mapper.tickCpuCycle()       // 2 -> 1
+        mapper.tickCpuCycle()       // 1 -> 0
+        mapper.tickCpuCycle()       // 0 -> wrap, IRQ fires
+        assertThat("IRQ fired on underflow", mapper.isIrqPending(), equalTo(true))
+
+        mapper.command(0xD, 0x00)   // pure acknowledge: ack + clear both enables
+        assertThat("IRQ acked", mapper.isIrqPending(), equalTo(false))
+
+        // Counter must be HALTED (bit 7 cleared) ...
+        val counterAfterAck = mapper.snapshot().irqState!!["irqCounter"] as Int
+        repeat(50) { mapper.tickCpuCycle() }
+        assertThat("counter frozen while counter-enable is clear",
+            mapper.snapshot().irqState!!["irqCounter"] as Int, equalTo(counterAfterAck))
+
+        // ... and even a full wrap-around's worth of ticks must NOT re-assert
+        // the IRQ, because both the counter and the IRQ-enable bit are off.
+        mapper.command(0xD, 0x80)              // re-enable counter ONLY (IRQ still masked)
+        repeat(0x10000) { mapper.tickCpuCycle() }
+        assertThat("IRQ stays masked with bit 0 clear even across a wrap",
+            mapper.isIrqPending(), equalTo(false))
+    }
+
     // ---- Save / load ----
 
     @Test

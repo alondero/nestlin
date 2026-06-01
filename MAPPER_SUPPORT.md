@@ -178,14 +178,19 @@
   Validated end-to-end on a real PAL game with a simple mapper: **Kick Off (Europe)**
   auto-detects PAL and boots to a rendered screen (rendering on by frame 10, PPUMASK $FE) —
   see `KickOffPalSmokeTest`.
-- **Gimmick! still does not boot — separate FME-7 IRQ bug, not the PAL core.** Diagnosis
-  (2026-05-30): the only local dump (European/PAL) sets up the FME-7 IRQ during early init
-  (irqEnable=1, counter running), then spins forever at `$F2B8` (`LDA $F0 / BNE`) with the IRQ
-  disabled, waiting for zero-page `$F0` to be cleared by an interrupt-driven routine (~`$E9C6`)
-  that never runs. Same under forced NTSC. OAM DMA is NOT involved (zero `$4014` transfers).
-  Control ROMs kirby/lolo1/tetris and **Batman (same FME-7 mapper, NTSC)** all boot through the
-  same harness, so this is mapper-69/raster-IRQ-specific, not a PAL-timing or harness issue.
-  Harness `GimmickPalBootTest` is in place but `@Ignore`d until the FME-7 IRQ behaviour is fixed.
+- **Gimmick! (Mr. Gimmick, Europe) boots** (`GimmickPalBootTest`, fixed 2026-06-01, issue #82).
+  The earlier "separate FME-7 IRQ bug" diagnosis was **wrong**. Verified against a Mesen2
+  `--testRunner` capture: Gimmick's boot is driven by its **NMI** handler (`$E9C6`), not the
+  FME-7 IRQ — it *enables* NMI (`$2000=$B0`) and fires an NMI every frame; **zero** FME-7 IRQs
+  fire during boot (the per-frame NMI reloads the IRQ counter to `$FFFF` before it can underflow).
+  The real bug was in the **PPU**, not this mapper: the CPU-visible `nmiOccurred` latch was not
+  cleared at the pre-render scanline (only PPUSTATUS bit 7 was), so a stale latch from a vblank
+  the game never acknowledged via `$2002` fired a spurious immediate NMI the moment the game
+  enabled NMI mid-frame — and that mistimed NMI disabled NMI for good, hanging the boot spin at
+  `$F2B8`. Fixed in `PpuAddressedMemory.clearVBlankAtPreRender` (regression: `PpuVblankTimingTest`).
+  A `$D` "sticky enable latch" workaround added for this issue was reverted to hardware-accurate
+  (live, non-latched) bits, since it was both wrong and would spuriously re-fire one-shot raster
+  IRQs in Batman / Gremlins 2.
 
 ---
 

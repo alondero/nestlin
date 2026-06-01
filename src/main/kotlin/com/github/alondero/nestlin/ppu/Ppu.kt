@@ -130,7 +130,7 @@ class Ppu(var memory: Memory) {
             memory.ppuAddressedMemory.setVBlank()
         }
 
-        if (scanline == region.preRenderScanline && cycle == 1) {memory.ppuAddressedMemory.status.clearFlags()}
+        if (scanline == region.preRenderScanline && cycle == 1) {memory.ppuAddressedMemory.clearVBlankAtPreRender()}
 
         // MMC3 scanline IRQ is triggered solely by A12 rising edges from pattern fetches.
 
