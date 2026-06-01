@@ -40,6 +40,20 @@ class PpuAddressedMemory {
         nmiOccurred = true
     }
 
+    /**
+     * Pre-render scanline (dot 1) housekeeping. The PPUSTATUS vblank bit and the
+     * CPU-visible [nmiOccurred] latch are two views of the SAME hardware flag, which
+     * NESdev specifies is "cleared after reading $2002 AND at dot 1 of the pre-render
+     * line." Clearing only the status register here (and leaving [nmiOccurred] set)
+     * lets a stale latch survive a frame in which the game never read $2002 — so the
+     * next mid-frame "enable NMI" write fires a spurious immediate NMI. That is the
+     * Mr. Gimmick (Europe) boot hang (issue #82): a mistimed NMI disables NMI for good.
+     */
+    fun clearVBlankAtPreRender() {
+        status.clearFlags()
+        nmiOccurred = false
+    }
+
     fun enableDebugLogging() {
         debugLogStatusReads = true
         statusReadLog.clear()

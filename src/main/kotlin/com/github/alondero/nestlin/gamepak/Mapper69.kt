@@ -58,8 +58,8 @@ class Mapper69(private val gamePak: GamePak) : Mapper {
 
     // IRQ (command $D/$E/$F).
     private var irqCounter = 0           // 16-bit
-    private var irqCounterEnable = false // bit 7 of $D: decrement each CPU cycle
-    private var irqEnable = false        // bit 0 of $D: allow the line to assert
+    private var irqCounterEnable = false // bit 7 of $D: counter decrements while set
+    private var irqEnable = false        // bit 0 of $D: allow the line to assert on underflow
     private var irqPending = false
 
     override fun tickCpuCycle() {
@@ -113,9 +113,18 @@ class Mapper69(private val gamePak: GamePak) : Mapper {
             0xB -> prgBanks[2] = v and 0x3F
             0xC -> mirroringMode = v and 0x03
             0xD -> {
+                // $D bits are live, not sticky: bit 7 enables/halts the counter,
+                // bit 0 enables/masks the IRQ line, and any write to $D acknowledges
+                // a pending IRQ. (A prior "sticky latch" workaround for Mr. Gimmick
+                // (Europe) — issue #82 — was removed once the real cause was found:
+                // Gimmick's boot is driven by its NMI handler, which fires ZERO IRQs
+                // during boot, verified against Mesen2. The hang was the PPU clearing
+                // only PPUSTATUS bit 7 — not the CPU-visible nmiOccurred latch — at
+                // the pre-render scanline, so a mid-frame "enable NMI" write fired a
+                // spurious immediate NMI. See PpuAddressedMemory.clearVBlankAtPreRender.)
                 irqCounterEnable = (v and 0x80) != 0
                 irqEnable = (v and 0x01) != 0
-                irqPending = false  // writing the control register acknowledges the IRQ
+                irqPending = false
             }
             0xE -> irqCounter = (irqCounter and 0xFF00) or v
             0xF -> irqCounter = (irqCounter and 0x00FF) or (v shl 8)

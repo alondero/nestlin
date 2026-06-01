@@ -137,6 +137,7 @@ local function writeState()
         "\"ppuStatus\":" .. ppuStatus .. "," ..
         "\"cpuRam\":" .. dumpMem(emu.memType.nesInternalRam, 2048) .. "," ..
         "\"oam\":" .. dumpMem(emu.memType.nesSpriteRam, 256) .. "," ..
+        "\"chr\":" .. dumpMem(emu.memType.nesPpuMemory, 8192) .. "," ..
         "\"paletteRam\":" .. dumpPalette() ..
     "}"
 
@@ -183,7 +184,8 @@ emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
             ppuRegisters = parsePpuRegisters(json),
             oam = parseIntArray(json, "oam", 256),
             paletteRam = parseIntArray(json, "paletteRam", 32),
-            timestamp = System.currentTimeMillis()
+            timestamp = System.currentTimeMillis(),
+            chr = parseIntArray(json, "chr", 8192)
         )
     }
 

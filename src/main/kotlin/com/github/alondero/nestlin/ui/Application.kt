@@ -19,7 +19,7 @@ import javafx.scene.control.Menu
 import javafx.scene.control.MenuBar
 import javafx.scene.control.MenuItem
 import com.github.alondero.nestlin.Region
-import javafx.scene.image.ImageView
+import javafx.scene.canvas.Canvas
 import javafx.scene.image.PixelFormat
 import javafx.scene.image.WritableImage
 import javafx.scene.image.Image
@@ -36,8 +36,6 @@ import javax.sound.sampled.DataLine
 import javax.sound.sampled.SourceDataLine
 import kotlin.concurrent.thread
 
-const val DISPLAY_SCALE = 4  // 4x magnification for debugging
-
 // Periodic SRAM flush interval. 10s matches RetroArch's default and means a crash
 // loses at most ~10s of in-game saves. Skipped when batteryDirty is false (no cost).
 private const val BATTERY_FLUSH_INTERVAL_MS = 10_000L
@@ -48,20 +46,22 @@ fun main(args: Array<String>) {
 
 class NestlinApplication : FrameListener, Application() {
     private lateinit var stage: Stage
-    // Native-resolution backing image; the ImageView's fitWidth/fitHeight drives upscaling.
-    // isSmooth=false selects nearest-neighbor when stretching to the fit-rect, giving crisp
-    // pixel-art edges. (Note: smooth is honored only on the fitWidth/fitHeight path, NOT on
-    // scene-graph scaleX/scaleY transforms — that's why we drive size via fitWidth, not scale.)
+    // Native-resolution backing image written to by the PPU each frame.
     private val frameImage = WritableImage(RESOLUTION_WIDTH, RESOLUTION_HEIGHT)
-    private val imageView = ImageView(frameImage).apply { isSmooth = false }
-    // Group wraps the view so its bounds participate normally in StackPane sizing.
-    private val canvasGroup = Group(imageView)
+    // Canvas + GraphicsContext for pixel-perfect nearest-neighbor upscaling.
+    // JavaFX's ImageView.isSmooth is unreliable on the Windows D3D pipeline (bilinear
+    // filtering is applied regardless). Canvas.GraphicsContext.isImageSmoothing is
+    // reliably honored across all pipelines since JavaFX 12.
+    private val canvas = Canvas((RESOLUTION_WIDTH * 3).toDouble(), (RESOLUTION_HEIGHT * 3).toDouble())
+    private val gc = canvas.graphicsContext2D.apply { isImageSmoothing = false }
+    // Group wraps the canvas so its bounds participate normally in StackPane sizing.
+    private val canvasGroup = Group(canvas)
     private val canvasHolder = StackPane(canvasGroup)
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
     // Hold-Tab fast-forward: disables throttling while held, restores it on release.
     private val fastForward = FastForwardController(nestlin.config)
     // On-screen fast-forward indicator. A scene-graph node (not pixels drawn into frameImage)
-    // so it stays a crisp 16px regardless of the ImageView upscale factor. Gold glyph with a
+    // so it stays a crisp 16px regardless of the canvas upscale factor. Gold glyph with a
     // black outline stays legible over both light and dark scenes. Toggled by the render loop.
     private val fastForwardIndicator = javafx.scene.text.Text(">>").apply {
         font = javafx.scene.text.Font.font("Monospaced", javafx.scene.text.FontWeight.BOLD, 16.0)
@@ -362,10 +362,14 @@ class NestlinApplication : FrameListener, Application() {
                 val pixelWriter = frameImage.pixelWriter
                 val pixelFormat = PixelFormat.getByteRgbInstance()
 
-                // Thread-safe read of frame buffer (native NES resolution; ImageView fit-rect handles upscaling)
+                // Thread-safe read of frame buffer (native NES resolution)
                 synchronized(frameBufferLock) {
                     pixelWriter.setPixels(0, 0, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, pixelFormat, nextFrame, 0, RESOLUTION_WIDTH * 3)
                 }
+
+                // Draw the native-resolution image onto the canvas at scaled size.
+                // gc.isImageSmoothing = false guarantees nearest-neighbor interpolation.
+                gc.drawImage(frameImage, 0.0, 0.0, canvas.width, canvas.height)
 
                 // Show/hide the fast-forward indicator. It's a StackPane-overlaid scene node,
                 // so toggling visibility is all that's needed — no per-frame drawing.
@@ -554,12 +558,12 @@ class NestlinApplication : FrameListener, Application() {
     private fun applyScale(mode: ScaleMode) {
         val factor = mode.factor()
         // Drop any previous binding before swapping mode to avoid leaking listeners.
-        imageView.fitWidthProperty().unbind()
-        imageView.fitHeightProperty().unbind()
+        canvas.widthProperty().unbind()
+        canvas.heightProperty().unbind()
         if (factor != null) {
-            imageView.fitWidth = (RESOLUTION_WIDTH * factor).toDouble()
-            imageView.fitHeight = (RESOLUTION_HEIGHT * factor).toDouble()
-            // Resize the window to the view's natural extent unless fullscreen owns it.
+            canvas.width = (RESOLUTION_WIDTH * factor).toDouble()
+            canvas.height = (RESOLUTION_HEIGHT * factor).toDouble()
+            // Resize the window to the canvas's natural extent unless fullscreen owns it.
             if (!stage.isFullScreen) {
                 stage.sizeToScene()
             }
@@ -567,11 +571,11 @@ class NestlinApplication : FrameListener, Application() {
             // Fit: seed the window at 3x when entering Fit while windowed, so the user
             // always gets a usable starting size before the binding takes over.
             if (!stage.isFullScreen) {
-                imageView.fitWidth = (RESOLUTION_WIDTH * 3).toDouble()
-                imageView.fitHeight = (RESOLUTION_HEIGHT * 3).toDouble()
+                canvas.width = (RESOLUTION_WIDTH * 3).toDouble()
+                canvas.height = (RESOLUTION_HEIGHT * 3).toDouble()
                 stage.sizeToScene()
             }
-            // Then bind fit-rect to live holder dimensions, preserving aspect ratio.
+            // Then bind canvas size to live holder dimensions, preserving aspect ratio.
             // Computed as an integer-or-fractional scale factor, then multiplied back out to
             // pixel dimensions — keeps the aspect ratio locked to 256:240 regardless of
             // window letterboxing.
@@ -584,8 +588,8 @@ class NestlinApplication : FrameListener, Application() {
                 canvasHolder.heightProperty()
             )
             val fitFactor = javafx.beans.binding.Bindings.min(widthFactor, heightFactor)
-            imageView.fitWidthProperty().bind(fitFactor.multiply(RESOLUTION_WIDTH.toDouble()))
-            imageView.fitHeightProperty().bind(fitFactor.multiply(RESOLUTION_HEIGHT.toDouble()))
+            canvas.widthProperty().bind(fitFactor.multiply(RESOLUTION_WIDTH.toDouble()))
+            canvas.heightProperty().bind(fitFactor.multiply(RESOLUTION_HEIGHT.toDouble()))
         }
     }
 
