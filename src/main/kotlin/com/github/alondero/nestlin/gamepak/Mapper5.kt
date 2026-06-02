@@ -301,6 +301,7 @@ class Mapper5(private val gamePak: GamePak) : Mapper {
     override fun isIrqPending(): Boolean = irqPending
 
     override fun saveState(out: DataOutput) {
+        super.saveState(out)
         out.writeInt(prgBank8000)
         out.writeInt(prgBankA000)
         out.writeInt(prgBankC000)
@@ -328,6 +329,7 @@ class Mapper5(private val gamePak: GamePak) : Mapper {
     }
 
     override fun loadState(input: DataInput) {
+        super.loadState(input)
         prgBank8000 = input.readInt()
         prgBankA000 = input.readInt()
         prgBankC000 = input.readInt()

@@ -80,6 +80,7 @@ class Mapper66(private val gamePak: GamePak) : Mapper {
     )
 
     override fun saveState(out: DataOutput) {
+        super.saveState(out)
         out.writeInt(prgBank)
         out.writeInt(chrBank)
         out.writeBoolean(chrRam != null)
@@ -87,6 +88,7 @@ class Mapper66(private val gamePak: GamePak) : Mapper {
     }
 
     override fun loadState(input: DataInput) {
+        super.loadState(input)
         prgBank = input.readInt()
         chrBank = input.readInt()
         val hasChrRam = input.readBoolean()

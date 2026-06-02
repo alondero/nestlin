@@ -61,12 +61,14 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
     }
 
     override fun saveState(out: DataOutput) {
+        super.saveState(out)
         out.writeInt(prgBank)
         out.writeInt(mirroringBit)
         out.write(chrRam)
     }
 
     override fun loadState(input: DataInput) {
+        super.loadState(input)
         prgBank = input.readInt()
         mirroringBit = input.readInt()
         input.readFully(chrRam)

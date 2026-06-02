@@ -148,4 +148,49 @@ class SaveStateTest {
         assertThat(magic, equalTo(0x4E53544C))
         assertThat(version, equalTo(SaveState.VERSION))
     }
+
+    /**
+     * Issue #100: the mapper block must carry a per-mapper version byte that
+     * loadState rejects on mismatch. A save made by a future Mapper4 that
+     * added a field (e.g. 3-cycle A12 filter state) would carry version 2;
+     * the current code expects version 1, so it must refuse the load loudly
+     * instead of silently reading garbage into PRG-bank registers.
+     *
+     * Test strategy: take a real round-trippable save, then mutate ONLY the
+     * per-mapper version byte. The mapper block is the LAST length-prefixed
+     * blob in the file, so its data bytes are the very last bytes of the
+     * file. For Mapper0 (which has no other state), the data is exactly one
+     * byte — the version stamp — which is the file's final byte.
+     */
+    @Test
+    fun `mapper block with unknown version is rejected with a clear message`() {
+        val nes = newNestlinAtReset()
+        runCpuSteps(nes, 500)
+        val bytes = snapshot(nes).copyOf()
+
+        // The per-mapper version byte is the LAST byte of the file: for a
+        // mapper with no other state (Mapper0), saveState writes only the
+        // version stamp and nothing else.
+        val versionByteOffset = bytes.size - 1
+        assertThat(
+            "Sanity check: the final byte should be the per-mapper version (1)",
+            bytes[versionByteOffset].toInt() and 0xFF,
+            equalTo(1)
+        )
+        bytes[versionByteOffset] = 99.toByte()
+
+        try {
+            restore(nes, bytes)
+            fail("Expected IncompatibleSaveStateException for mapper version 99")
+        } catch (e: SaveState.IncompatibleSaveStateException) {
+            assertTrue(
+                "Expected the message to mention the rejected version, got: ${e.message}",
+                e.message?.contains("99") == true
+            )
+            assertTrue(
+                "Expected the message to identify the mapper, got: ${e.message}",
+                e.message?.contains("Mapper0") == true
+            )
+        }
+    }
 }
