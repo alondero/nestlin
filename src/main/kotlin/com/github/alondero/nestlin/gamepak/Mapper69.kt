@@ -156,6 +156,7 @@ class Mapper69(private val gamePak: GamePak) : Mapper {
     }
 
     override fun saveState(out: DataOutput) {
+        super.saveState(out)
         out.writeInt(command)
         for (b in chrBanks) out.writeInt(b)
         for (b in prgBanks) out.writeInt(b)
@@ -173,6 +174,7 @@ class Mapper69(private val gamePak: GamePak) : Mapper {
     }
 
     override fun loadState(input: DataInput) {
+        super.loadState(input)
         command = input.readInt()
         for (i in chrBanks.indices) chrBanks[i] = input.readInt()
         for (i in prgBanks.indices) prgBanks[i] = input.readInt()

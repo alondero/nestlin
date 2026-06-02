@@ -151,6 +151,7 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     }
 
     override fun saveState(out: DataOutput) {
+        super.saveState(out)
         out.writeInt(shiftReg)
         out.writeByte(controlReg.toInt())
         out.writeInt(chrBank0)
@@ -162,6 +163,7 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     }
 
     override fun loadState(input: DataInput) {
+        super.loadState(input)
         shiftReg = input.readInt()
         controlReg = input.readByte()
         chrBank0 = input.readInt()

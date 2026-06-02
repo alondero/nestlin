@@ -135,6 +135,7 @@ class Mapper10(private val gamePak: GamePak) : Mapper {
     override fun currentMirroring(): Mapper.MirroringMode = mirroringMode
 
     override fun saveState(out: DataOutput) {
+        super.saveState(out)
         out.writeInt(prgBank)
         out.writeInt(chrBank0FD)
         out.writeInt(chrBank0FE)
@@ -147,6 +148,7 @@ class Mapper10(private val gamePak: GamePak) : Mapper {
     }
 
     override fun loadState(input: DataInput) {
+        super.loadState(input)
         prgBank = input.readInt()
         chrBank0FD = input.readInt()
         chrBank0FE = input.readInt()
