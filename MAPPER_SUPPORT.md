@@ -194,7 +194,86 @@
 
 ---
 
-## Mapper 206 (DxROM / Namcot 108 / Namcot 109 / Namcot 118 / Namcot 119)
+## Mappers 21, 23, 25 (Konami VRC4)
+**Status:** Working — register-level (Added 2026-06-02)
+
+- **Games:**
+  - **Mapper 21:** Wai Wai World 2: SOS!! Parsley Jō, Ganbare Goemon Gaiden 2
+  - **Mapper 23:** Wai Wai World, Salamander, Crisis Force, Parodius Da!
+  - **Mapper 25:** Gradius II, Bio Miracle Bokutte Upa, Teenage Mutant Ninja Turtles (Famicom),
+    Ganbare Goemon Gaiden, Moero!! Pro Tennis
+- **What it is:** the Konami VRC4 chip — fine-grained banking and a configurable
+  IRQ counter that drives many of Konami's mid-to-late Famicom hits. The three
+  iNES mapper numbers are the *same chip*; the differentiator is which CPU
+  address pins drive the chip's register-select inputs, which Konami varied
+  across PCB designs. Concretely:
+
+  | Mapper | Submappers | Sub-bit 0 ← | Sub-bit 1 ← | Register address pattern             |
+  |--------|------------|-------------|-------------|--------------------------------------|
+  | 21     | VRC4a      | A1          | A2          | `$x000, $x002, $x004, $x006`         |
+  | 21     | VRC4c      | A6          | A7          | `$x000, $x040, $x080, $x0C0`         |
+  | 23     | VRC4f      | A0          | A1          | `$x000, $x001, $x002, $x003`         |
+  | 23     | VRC4e      | A2          | A3          | `$x000, $x004, $x008, $x00C`         |
+  | 25     | VRC4b      | A1          | A0 (swap!)  | `$x000, $x002, $x001, $x003`         |
+  | 25     | VRC4d      | A3          | A2 (swap!)  | `$x000, $x008, $x004, $x00C`         |
+
+  Without NES 2.0 submapper info we can't pick between each pair, so we
+  **OR both candidate sub-register decodes** — VRC4f games only ever touch
+  address bits 0-1 (bits 2-3 are always zero in their writes) and VRC4e games
+  only ever touch bits 2-3, so the OR is unambiguous in practice. Same trick
+  for the other pairs. This is what FCEUX and Nintaco do.
+- **Registers** (canonical layout, with `sub` = decoded 0..3):
+  - `$8xxx`     PRG bank 0 select — 5-bit 8KB bank for `$8000` (or `$C000` in swap mode).
+  - `$9xxx sub 0/1` Mirroring — bits 0-1: 0=Vertical, 1=Horizontal, 2=1-screen-lower, 3=1-screen-upper.
+  - `$9xxx sub 2/3` PRG mode + WRAM enable — bit 0 = WRAM enable, bit 1 = PRG swap mode.
+  - `$Axxx`     PRG bank 1 select — 5-bit 8KB bank for `$A000`.
+  - `$Bxxx-$Exxx` CHR bank selects — each group (`$B`/`$C`/`$D`/`$E`) hosts two
+    9-bit CHR bank registers. Sub 0/2 writes the low nibble (4 bits), sub 1/3
+    writes the high nibble (5 bits). That gives 8 × 1KB CHR windows with
+    9-bit bank indices (512 KB CHR max).
+  - `$Fxxx sub 0` IRQ latch low nibble.
+  - `$Fxxx sub 1` IRQ latch high nibble.
+  - `$Fxxx sub 2` IRQ control — `....MEA`: M = cycle (1) / scanline (0) mode,
+    E = enable, A = "enable after acknowledge". Writing acks pending IRQ; if
+    E=1 the counter reloads from the latch and the prescaler resets to 341.
+  - `$Fxxx sub 3` IRQ acknowledge — clears pending and copies A→E.
+- **PRG geometry:**
+  - `$8000-$9FFF`: prg0 (swap mode 0) or second-to-last bank (swap mode 1).
+  - `$A000-$BFFF`: prg1 (always switchable via `$Axxx`).
+  - `$C000-$DFFF`: second-to-last bank (swap mode 0) or prg0 (swap mode 1).
+  - `$E000-$FFFF`: last bank (always fixed).
+- **WRAM:** 8KB at `$6000-$7FFF`, gated by the WRAM enable bit at `$9002`.
+  When disabled, reads return 0 and writes are dropped. When enabled, the
+  page is exposed via `batteryBackedRam()`; the Nestlin layer gates actual
+  `.sav` persistence on `Header.hasBattery`.
+- **IRQ (the VRC IRQ — second CPU-cycle-clocked mapper IRQ in Nestlin):** an
+  8-bit counter that *increments* (not decrements) each step. When it wraps
+  `$FF` → reload, the IRQ line is asserted (if E=1). Two clock sources:
+  - **Cycle mode (M=1):** counter clocks every CPU cycle.
+  - **Scanline mode (M=0):** counter clocks roughly once per scanline. We
+    implement the NESdev-spec integer prescaler — start at 341, subtract 3
+    each CPU cycle, and clock the counter whenever the prescaler crosses
+    zero (adding 341 back). 341 / 3 = 113.66 → the 114→114→113 cycle rhythm
+    that real VRC4 hardware uses.
+- **Verification:**
+  - `Vrc4Test` — PRG fixed-bank invariant, PRG bank 0/1 switching across both
+    swap modes, WRAM gating + dirty flag, 1KB CHR bank switching, 9-bit CHR
+    bank addressing via the low+high nibble protocol, CHR RAM fallback, all
+    four mirroring modes + header fallback, IRQ in both cycle and scanline
+    modes (including the exact 114-cycle prescaler boundary), the
+    enable/acknowledge protocol with A→E copy, save/load round-trip, and
+    version-byte rejection.
+  - `Vrc4VariantDecodeTest` — each submapper's address-pin layout is exercised
+    independently by issuing a sub-register write at the variant's canonical
+    address and asserting the corresponding internal effect (mirroring change
+    or WRAM enable).
+  - End-to-end ROM boot/render verification is left for a follow-up Mesen2
+    comparison — Gradius II (Mapper 25) and Salamander (Mapper 23) are the
+    natural oracles.
+
+---
+
+
 **Status:** Working (Added 2026-06-01)
 
 - **Games:** Gauntlet (DRROM — 4-screen, 128 KB PRG, 64 KB CHR), Ring King, RBI Baseball
