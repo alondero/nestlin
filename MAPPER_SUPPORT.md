@@ -194,6 +194,66 @@
 
 ---
 
+## Mapper 71 (Camerica / Codemasters / BF909x)
+**Status:** Working (Added 2026-06-02, issue #88)
+
+- **Games:** Micro Machines, Dizzy series (Dizzy: The Ultimate Cartoon Adventure, Fantasy World Dizzy, etc.), Linus Spacehead's Cosmic Crusade, Bee 52, Big Nose the Caveman, Firehawk, and the rest of the Camerica / Codemasters unlicensed library.
+- **What it is:** the BF909x chip, an UNROM-shaped mapper with two important
+  differences from Mapper 2:
+  - The PRG bank field is the **whole byte** (no mask), supporting up to 256
+    16 KB PRG banks. The selected bank is taken modulo the PRG-bank count.
+  - Mirroring is **software-switchable** via a separate write, in a
+    game-detected "firehawk" sub-mode.
+- **PRG banking (default mode):**
+  - `$8000-$BFFF` — switchable 16 KB bank. Whole write byte is the bank number.
+  - `$C000-$FFFF` — fixed to the last 16 KB bank.
+  - Writes anywhere in `$8000-$FFFF` do the bank select.
+  - Mirroring follows the iNES header.
+- **Firehawk (BF9097) sub-mode:** auto-engaged the first time the game writes
+  to `$9000` (any value, including zero — only the address matters). Once
+  latched, the chip **re-shapes** its register layout:
+  - `$8000-$BFFF` writes become **1-screen mirroring** writes. **Bit 4**
+    selects the screen: `0` = lower (`$2000`), `1` = upper (`$2400`). All
+    other bits are ignored.
+  - `$C000-$FFFF` writes continue to select the 16 KB PRG bank.
+  - This is sticky — there is no path back to default mode.
+- **CHR:** a single fixed 8 KB page mapped across `$0000-$1FFF`. No CHR
+  banking. Dumps that ship 0 KB of CHR get 8 KB of CHR RAM (writable).
+- **No IRQ. No PRG-RAM.**
+- **Implementation notes:** the `$9000` latch is implemented as a single
+  `bf9097Mode: Boolean` that flips on first hit; the live mirroring override
+  is a nullable Boolean so the iNES header drives `currentMirroring()` until
+  the game latches firehawk mode (the snapshot reports this as `-1`).
+- **Verification:** `Mapper71Test` covers
+  - mapper dispatch from header byte 6/7 = `0x47`,
+  - default-mode PRG banking (initial state, single-bank wrap, write to
+    `$8000`, `$C000`, and `$FFFF`, all 16 KB banks reachable, oversized bank
+    numbers wrapping modulo PRG count),
+  - fixed 8 KB CHR (no banking even after a PRG bank change) and the
+    0 KB CHR → 8 KB CHR-RAM fallback,
+  - default mirroring tracks the iNES header (horizontal *and* vertical),
+  - firehawk latch on `$9000` (and that the latch write is not mistaken for
+    a PRG bank select),
+  - firehawk-mode `$8000-$BFFF` writes set mirroring without disturbing PRG,
+  - firehawk mirroring bit 4 lower/upper + bit-mask isolation,
+  - firehawk `$C000-$FFFF` still selects PRG,
+  - one-way firehawk latch,
+  - `saveState`/`loadState` round-trip of PRG bank, firehawk latch, and
+    mirroring override (and CHR RAM when present),
+  - `snapshot()` reports the right `prgBank`, `bf9097Mode`, and
+    `firehawkMirrorUpper` for both states.
+- **End-to-end ROM verification** (Micro Machines booting) is left for a
+  follow-up Mesen2 comparison once a test ROM is sourced; the unit-test
+  coverage above is sufficient to drive the spec correctly.
+  - *Updated 2026-06-02:* end-to-end Mesen2 state comparison at frame 120
+    is **MATCH** for CHR, palette, and OAM. A separate OAM-DMA halt-cycle
+    bug in `Memory.kt` was uncovered while validating the gameplay path —
+    see `MemoryOamDmaTest`. Fixing it materially reduced the per-frame CPU
+    drift in OAM-heavy games; the user-observed "band" artifact during GUI
+    play was the downstream symptom, not a Mapper 71 defect.
+
+---
+
 ## Mapper 206 (DxROM / Namcot 108 / Namcot 109 / Namcot 118 / Namcot 119)
 **Status:** Working (Added 2026-06-01)
 

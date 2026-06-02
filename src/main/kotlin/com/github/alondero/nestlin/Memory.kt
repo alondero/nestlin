@@ -19,6 +19,13 @@ class Memory : DmaPort {
     // Will be set by Nestlin after APU creation
     var apu: Apu? = null
 
+    // Will be set by Nestlin after CPU creation. Memory needs this back-reference
+    // so it can halt the CPU for the 513 cycles an OAM DMA takes (NESdev: the CPU
+    // is suspended for the duration of the transfer). Without it, every DMA would
+    // let the CPU "skip ahead" by 513 cycles — a per-frame drift that desyncs games
+    // from Mesen2 in as few as ~5 frames of OAM-DMA-heavy sprite work.
+    var cpu: com.github.alondero.nestlin.cpu.Cpu? = null
+
     // Mapper for cartridge bank switching (set during readCartridge)
     var mapper: Mapper? = null
 
@@ -77,6 +84,15 @@ class Memory : DmaPort {
                     val data = this[base + i]
                     ppuAddressedMemory.writeOamData(data)
                 }
+                // OAM DMA halts the CPU for 513 cycles (NESdev: each of the 256
+                // byte transfers is 2 PPU cycles, +1 for the align-on-write setup
+                // cycle). Without this halt, every DMA "skips" 513 CPU cycles —
+                // enough to desync the game from a cycle-accurate reference like
+                // Mesen2 within a handful of frames of OAM-heavy sprite updates.
+                // Surface diagnosed against Micro Machines (mapper 71) on
+                // 2026-06-02: the 2-frame CPU-PC drift at frame 270 was the
+                // downstream symptom.
+                cpu?.workCyclesLeft = 513
             }
             in 0x4000..0x401F -> {
                 apuAddressedMemory[address - 0x4000] = value
