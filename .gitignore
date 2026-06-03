@@ -32,6 +32,9 @@ CLAUDE.local.md
 # Screenshot directory (generated at runtime)
 screenshots/
 
+# Battery-backed PRG-RAM saves (generated at runtime by Nestlin.loadBatteryRam)
+saves/
+
 # OS-level window captures from ad-hoc debugging (root only)
 /windows-capture*.png
 
