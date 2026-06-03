@@ -58,6 +58,7 @@ testroms/                    # nestest.nes is the only ROM in git
 - **Testing:** JUnit 4 + Hamkrest. **Default to state diff, not pixel diffs** (see `docs/TESTING_STRATEGY.md`). For bugs: write the failing test first, see it fail, fix, see it pass.
 - **Memory mirroring** is encoded as a `when` over the address — see `Memory.kt` for the canonical example.
 - **Bugs always get a regression test, even pre-existing ones** (per global CLAUDE.md).
+- **Line endings:** Project policy is **CRLF** for `*.kt`, `*.kts`, `*.gradle`, `*.md`, `*.py`, `*.lua`, `*.json`, `*.yml`, `*.yaml`, `*.toml`, and `.github/**`; `*.sh` is LF. Pinned in `.gitattributes` with `text eol=crlf` (and `text eol=lf` for `*.sh`). Windows is the dominant dev platform (see `CLAUDE.local.md`); Linux/macOS contributors will see `^M` in some diff tools but most (IntelliJ, GitHub web) hide them. After updating `.gitattributes`, run `git add --renormalize` to bring the index in sync. `git diff --ignore-cr-at-eol` should be empty for any clean worktree.
 
 ## Current Status (2026-06)
 
@@ -96,3 +97,4 @@ Read `docs/TESTING_STRATEGY.md` before adding tests. The pyramid, top to bottom:
 - **Cycle accounting:** every mapper IRQ either counts A12 edges (MMC3) or CPU cycles (FME-7) — never both. `Mapper.tickCpuCycle()` is the per-CPU-cycle hook; default no-op.
 - **PPU vblank latch:** `nmiOccurred` is cleared at the pre-render scanline AND on `$2002` read; games that poll `$2002` only at the wrong cadence (Gimmick!) used to deadlock — see `PpuAddressedMemory.clearVBlankAtPreRender` and `gimmick-nmi-prerender-latch-fix-2026-06-01`.
 - **Worktree scope:** when running inside `.claude/worktrees/<name>/`, the parent repo's `testroms/` and `tools/` are accessed via absolute paths in Kotlin/Lua; `.worktreeinclude` copies `CLAUDE.local.md` only.
+- **Line-ending phantom diffs (Issue #112):** if `git status` flags a `*.kt` (or other in-scope) file as modified and `git diff --ignore-cr-at-eol` is empty, the index blob is in legacy un-normalized form. Fix: `git add --renormalize <file>`. Root cause was `.gitattributes` declaring `text` without `eol=` — now pinned to `eol=crlf` (see Conventions above).
