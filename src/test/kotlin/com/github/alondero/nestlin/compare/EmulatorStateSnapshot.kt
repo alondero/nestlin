@@ -18,7 +18,13 @@ data class EmulatorStateSnapshot(
     val oam: IntArray,             // 256 bytes as unsigned values
     val paletteRam: IntArray,      // 32 bytes as unsigned values
     val timestamp: Long,
-    val chr: IntArray = IntArray(0) // active 8KB PPU pattern data ($0000-$1FFF); empty when not captured
+    val chr: IntArray = IntArray(0), // active 8KB PPU pattern data ($0000-$1FFF); empty when not captured
+    // Live mapper state captured at the same boundary. Nestlin sets this to a
+    // `MapperStateSnapshot` from `Mapper.snapshot()`; Mesen2 leaves it null
+    // (Mesen2 captures don't decompose the mapper that way). Tests that want
+    // to assert Nestlin's bank state without going through Mesen2 read this
+    // directly.
+    val mapper: com.github.alondero.nestlin.gamepak.MapperStateSnapshot? = null
 ) {
     fun toJson(): String = gson.toJson(this)
 

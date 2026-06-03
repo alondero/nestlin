@@ -100,7 +100,8 @@ object NestlinStateCapturer {
             oam = oam,
             paletteRam = paletteRam,
             timestamp = System.currentTimeMillis(),
-            chr = chr
+            chr = chr,
+            mapper = memory.mapper?.snapshot()
         )
     }
 

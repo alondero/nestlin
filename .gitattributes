@@ -1,42 +1,62 @@
-# Force source/text files to be treated as text by Git.
+# Force source/text files to be treated as text by Git, and pin a
+# line-ending policy for the project (Issue #112).
 #
+# Why `text`?
 # Git auto-detects binary vs text by scanning the first ~8KB of each file
 # for NUL bytes. A single stray U+0000 (e.g. an editor/paste accident) flips
 # a file to "binary" — which silently disables 3-way text merging and turns
 # otherwise auto-mergeable edits into "Cannot merge binary files" errors
 # during git merge/rebase/cherry-pick. See issue #106.
-#
 # These explicit `text` attributes override that content-sniffing heuristic,
 # so a rogue byte yields an immediate localized diff failure (and we notice
 # the offending file) rather than a confusing merge surprise later.
+#
+# Why `eol=crlf`?
+# Without an explicit `eol=`, the `text` attribute enables "auto-sensing":
+# git's stat cache expects the on-disk form to match what the smudge filter
+# produces for the index blob. When `core.autocrlf=true` is set (as it is
+# globally on this dev box) and a file was committed *before* `.gitattributes`
+# was added, the index blob is the raw on-disk form, the smudge filter
+# "would" re-emit it, and the byte equality still doesn't satisfy git's
+# normalization-aware stat cache. Result: a 224-line, 224-deletion "phantom"
+# diff that is 100% line endings (`git diff --ignore-cr-at-eol` is empty)
+# appears on every `git status`. Pinning `eol=crlf` makes the contract
+# explicit (worktree MUST be CRLF, index blob MUST be LF), so after a single
+# `git add --renormalize` the stat cache is consistent forever.
+#
+# Windows is the dominant dev platform for this project (see CLAUDE.local.md),
+# so CRLF is the recommended form. Linux/macOS contributors will see `^M`
+# characters in some diff tools, but most (IntelliJ, GitHub web) hide them
+# by default. .bat files are also CRLF; .sh files are LF; everything else
+# text in the project is CRLF.
 
 # Kotlin — primary source language
-*.kt          text
-*.kts         text
+*.kt          text eol=crlf
+*.kts         text eol=crlf
 
 # Build scripts
-*.gradle      text
-build.gradle* text
-settings.gradle* text
+*.gradle      text eol=crlf
+build.gradle* text eol=crlf
+settings.gradle* text eol=crlf
 
 # Python tooling (dump_analyzer.py etc.)
-*.py          text
+*.py          text eol=crlf
 
 # Lua scripts (Mesen2 harness, tracer scripts)
-*.lua         text
+*.lua         text eol=crlf
 
 # Docs
-*.md          text
+*.md          text eol=crlf
 
 # Config
-*.json        text
-*.yml         text
-*.yaml        text
-*.toml        text
+*.json        text eol=crlf
+*.yml         text eol=crlf
+*.yaml        text eol=crlf
+*.toml        text eol=crlf
 
 # Shell / batch helpers
 *.sh          text eol=lf
 *.bat         text eol=crlf
 
 # GitHub Actions
-.github/**    text
+.github/**    text eol=crlf

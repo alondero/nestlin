@@ -12,6 +12,15 @@ class Cpu(var memory: Memory)
     var currentGame: GamePak? = null
     var interrupt: Interrupt? = null
     var workCyclesLeft = 0
+    // The 6502 services an NMI with ~1 instruction of latency: when the NMI line is
+    // asserted (PPU vblank) the CPU finishes its current instruction (and often issues
+    // one more fetch) before vectoring. We model that by arming the NMI on the first
+    // instruction boundary it is pending and only dispatching on the next one. This is
+    // what lets a "poll $2002 for vblank" loop win the race against an enabled NMI on
+    // real hardware — the in-flight poll reads the just-set flag, and that read clears
+    // the latch, suppressing the NMI for that frame. Camerica/Codemasters titles (Big
+    // Nose, Micro Machines) hang without it. See BigNoseHangTest.
+    var nmiArmed = false
     var pageBoundaryFlag = false
     var registers = Registers()
     var processorStatus = ProcessorStatus()
@@ -30,6 +39,7 @@ class Cpu(var memory: Memory)
         processorStatus.reset()
         registers.reset()
         workCyclesLeft = 0
+        nmiArmed = false
         currentGame?.let {
             memory.readCartridge(it)
             registers.initialise(memory)
@@ -143,38 +153,59 @@ class Cpu(var memory: Memory)
     }
 
     private fun checkAndHandleNmi(): Boolean {
-        // NMI is edge-triggered: check if NMI occurred and NMI generation is enabled
-        if (memory.ppuAddressedMemory.nmiOccurred && memory.ppuAddressedMemory.controller.generateNmi()) {
-            // Clear the NMI flag (edge-triggered, not level-triggered)
-            memory.ppuAddressedMemory.nmiOccurred = false
-
-            // Push PC (high byte first, then low byte)
-            val pc = registers.programCounter.toUnsignedInt()
-            push((pc shr 8).toSignedByte())
-            push((pc and 0xFF).toSignedByte())
-
-            // Push processor status (with B flag clear for interrupts)
-            val statusByte = processorStatus.asByte().toUnsignedInt()
-            // Clear bit 4 (B flag) for interrupt context
-            val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
-            push(statusForInterrupt)
-
-            // Set interrupt disable flag
-            processorStatus.interruptDisable = true
-
-            // Load PC from NMI vector at $FFFA-$FFFB
-            registers.programCounter = memory[0xFFFA, 0xFFFB]
-
-            // NMI takes 7 cycles
-            workCyclesLeft = 7
-
-            return true
+        // NMI is edge-triggered: check if NMI occurred and NMI generation is enabled.
+        val nmiPending = memory.ppuAddressedMemory.nmiOccurred && memory.ppuAddressedMemory.controller.generateNmi()
+        if (!nmiPending) {
+            // No (longer any) pending NMI. If it was armed, the latch was cleared within
+            // the 1-instruction latency window — e.g. the program read $2002 (a vblank
+            // poll). That correctly suppresses the NMI for this frame.
+            nmiArmed = false
+            return false
         }
+        if (!nmiArmed && !idle) {
+            // First boundary at which the NMI is pending: arm it and let one more
+            // instruction execute before vectoring (the 6502's NMI latency). When the
+            // CPU is parked in a spin loop (idle) there is no in-flight instruction to
+            // finish, so skip the latency and service immediately — that is what breaks
+            // the spin, and there is no $2002 poll to race against while parked.
+            nmiArmed = true
+            return false
+        }
+        // Latency elapsed — service the NMI now.
+        nmiArmed = false
+        // Clear the NMI flag (edge-triggered, not level-triggered)
+        memory.ppuAddressedMemory.nmiOccurred = false
 
-        return false
+        // Push PC (high byte first, then low byte)
+        val pc = registers.programCounter.toUnsignedInt()
+        push((pc shr 8).toSignedByte())
+        push((pc and 0xFF).toSignedByte())
+
+        // Push processor status (with B flag clear for interrupts)
+        val statusByte = processorStatus.asByte().toUnsignedInt()
+        // Clear bit 4 (B flag) for interrupt context
+        val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
+        push(statusForInterrupt)
+
+        // Set interrupt disable flag
+        processorStatus.interruptDisable = true
+
+        // Load PC from NMI vector at $FFFA-$FFFB
+        registers.programCounter = memory[0xFFFA, 0xFFFB]
+
+        // NMI takes 7 cycles
+        workCyclesLeft = 7
+
+        return true
     }
 
     private fun checkAndHandleIrq(): Boolean {
+        // NMI has priority over IRQ. While an NMI is armed (pending but waiting out its
+        // 1-instruction latency) it owns the next interrupt-service slot, so an IRQ must
+        // not slip in ahead of it — otherwise the armed boundary would vector to the IRQ
+        // handler first, inverting hardware priority. The IRQ stays pending and is taken
+        // after the NMI.
+        if (nmiArmed) return false
         if (processorStatus.interruptDisable) return false
         if (memory.apu?.isIrqPending() != true && memory.mapper?.isIrqPending() != true) return false
 
@@ -215,6 +246,7 @@ class Cpu(var memory: Memory)
         out.writeInt(workCyclesLeft)
         out.writeBoolean(pageBoundaryFlag)
         out.writeBoolean(idle)
+        out.writeBoolean(nmiArmed)
         out.writeInt(interrupt?.ordinal ?: -1)
     }
 
@@ -229,6 +261,7 @@ class Cpu(var memory: Memory)
         workCyclesLeft = input.readInt()
         pageBoundaryFlag = input.readBoolean()
         idle = input.readBoolean()
+        nmiArmed = input.readBoolean()
         val interruptOrdinal = input.readInt()
         interrupt = if (interruptOrdinal < 0) null else Interrupt.values()[interruptOrdinal]
     }
