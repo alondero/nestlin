@@ -50,9 +50,9 @@ class MicroMachinesDivergenceSweepTest {
             val aMes = mesen2.cpu.a
 
             println(
-                "[sweep] frame=$f status=$status prgBank=$prgBank " +
-                "PC=N0x%04X/M0x%04X A=N0x%02X/M0x%02X " +
-                "palette[0]=0x%02X/0x%02X paletteFirstDiff=%s chrFirstDiff=%s oamFirstDiff=%s".format(
+                ("[sweep] frame=$f status=$status prgBank=$prgBank " +
+                 "PC=N0x%04X/M0x%04X A=N0x%02X/M0x%02X " +
+                 "palette[0]=0x%02X/0x%02X paletteFirstDiff=%s chrFirstDiff=%s oamFirstDiff=%s").format(
                     pcNest, pcMes, aNest, aMes,
                     palette0Nest, palette0Mes,
                     paletteDiff, chrDiff, oamDiff

@@ -76,7 +76,15 @@ val mesenTests = listOf(
     "com.github.alondero.nestlin.compare.DebugStateCaptureTest",
     "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest",
     "com.github.alondero.nestlin.compare.Mapper10RegressionTest",
-    "com.github.alondero.nestlin.compare.GxRomStateComparisonTest"
+    "com.github.alondero.nestlin.compare.GxRomStateComparisonTest",
+    "com.github.alondero.nestlin.compare.MicroMachinesMapper71SmokeTest",
+    "com.github.alondero.nestlin.compare.MicroMachinesMapper71StateComparisonTest",
+    "com.github.alondero.nestlin.compare.MicroMachinesExtendedCaptureTest",
+    "com.github.alondero.nestlin.compare.MicroMachinesDivergenceSweepTest",
+    "com.github.alondero.nestlin.compare.MicroMachinesPcDivergenceTest",
+    "com.github.alondero.nestlin.compare.MicroMachinesSplitTimingTest",
+    "com.github.alondero.nestlin.compare.MicroMachinesAttractHangTest",
+    "com.github.alondero.nestlin.compare.BigNoseHangTest"
 )
 
 // Also exclude debug/investigation tests that can hang or have pre-existing issues
@@ -133,6 +141,11 @@ tasks.register<Test>("testMesenComparison") {
     val fireEmblemRom = System.getenv("NESTLIN_FIRE_EMBLEM_ROM")
     if (fireEmblemRom != null) {
         environment("NESTLIN_FIRE_EMBLEM_ROM", fireEmblemRom)
+    }
+    // Forward the optional Micro Machines ROM override (Mapper 71 compare tests).
+    val microMachinesRom = System.getenv("NESTLIN_MICRO_MACHINES_ROM")
+    if (microMachinesRom != null) {
+        environment("NESTLIN_MICRO_MACHINES_ROM", microMachinesRom)
     }
     // Show stdout/stderr from tests (e.g. the diff% println) so we can see results.
     testLogging {

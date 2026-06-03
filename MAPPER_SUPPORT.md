@@ -249,8 +249,17 @@
     is **MATCH** for CHR, palette, and OAM. A separate OAM-DMA halt-cycle
     bug in `Memory.kt` was uncovered while validating the gameplay path —
     see `MemoryOamDmaTest`. Fixing it materially reduced the per-frame CPU
-    drift in OAM-heavy games; the user-observed "band" artifact during GUI
-    play was the downstream symptom, not a Mapper 71 defect.
+    drift in OAM-heavy games.
+  - *Updated 2026-06-03:* two further (non-mapper) bugs surfaced on this
+    family were fixed. (1) The title-screen **"band"** was a PPU forced-blank
+    bug — a disabled PPU must still scan out the backdrop colour
+    (`PpuForcedBlankBackdropTest`); it was NOT the OAM-DMA drift. (2)
+    **Big Nose the Caveman** booted to a black screen because the CPU
+    dispatched NMI with no latency, starving the game's `$2002` vblank-poll;
+    fixed with a 1-instruction NMI latency (`BigNoseHangTest`). Big Nose now
+    boots fully. **Micro Machines still hangs when starting a race** —
+    tracked separately as issue #113 (a different, gameplay-only timing bug;
+    the mapper itself is verified working).
 
 ---
 
