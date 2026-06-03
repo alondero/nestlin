@@ -58,6 +58,7 @@ testroms/                    # nestest.nes is the only ROM in git
 - **Testing:** JUnit 4 + Hamkrest. **Default to state diff, not pixel diffs** (see `docs/TESTING_STRATEGY.md`). For bugs: write the failing test first, see it fail, fix, see it pass.
 - **Memory mirroring** is encoded as a `when` over the address — see `Memory.kt` for the canonical example.
 - **Bugs always get a regression test, even pre-existing ones** (per global CLAUDE.md).
+- **Line endings:** Project policy is **CRLF** for `*.kt`, `*.kts`, `*.gradle`, `*.md`, `*.py`, `*.lua`, `*.json`, `*.yml`, `*.yaml`, `*.toml`, and `.github/**`; `*.sh` is LF. Pinned in `.gitattributes` with `text eol=crlf` (and `text eol=lf` for `*.sh`). Windows is the dominant dev platform (see `CLAUDE.local.md`); Linux/macOS contributors will see `^M` in some diff tools but most (IntelliJ, GitHub web) hide them. After updating `.gitattributes`, run `git add --renormalize` to bring the index in sync. `git diff --ignore-cr-at-eol` should be empty for any clean worktree.
 
 ## Current Status (2026-06)
 
@@ -98,3 +99,4 @@ Read `docs/TESTING_STRATEGY.md` before adding tests. The pyramid, top to bottom:
 - **NMI dispatch latency:** `Cpu.checkAndHandleNmi` arms a pending NMI and dispatches it one instruction later (`nmiArmed`), modelling the 6502's ~1-instruction NMI latency. This lets a "poll `$2002` for vblank" loop win the race against an enabled NMI (the in-flight poll reads the flag and the read suppresses the NMI). Removing it re-hangs Camerica/Codemasters mapper-71 titles (Big Nose, Micro Machines) — see `BigNoseHangTest`.
 - **Forced-blank output:** when rendering is disabled mid-frame (PPUMASK bits 3/4 clear), `Ppu.tick` still scans out the backdrop colour for visible pixels; otherwise stale pixels freeze into a "band". See `PpuForcedBlankBackdropTest`.
 - **Worktree scope:** when running inside `.claude/worktrees/<name>/`, the parent repo's `testroms/` and `tools/` are accessed via absolute paths in Kotlin/Lua; `.worktreeinclude` copies `CLAUDE.local.md` only.
+- **Line-ending phantom diffs (Issue #112):** if `git status` flags a `*.kt` (or other in-scope) file as modified and `git diff --ignore-cr-at-eol` is empty, the index blob is in legacy un-normalized form. Fix: `git add --renormalize <file>`. Root cause was `.gitattributes` declaring `text` without `eol=` — now pinned to `eol=crlf` (see Conventions above).
