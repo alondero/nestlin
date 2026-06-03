@@ -31,6 +31,7 @@ class Nestlin {
     init {
         memory = Memory()
         cpu = Cpu(memory)
+        memory.cpu = cpu
         ppu = Ppu(memory)
         apu = Apu(memory)
         memory.apu = apu

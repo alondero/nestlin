@@ -47,9 +47,13 @@ class GamePak(data: ByteArray, displayName: String = "") {
         9 -> Mapper9(this)
         10 -> Mapper10(this)
         11 -> Mapper11(this)
+        21 -> Mapper21(this)
+        23 -> Mapper23(this)
+        25 -> Mapper25(this)
         34 -> Mapper34(this)
         66 -> Mapper66(this)
         69 -> Mapper69(this)
+        71 -> Mapper71(this)
         206 -> Mapper206(this)
         else -> throw UnsupportedOperationException("Mapper ${header.mapper} not implemented")
     }

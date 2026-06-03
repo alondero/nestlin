@@ -16,6 +16,12 @@ class Ppu(var memory: Memory) {
     private var cycle = 0
     private var scanline = 0
 
+    // Read-only test seams: the dot/scanline the PPU is currently on. Lets timing
+    // diagnostics correlate a CPU write with the exact raster position, the same way
+    // Mesen2's emu.getState() exposes ppu.scanline/ppu.cycle. Not used by emulation.
+    val currentScanline: Int get() = scanline
+    val currentCycle: Int get() = cycle
+
     // Active timing region. NTSC has 262 scanlines (pre-render at 261); PAL has
     // 312 (pre-render at 311). VBlank still begins at scanline 241 dot 1 for both;
     // only the pre-render line index and total line count change.
@@ -122,6 +128,16 @@ class Ppu(var memory: Memory) {
             }
             checkAndSetVerticalAndHorizontalData()
 
+        } else if (scanline < RESOLUTION_HEIGHT && cycle in 2..257) {
+            // Rendering disabled on a visible scanline: a real PPU still scans out a
+            // pixel every dot — the backdrop colour at $3F00 (or, if the VRAM address
+            // happens to point into the palette, that entry — the "background palette
+            // hack"). Without emitting these pixels the frame buffer keeps whatever was
+            // drawn before, so a mid-frame forced-blank window (e.g. Micro Machines'
+            // title-screen palette swap) leaves a frozen "band" of stale tiles.
+            // Issue #88 follow-up.
+            val backdropIndex = memory.ppuAddressedMemory.ppuInternalMemory[backdropPaletteAddress()].toUnsignedInt()
+            frame[cycle - 2, scanline] = NesPalette.getRgb(backdropIndex)
         }
 
         // VBlank is set at scanline 241, cycle 1 (NESdev: dot 1)
@@ -168,6 +184,18 @@ class Ppu(var memory: Memory) {
     }
 
     private fun rendering() = with (memory.ppuAddressedMemory.mask) { showBackground() || showSprites() }
+
+    /**
+     * The palette address whose colour the PPU emits for a visible pixel while rendering
+     * is disabled. Normally the universal backdrop at $3F00, but if the current VRAM
+     * address points into the palette range ($3F00-$3FFF) the PPU emits that entry
+     * instead — the hardware "background palette hack". Palette mirroring is handled by
+     * [PpuInternalMemory].
+     */
+    private fun backdropPaletteAddress(): Int {
+        val v = memory.ppuAddressedMemory.vRamAddress.asAddress() and 0x3FFF
+        return if (v >= 0x3F00) 0x3F00 or (v and 0x1F) else 0x3F00
+    }
 
     private fun checkAndSetVerticalAndHorizontalData() {
         when (cycle) {

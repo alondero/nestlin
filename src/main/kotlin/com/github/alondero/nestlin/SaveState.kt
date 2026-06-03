@@ -11,11 +11,13 @@ import java.io.OutputStream
  * Save state file format ("NSTL"):
  *
  *   magic       4 bytes  "NSTL" (0x4E 0x53 0x54 0x4C)
- *   version     int      currently 2; bump on breaking format change.
+ *   version     int      currently 3; bump on breaking format change.
  *                        Version 2 added a per-mapper version byte inside the
  *                        mapper block (see below) so individual mappers can
  *                        evolve their own field order without invalidating
  *                        sibling subsystems. Issue #100.
+ *                        Version 3 added the CPU's nmiArmed latch (1-instruction
+ *                        NMI latency, issue #88).
  *   romCrc      long     CRC32 of the loaded ROM at save time
  *   romMapper   int      mapper id (validated on load)
  *   cpu         block    written by Cpu.saveState
@@ -35,7 +37,7 @@ import java.io.OutputStream
  */
 object SaveState {
     private const val MAGIC = 0x4E53544C  // "NSTL"
-    const val VERSION = 2
+    const val VERSION = 3
 
     class IncompatibleSaveStateException(message: String) : RuntimeException(message)
 
