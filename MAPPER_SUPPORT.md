@@ -129,13 +129,27 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 34, 66, 69, 153
   Famicom Jump II (submapper 5), Magical Taruruuto-kun 2 (submapper 5), and most
   Bandai-published cartridges with on-board save EEPROM.
 - **Submapper variants** (NES 2.0 byte 8 high nibble; iNES 1.0 falls back to 0):
-  - **0 (default):** registers at `$6000-$7FFF`, no PRG-RAM, no EEPROM.
-    Writes to `$8000-$FFFF` are ignored.
-  - **4 (FCG-1/2):** registers at `$8000-$FFFF`. `$6000-$7FFF` is normal PRG.
+  - **0 (default):** registers at `$8000-$FFFF`, no PRG-RAM, no EEPROM.
+    Writes to `$6000-$7FFF` are open bus (ignored) for the chip. **For iNES
+    1.0 dumps (which carry no submapper byte) Nestlin also accepts writes
+    to `$6000-$7FFF`** — see the "iNES 1.0 submapper ambiguity" note below.
+  - **4 (FCG-1/2):** registers at `$6000-$7FFF`. `$8000-$FFFF` is normal PRG.
     IRQ writes to `$B/$C` are *direct* (no latch).
   - **5 (LZ93D50):** registers at `$8000-$FFFF`. `$6000-$7FFF` is unused.
     `$D` exposes a 24C02 EEPROM via the standard I²C bit-bang protocol
     (SCL = bit 5, SDA = bit 6 of `$D`).
+- **iNES 1.0 submapper ambiguity:** many NO-INTRO Bandai FCG dumps ship as
+  plain iNES 1.0 (no NES 2.0 submapper byte), but actual games use both
+  register windows. Crayon Shin-chan: Ora to Poi Poi writes to `$8008-$800A`
+  (the submapper-0 default). Dragon Ball: Daimaou Fukkatsu writes to
+  `$7FF0-$7FF9` (the submapper-4 narrow window). Both decode the same way
+  on a real chip — the chip's register-decode is fixed, the board just wires
+  it to one of the two windows. To make both boot, Nestlin's submapper 0/5
+  decode **mirrors register writes to BOTH `$6000-$7FFF` and `$8000-$FFFF`**.
+  This is safe because for submapper 0 there is no PRG-RAM in either window
+  — any open-bus writes would have been discarded by the chip anyway. If
+  the iNES header is upgraded to NES 2.0 with byte 8 high nibble = 4, the
+  narrow window is used exclusively.
 - **Register map** (selected by lower 4 bits of the write address):
   - `$0`..`$7`: CHR bank for one of eight 1KB windows (`$0000-$1FFF`).
   - `$8`: PRG page select (low 4 bits select one of sixteen 16KB banks).
@@ -161,14 +175,20 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 34, 66, 69, 153
   uses for game saves (replacing the battery-backed PRG-RAM that MMC3
   boards use for the same purpose).
 - **Verification:**
-  - `Mapper16Test` covers PRG banking (low 4 bits, register window per
-    submapper, last-bank-fixed), CHR banking (all eight 1KB windows),
-    mirroring, the 16-bit CPU-cycle IRQ (load via latch, decrement,
-    underflow, acknowledge), and save/load round-trip.
-  - Submapper-4 register decode and direct IRQ writes are tested
+  - `Mapper16Test` covers PRG banking (low 4 bits, both register windows for
+    submapper 0, narrow window for submapper 4, last-bank-fixed), CHR
+    banking (all eight 1KB windows), mirroring, the 16-bit CPU-cycle IRQ
+    (load via latch, decrement, underflow, acknowledge), and save/load
+    round-trip.
+  - Submapper-4 narrow register window and direct IRQ writes are tested
     explicitly.
   - Submapper-5 enables the EEPROM, which is exercised with a bit-banged
     24C02 write-then-random-read at `$800D`.
+  - `Mapper16RealGameBootTest` is the regression bar: runs Crayon
+    Shin-chan and Dragon Ball through 240 frames and asserts both reach
+    the title screen (CHR banking active, >200K instructions executed).
+  - `Mapper16ScreenshotTest` captures frames 60, 300, 1500 of both games
+    to `build/reports/bandai-fcg-screenshots/` for visual inspection.
 
 ---
 
@@ -180,7 +200,8 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 34, 66, 69, 153
   EEPROM. Same physical chip as mapper 16, different board.
 - **What it is:** mapper 16 with one extra register that toggles `$6000-$7FFF`
   between PRG-RAM (8KB) and an extra PRG bank.
-- **Register map:** identical to mapper 16 (submapper 0/standard layout) plus:
+- **Register map:** identical to mapper 16 submapper 0/5 (registers at
+  `$8000-$FFFF`; with iNES 1.0 ambiguity also at `$6000-$7FFF`) plus:
   - `$D`: bit 7 selects the source of `$6000-$7FFF`:
     - bit 7 = 0: `$6000-$7FFF` reads/writes go to 8KB PRG-RAM.
     - bit 7 = 1: `$6000-$7FFF` reads come from a 16KB PRG bank

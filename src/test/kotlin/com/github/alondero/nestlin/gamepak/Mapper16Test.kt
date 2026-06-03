@@ -72,12 +72,17 @@ class Mapper16Test {
     }
 
     @Test
-    fun `writes outside 6000-7FFF are ignored on submapper 0`() {
+    fun `submapper 0 accepts writes at either 6000-7FFF or 8000-FFFF`() {
+        // iNES 1.0 has no submapper byte; we decode both windows for submapper 0
+        // so a game that happens to place its register writes in either range
+        // boots. Writes to the same register in either window target the
+        // same internal state, so the last write wins.
         val mapper = Mapper16(createTestGamePak(prg16k = 4))
         mapper.cpuWrite(0x6008, 0x02.toSignedByte())
-        // Same write to $8008 must NOT change the bank.
-        mapper.cpuWrite(0x8008, 0x03.toSignedByte())
         assertThat(mapper.cpuRead(0x8000).toUnsignedInt(), equalTo(2))
+        // Same register via the upper window.
+        mapper.cpuWrite(0x8008, 0x03.toSignedByte())
+        assertThat(mapper.cpuRead(0x8000).toUnsignedInt(), equalTo(3))
     }
 
     @Test
@@ -214,26 +219,27 @@ class Mapper16Test {
         assertThat(restored.currentMirroring(), equalTo(Mapper.MirroringMode.HORIZONTAL))
     }
 
-    // ---- Submapper 4: registers at $8000-$FFFF, direct IRQ writes ----
+    // ---- Submapper 4: registers at $6000-$7FFF, direct IRQ writes ----
 
     @Test
-    fun `submapper 4 uses 8000-FFFF as register window`() {
+    fun `submapper 4 uses 6000-7FFF as register window`() {
         val mapper = Mapper16(createTestGamePak(submapper = 4), submapper = 4)
-        // $8008 is register 8: select PRG bank 2.
-        mapper.cpuWrite(0x8008, 0x02.toSignedByte())
+        // $6008 is register 8: select PRG bank 2.
+        mapper.cpuWrite(0x6008, 0x02.toSignedByte())
         assertThat(mapper.cpuRead(0x8000).toUnsignedInt(), equalTo(2))
-        // $6008 is no longer the register window; PRG-RAM is also absent.
-        // CPU read at $6000 returns 0 (open bus) since no PRG-RAM exists.
-        assertThat(mapper.cpuRead(0x6000).toUnsignedInt(), equalTo(0))
+        // $8008 is no longer the register window — it just writes to PRG
+        // (no effect here since PRG is ROM).
+        mapper.cpuWrite(0x8008, 0x03.toSignedByte())
+        assertThat(mapper.cpuRead(0x8000).toUnsignedInt(), equalTo(2))
     }
 
     @Test
     fun `submapper 4 writes B C directly to counter (no latch)`() {
         val mapper = Mapper16(createTestGamePak(submapper = 4), submapper = 4)
-        mapper.cpuWrite(0x800B, 0x34.toSignedByte())
+        mapper.cpuWrite(0x600B, 0x34.toSignedByte())
         // Counter should reflect the low byte immediately (no $A reload needed).
         assertThat(mapper.snapshot().irqState!!["irqCounter"] as Int and 0xFF, equalTo(0x34))
-        mapper.cpuWrite(0x800C, 0x12.toSignedByte())
+        mapper.cpuWrite(0x600C, 0x12.toSignedByte())
         assertThat(mapper.snapshot().irqState!!["irqCounter"], equalTo(0x1234 as Any))
     }
 

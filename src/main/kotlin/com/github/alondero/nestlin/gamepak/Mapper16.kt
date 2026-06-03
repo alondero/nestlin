@@ -12,7 +12,7 @@ import java.io.DataOutput
  * the chip behind most Bandai-published cartridges (Dragon Ball Z series, Saint
  * Seiya, Famicom Jump II, SD Gundam Gaiden).
  *
- * Register map — selected by the lower 4 bits of a write to `$6000-$7FFF`:
+ * Register map — selected by the lower 4 bits of a write to the register window:
  *   `$0`..`$7`   CHR bank registers (eight 1KB windows at `$0000-$1FFF`).
  *   `$8`         PRG page select (low 4 bits select one of sixteen 16KB banks).
  *   `$9`         Mirroring (bits 0-1: 0=Vertical, 1=Horizontal,
@@ -25,18 +25,19 @@ import java.io.DataOutput
  *                carry SCL / SDA of a 24C02 device.
  *
  * Submapper variants differ in *where* the register writes are decoded:
- *   - Submapper 0 (default): registers at `$6000-$7FFF`. PRG-ROM only at
- *     `$8000-$FFFF`; no PRG-RAM. This is what the iNES byte-6 mapper-id
- *     `0x10` decodes to when no submapper is supplied.
- *   - Submapper 4 (FCG-1/2): registers at `$8000-$FFFF`; `$6000-$7FFF` is
+ *   - Submapper 0 (default): registers at `$8000-$FFFF`; `$6000-$7FFF` is
+ *     open bus (no PRG-RAM). This matches the Mesen2 default.
+ *   - Submapper 4 (FCG-1/2): registers at `$6000-$7FFF`; `$8000-$FFFF` is
  *     normal PRG. IRQ writes `$B/$C` are *direct* (no latch) on this variant.
  *   - Submapper 5 (LZ93D50): registers at `$8000-$FFFF`; `$6000-$7FFF` is
  *     unused. `$D` is the EEPROM port.
  *
- * This implementation targets the default submapper 0 (register writes at
- * `$6000-$7FFF`). The submapper-4/submapper-5 decode is provided as a small
- * variant that the constructor selects based on `header.submapper`; the
- * EEPROM only initialises when submapper == 5.
+ * NOTE on the iNES-1.0 submapper ambiguity: many Bandai FCG games in the wild
+ * (notably Dragon Ball: Daimaou Fukkatsu) ship as plain iNES 1.0 and need
+ * submapper-4 decode to boot, even though no NES 2.0 submapper byte is set.
+ * Without a submapper from the header we default to 0 (Mesen2's choice); if
+ * that proves wrong for a specific title the dump needs to be reclassified
+ * to NES 2.0 with byte 8 high nibble = 4.
  *
  * PRG layout (16KB granularity):
  *   `$8000-$BFFF` = switchable 16KB bank selected by `$8` (low 4 bits).
@@ -69,8 +70,18 @@ class Mapper16(private val gamePak: GamePak, private val submapper: Int = 0) : M
     // EEPROM appears only on the LZ93D50 submapper (5).
     private val eeprom: BandaiEeprom? = if (submapper == 5) BandaiEeprom() else null
 
-    // Submapper-4 writes `$B/$C` directly to the counter (no latch).
-    // Submapper-0 and submapper-5 use the latch-then-reload-on-$A model.
+    // Submapper-4 places the register window at $6000-$7FFF and writes `$B/$C`
+    // directly to the counter (no latch). Submapper-0 and submapper-5 place
+    // the window at $8000-$FFFF and use the latch-then-reload-on-$A model.
+    //
+    // iNES 1.0 submapper ambiguity: many NO-INTRO Bandai FCG dumps (notably
+    // Dragon Ball: Daimaou Fukkatsu) ship without a NES 2.0 submapper byte
+    // but actually need the submapper-4 (narrow window) decode. We expose a
+    // `registersAt6000` override in `GamePak.createMapper` for explicit
+    // submapper-4 games; for the iNES 1.0 default we mirror writes to BOTH
+    // windows so the game boots regardless of which window it picked. This is
+    // safe because for submapper 0 there is no PRG-RAM in either window — any
+    // open-bus writes would have been discarded by the chip anyway.
     private val directIrqWrites = (submapper == 4)
 
     override fun tickCpuCycle() {
@@ -83,10 +94,10 @@ class Mapper16(private val gamePak: GamePak, private val submapper: Int = 0) : M
 
     override fun cpuRead(address: Int): Byte {
         // LZ93D50 (submapper 5): register `$D` reads back the EEPROM's SCL/SDA
-        // state. Submapper 0 has registers at $6000-$7FFF (so the read address
-        // is $600D); submapper 5 has registers at $8000-$FFFF (so $800D).
+        // state. For submapper 5 the registers are at $8000-$FFFF (so $800D);
+        // for submapper 4 they are at $6000-$7FFF (so $600D).
         if (eeprom != null) {
-            val eepromReg = if (submapper == 5) 0x800D else 0x600D
+            val eepromReg = if (submapper == 4) 0x600D else 0x800D
             if (address == eepromReg) return eeprom.read().toByte()
         }
         if (address < 0x8000) return 0
@@ -97,11 +108,14 @@ class Mapper16(private val gamePak: GamePak, private val submapper: Int = 0) : M
 
     override fun cpuWrite(address: Int, value: Byte) {
         val v = value.toUnsignedInt()
-        // Register port location depends on submapper.
-        val inRegWindow = if (directIrqWrites || submapper == 5) {
-            address in 0x8000..0xFFFF
-        } else {
-            address in 0x6000..0x7FFF
+        // Submapper 0/5 accept writes at either $6000-$7FFF or $8000-$FFFF
+        // (per iNES 1.0 ambiguity — see header comment). Submapper 4 only at
+        // $6000-$7FFF. The two windows never both fire `writeRegister` for
+        // the same address, so this is unambiguous.
+        val inRegWindow = when {
+            submapper == 4 -> address in 0x6000..0x7FFF
+            submapper == 0 || submapper == 5 -> address in 0x6000..0x7FFF || address in 0x8000..0xFFFF
+            else -> false
         }
         if (inRegWindow) {
             writeRegister(address and 0x0F, v)
