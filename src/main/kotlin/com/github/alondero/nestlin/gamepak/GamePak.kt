@@ -10,8 +10,17 @@ class GamePak(data: ByteArray, displayName: String = "") {
 
     val header = Header(data.copyOfRange(0, 16))
     val name: String = when {
+        // NES 2.0 bit 4 (in header byte 7) marks the optional 128-byte title at
+        // 0x10..0x90. The spec only guarantees ASCII, but Famicom dumps routinely
+        // put Shift-JIS or Latin-1 bytes here. `String(bytes)` would fall back to
+        // the JVM platform charset (windows-1252 on Western Windows), which
+        // corrupts non-ASCII titles and surfaces as mojibake in the window title.
+        // Latin-1 is a 1:1 byte->codepoint mapping for 0x00..0xFF, so it preserves
+        // the original bytes without substitution; callers who know the real
+        // encoding (e.g. Shift-JIS) can re-decode.
         data.size >= 144 && data[7].toUnsignedInt() and 0x10 != 0 -> {
-            String(data.copyOfRange(0x10, 0x10 + 128)).trim().replace('\u0000', ' ').trim()
+            String(data.copyOfRange(0x10, 0x10 + 128), Charsets.ISO_8859_1)
+                .trim().replace('\u0000', ' ').trim()
         }
         displayName.isNotEmpty() -> displayName
         else -> ""
@@ -48,9 +57,13 @@ class GamePak(data: ByteArray, displayName: String = "") {
         10 -> Mapper10(this)
         11 -> Mapper11(this)
         16 -> Mapper16(this, header.submapper)
+        21 -> Mapper21(this)
+        23 -> Mapper23(this)
+        25 -> Mapper25(this)
         34 -> Mapper34(this)
         66 -> Mapper66(this)
         69 -> Mapper69(this)
+        71 -> Mapper71(this)
         153 -> Mapper153(this)
         206 -> Mapper206(this)
         else -> throw UnsupportedOperationException("Mapper ${header.mapper} not implemented")
@@ -84,12 +97,25 @@ class Header(headerData: ByteArray) {
     val programRomSize = headerData[4]
     val programRamSize = headerData[8]
     val chrRomSize = headerData[5]
-    val mapper: Int = headerData[6].toUnsignedInt() shr(4) or (headerData[7].toUnsignedInt() and 0xF0)
-    val mirroring: Mirroring = if (headerData[6].toUnsignedInt() and 0x01 == 0) Mirroring.HORIZONTAL else Mirroring.VERTICAL
-    val hasBattery: Boolean = headerData[6].toUnsignedInt() and 0x02 != 0
 
     /** True when bits 2-3 of byte 7 are `10`, marking this as a NES 2.0 header. */
     val isNes20: Boolean = (headerData[7].toUnsignedInt() and 0x0C) == 0x08
+
+    // In plain iNES, byte 7 bits 4-7 are the mapper high nibble (4 bits).
+    // In NES 2.0, bit 4 of byte 7 is the title-present flag, NOT a mapper bit --
+    // so the mapper high bits come from byte 7 bits 5-7 (3 bits, giving mapper
+    // bits 4-6) plus byte 8 for the extended mapper bits 8-15. Without this split,
+    // any NES 2.0 dump with a title (basically every modern Famicom dump) is
+    // misread with mapper 16 too high.
+    val mapper: Int = if (isNes20) {
+        (headerData[6].toUnsignedInt() shr 4) or
+        ((headerData[7].toUnsignedInt() and 0xE0) ushr 1) or
+        ((headerData[8].toUnsignedInt() and 0xFF) shl 8)
+    } else {
+        headerData[6].toUnsignedInt() shr(4) or (headerData[7].toUnsignedInt() and 0xF0)
+    }
+    val mirroring: Mirroring = if (headerData[6].toUnsignedInt() and 0x01 == 0) Mirroring.HORIZONTAL else Mirroring.VERTICAL
+    val hasBattery: Boolean = headerData[6].toUnsignedInt() and 0x02 != 0
 
     /**
      * Submapper number from the NES 2.0 header byte 8 (high nibble). For
