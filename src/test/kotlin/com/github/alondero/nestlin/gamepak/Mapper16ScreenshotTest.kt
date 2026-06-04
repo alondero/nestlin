@@ -3,8 +3,8 @@ package com.github.alondero.nestlin.gamepak
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -59,7 +59,7 @@ class Mapper16ScreenshotTest {
     }
 
     private fun captureFrame(rom: Path, label: String, frame: Int) {
-        assumeTrue("ROM not found at $rom", Files.exists(rom))
+        assumeTrue(Files.exists(rom), "ROM not found at $rom")
 
         val nestlin = Nestlin().apply {
             config.speedThrottlingEnabled = false

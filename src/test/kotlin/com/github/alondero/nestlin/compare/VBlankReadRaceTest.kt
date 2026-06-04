@@ -2,7 +2,7 @@ package com.github.alondero.nestlin.compare
 
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.toUnsignedInt
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.nio.file.Paths
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo

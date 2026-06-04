@@ -3,7 +3,7 @@ package com.github.alondero.nestlin.gamepak
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
 /**

@@ -5,9 +5,9 @@ import com.github.alondero.nestlin.gamepak.Mapper71
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.toUnsignedInt
-import org.junit.Assert.*
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -38,11 +38,9 @@ class MicroMachinesMapper71SmokeTest {
     @Test
     fun `Micro Machines boots, renders, and stays within PRG-bank range`() {
         val rom = locateRom()
-        assumeTrue(
-            "Micro Machines (USA) ROM not found at S:/Media/Nintendo NES/Games or " +
-            "NESTLIN_MICRO_MACHINES_ROM. Skipping mapper 71 real-ROM validation.",
-            rom != null
-        )
+        assumeTrue(rom != null
+        , "Micro Machines (USA) ROM not found at S:/Media/Nintendo NES/Games or " +
+            "NESTLIN_MICRO_MACHINES_ROM. Skipping mapper 71 real-ROM validation.")
 
         val nestlin = Nestlin().apply { config.speedThrottlingEnabled = false }
         var frame = 0
@@ -78,11 +76,9 @@ class MicroMachinesMapper71SmokeTest {
 
         // Sanity: the right mapper got selected for this header.
         val mapper = nestlin.memory.mapper
-        assertTrue(
-            "Expected Mapper71, got ${mapper?.javaClass?.simpleName ?: "null"} " +
-            "(mapper id in header = ${mapper?.let { mapper.javaClass.simpleName }})",
-            mapper is Mapper71
-        )
+        assertTrue(mapper is Mapper71
+        , "Expected Mapper71, got ${mapper?.javaClass?.simpleName ?: "null"} " +
+            "(mapper id in header = ${mapper?.let { mapper.javaClass.simpleName }})")
 
         // Tick ~240 frames with a guard ceiling. The actual loop terminates
         // when `frame` hits 240; the guard is a safety net so a runaway mapper
@@ -110,23 +106,15 @@ class MicroMachinesMapper71SmokeTest {
                 .format(pcFinal)
         )
 
-        assertTrue(
-            "rendering never enabled (maxMask=0x%02X) — game did not reach a renderable state"
-                .format(maxMask),
-            maxMask and 0x18 != 0
-        )
-        assertTrue(
-            "framebuffer essentially blank (only $colors distinct colours) — game did not draw content",
-            colors > 4
-        )
-        assertTrue(
-            "CPU appears stuck (only $totalInstructions instructions across $frame frames) — PRG banking may be wrong",
-            totalInstructions > 100_000
-        )
-        assertFalse(
-            "mapper prgBank drifted out of valid 16-bank range (likely a missing % modulo)",
-            prgBankOutOfRange.get()
-        )
+        assertTrue(maxMask and 0x18 != 0
+        , "rendering never enabled (maxMask=0x%02X) — game did not reach a renderable state"
+                .format(maxMask))
+        assertTrue(colors > 4
+        , "framebuffer essentially blank (only $colors distinct colours) — game did not draw content")
+        assertTrue(totalInstructions > 100_000
+        , "CPU appears stuck (only $totalInstructions instructions across $frame frames) — PRG banking may be wrong")
+        assertFalse(prgBankOutOfRange.get()
+        , "mapper prgBank drifted out of valid 16-bank range (likely a missing % modulo)")
     }
 
     private fun locateRom(): Path? {

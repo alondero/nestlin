@@ -4,8 +4,8 @@ import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.toUnsignedInt
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -22,7 +22,7 @@ class MicroMachinesAttractHangTest {
 
     @Test
     fun `attract demo runs without stalling`() {
-        val rom = locateRom() ?: run { assumeTrue("ROM not found", false); return }
+        val rom = locateRom() ?: run { assumeTrue(false, "ROM not found"); return }
 
         val nestlin = Nestlin().apply { config.speedThrottlingEnabled = false }
         var frame = 0
@@ -54,10 +54,8 @@ class MicroMachinesAttractHangTest {
         // A live game executes thousands of instructions per 100 frames. A near-zero
         // delta over a 100-frame window means the CPU is stuck in a spin loop = hang.
         if (samples.size >= 2) {
-            org.junit.Assert.assertTrue(
-                "Attract demo stalled: a 100-frame window advanced only $minDelta instructions",
-                minDelta > 10_000
-            )
+            org.junit.jupiter.api.Assertions.assertTrue(minDelta > 10_000
+            , "Attract demo stalled: a 100-frame window advanced only $minDelta instructions")
         }
     }
 

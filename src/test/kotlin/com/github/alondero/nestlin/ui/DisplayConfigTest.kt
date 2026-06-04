@@ -2,16 +2,17 @@ package com.github.alondero.nestlin.ui
 
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Rule
-import org.junit.Test
-import org.junit.rules.TemporaryFolder
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 class DisplayConfigTest {
-    @get:Rule
-    val tempFolder = TemporaryFolder()
+    // JUnit 5's @TempDir replaces JUnit 4's @Rule TemporaryFolder. The field
+    // is a File, matching the JUnit 4 `tempFolder.root` accessor pattern.
+    @TempDir
+    lateinit var tempFolder: File
 
-    private fun dir(): File = tempFolder.root
+    private fun dir(): File = tempFolder
 
     @Test
     fun `defaults to 3x scale and windowed`() {

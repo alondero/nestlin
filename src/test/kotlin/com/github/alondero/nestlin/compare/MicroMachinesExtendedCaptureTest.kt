@@ -5,9 +5,9 @@ import com.github.alondero.nestlin.gamepak.Mapper71
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.toUnsignedInt
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -28,7 +28,7 @@ class MicroMachinesExtendedCaptureTest {
     @Test
     fun `extended boot trace`() {
         val rom = locateRom() ?: run {
-            assumeTrue("Micro Machines (USA) ROM not found", false); return
+            assumeTrue(false, "Micro Machines (USA) ROM not found"); return
         }
 
         val nestlin = Nestlin().apply { config.speedThrottlingEnabled = false }
@@ -101,10 +101,8 @@ class MicroMachinesExtendedCaptureTest {
         // Sanity: the game must still be alive after 600 frames (~10 seconds).
         // 5,000,000 instructions is roughly 600 frames * 8,000 instr/frame on a
         // well-behaved mapper 71 boot.
-        Assert.assertTrue(
-            "Game appears stuck: only $instrLast instructions over $frame frames",
-            instrLast > 5_000_000
-        )
+        Assertions.assertTrue(instrLast > 5_000_000
+        , "Game appears stuck: only $instrLast instructions over $frame frames")
     }
 
     private fun savePng(frame: Frame, outputPath: Path) {

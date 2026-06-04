@@ -4,7 +4,7 @@ import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toUnsignedInt
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 /**
  * Tests for Mapper 66 (GxROM) - 32KB PRG and 8KB CHR bank switching.

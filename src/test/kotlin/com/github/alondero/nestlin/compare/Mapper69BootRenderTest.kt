@@ -7,7 +7,7 @@ import com.github.alondero.nestlin.ui.FrameListener
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import com.natpryce.hamkrest.greaterThan
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths

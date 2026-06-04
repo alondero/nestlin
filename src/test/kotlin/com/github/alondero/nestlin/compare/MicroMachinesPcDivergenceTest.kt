@@ -5,8 +5,8 @@ import com.github.alondero.nestlin.gamepak.Mapper71
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.toUnsignedInt
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -22,7 +22,7 @@ class MicroMachinesPcDivergenceTest {
     @Test
     fun `trace PC and prgBank across the divergence`() {
         val rom = locateRom() ?: run {
-            assumeTrue("ROM not found", false); return
+            assumeTrue(false, "ROM not found"); return
         }
 
         val nestlin = Nestlin().apply { config.speedThrottlingEnabled = false }

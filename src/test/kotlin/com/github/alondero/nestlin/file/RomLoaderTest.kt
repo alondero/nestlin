@@ -2,7 +2,7 @@ package com.github.alondero.nestlin.file
 
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Paths
 

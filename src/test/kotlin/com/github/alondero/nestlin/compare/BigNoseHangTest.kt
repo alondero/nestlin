@@ -4,9 +4,9 @@ import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.toUnsignedInt
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -32,7 +32,7 @@ class BigNoseHangTest {
 
     @Test
     fun `Big Nose re-enables rendering after the Codemasters logo (no NMI-vs-poll hang)`() {
-        val rom = locateRom() ?: run { assumeTrue("Big Nose ROM not found", false); return }
+        val rom = locateRom() ?: run { assumeTrue(false, "Big Nose ROM not found"); return }
 
         val nestlin = Nestlin().apply { config.speedThrottlingEnabled = false }
         val outDir = Paths.get("build/big-nose")
@@ -63,11 +63,9 @@ class BigNoseHangTest {
         val nonBlack = lastFrameRef?.let { countNonBlack(it) } ?: 0
         println("[BigNose] frame=$frame renderOnAfterTransition=$renderOnAfterTransition nonBlackPixels=$nonBlack")
 
-        Assert.assertTrue(
-            "Big Nose never re-enabled rendering after the Codemasters logo — stuck in the " +
-            "NMI-vs-\$2002-poll hang (black screen).",
-            renderOnAfterTransition
-        )
+        Assertions.assertTrue(renderOnAfterTransition
+        , "Big Nose never re-enabled rendering after the Codemasters logo — stuck in the " +
+            "NMI-vs-\$2002-poll hang (black screen).")
     }
 
     private fun countNonBlack(frame: Frame): Int {

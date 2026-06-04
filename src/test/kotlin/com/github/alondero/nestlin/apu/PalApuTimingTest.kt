@@ -3,8 +3,8 @@ package com.github.alondero.nestlin.apu
 import com.github.alondero.nestlin.Apu
 import com.github.alondero.nestlin.Memory
 import com.github.alondero.nestlin.Region
-import org.junit.Test
-import org.junit.Assert.*
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.*
 
 /**
  * PAL-specific APU timing: the frame-counter sequence wraps later, and the

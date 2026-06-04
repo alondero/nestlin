@@ -1,8 +1,8 @@
 package com.github.alondero.nestlin.compare
 
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -33,12 +33,10 @@ class MicroMachinesMapper71StateComparisonTest {
 
     @Test
     fun `Micro Machines render outputs match Mesen2 (mapper 71)`() {
-        assumeTrue("Mesen2 not available", Mesen2StateCapturer.isMesen2Available())
+        assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
         val romPath: Path = locateRom() ?: run {
-            assumeTrue(
-                "Micro Machines (USA) ROM not found at S:/Media/Nintendo NES/Games — skipping.",
-                false
-            )
+            assumeTrue(false
+            , "Micro Machines (USA) ROM not found at S:/Media/Nintendo NES/Games — skipping.")
             return
         }
 
@@ -77,21 +75,16 @@ class MicroMachinesMapper71StateComparisonTest {
         }
         println(report)
 
-        Assert.assertTrue(
-            "CHR pattern data not captured — cannot validate banking. " +
-            "Mesen2 chr=${mesen2.chr.size} bytes, Nestlin chr=${nestlin.chr.size} bytes.",
-            nestlin.chr.size == 0x2000 && mesen2.chr.size == 0x2000
-        )
-        Assert.assertNull(
-            "Palette RAM diverges from Mesen2 — wrong PRG bank executed (mapper 71 regression).\n$report",
-            paletteDiff
+        Assertions.assertTrue(nestlin.chr.size == 0x2000 && mesen2.chr.size == 0x2000
+        , "CHR pattern data not captured — cannot validate banking. " +
+            "Mesen2 chr=${mesen2.chr.size} bytes, Nestlin chr=${nestlin.chr.size} bytes.")
+        Assertions.assertNull(paletteDiff,
+            "Palette RAM diverges from Mesen2 — wrong PRG bank executed (mapper 71 regression).\n$report"
         )
         // The mapper prgBank has to stay in [0, 16) for a 256KB ROM. This
         // catches the "no modulo" bug class.
-        Assert.assertTrue(
-            "Nestlin prgBank=$nestlinPrgBank is out of valid 16-bank range.\n$report",
-            nestlinPrgBank in 0..15
-        )
+        Assertions.assertTrue(nestlinPrgBank in 0..15
+        , "Nestlin prgBank=$nestlinPrgBank is out of valid 16-bank range.\n$report")
     }
 
     private fun firstDiff(a: IntArray, b: IntArray): String? {

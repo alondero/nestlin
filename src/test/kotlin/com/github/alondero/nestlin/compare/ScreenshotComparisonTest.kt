@@ -1,36 +1,28 @@
 package com.github.alondero.nestlin.compare
 
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.junit.runners.Parameterized
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Paths
 
-@RunWith(Parameterized::class)
-class ScreenshotComparisonTest(
-    private val romName: String,
-    private val frameNumber: Int,
-    private val threshold: Double
-) {
+class ScreenshotComparisonTest {
 
     companion object {
         private const val MESEN2_SKIP_MESSAGE = "Mesen2 not available or screenshot capture not supported"
 
         @JvmStatic
-        @Parameterized.Parameters
-        fun data(): Array<Array<Any>> {
-            return arrayOf(
-                arrayOf("tetris.nes", 60, 0.0),
-                arrayOf("lolo1.nes", 60, 0.0),
-                arrayOf("kirby.nes", 150, 20.0)
-            )
-        }
+        fun data(): List<Arguments> = listOf(
+            Arguments.of("tetris.nes", 60, 0.0),
+            Arguments.of("lolo1.nes", 60, 0.0),
+            Arguments.of("kirby.nes", 150, 20.0)
+        )
     }
 
-    @Test
-    fun compareFrames() {
-        assumeTrue(MESEN2_SKIP_MESSAGE, Mesen2ReferenceRunner.isMesen2Available())
+    @ParameterizedTest(name = "{0} @ frame {1}")
+    @MethodSource("data")
+    fun compareFrames(romName: String, frameNumber: Int, threshold: Double) {
+        assumeTrue(Mesen2ReferenceRunner.isMesen2Available(), MESEN2_SKIP_MESSAGE)
 
         val romPath = Paths.get("testroms/$romName")
         val reportsDir = Paths.get("build/reports/screenshot-diffs/$romName-frame-$frameNumber")
@@ -45,11 +37,11 @@ class ScreenshotComparisonTest(
         } catch (e: Mesen2ScreenshotException) {
             // Screenshot capture failed (I/O access disabled, no display, etc.)
             // Skip rather than fail - this is an environment limitation, not a code bug.
-            assumeTrue(e.message, false)
+            assumeTrue(false, e.message)
         } catch (e: Mesen2ExecutionException) {
             // Mesen2 crashed or couldn't run (missing, permissions, etc.)
             // Skip rather than fail.
-            assumeTrue(e.message, false)
+            assumeTrue(false, e.message)
         }
 
         val result = diff(nestlinPng, mesen2Png, threshold)
@@ -58,13 +50,19 @@ class ScreenshotComparisonTest(
 
         if (!result.match) {
             writeDiffImage(nestlinPng, mesen2Png, diffPng)
-            Assert.fail(
-                "Frame mismatch for $romName at frame $frameNumber: " +
+            // Extract the message to a String-typed local var to disambiguate
+            // JUnit 5's fail(Supplier<String>) overload (which has a phantom
+            // <V> type variable the Kotlin compiler cannot infer).
+            val failMessage = "Frame mismatch for $romName at frame $frameNumber: " +
                 "${result.mismatchedPixels}/${result.totalPixels} pixels differ " +
                 "(${result.matchPercentage}% match, threshold requires ${100.0 - threshold}%). " +
                 "First mismatch at ${result.firstMismatch}. " +
                 "See diff at: $diffPng"
-            )
+            // JUnit 5's Assertions.fail(Supplier<String>) has a phantom <V>
+            // type variable that breaks Kotlin's overload resolution for the
+            // plain-String form. Bypass by throwing AssertionFailedError
+            // directly — that's what fail(String) does internally anyway.
+            throw org.opentest4j.AssertionFailedError(failMessage)
         }
     }
 }

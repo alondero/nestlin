@@ -4,7 +4,7 @@ import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toUnsignedInt
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 /**
  * Per NESdev CNROM spec (iNES mapper 3): the CHR bank-select register

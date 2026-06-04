@@ -2,19 +2,21 @@ package com.github.alondero.nestlin.ui
 
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
-import org.junit.Rule
-import org.junit.rules.TemporaryFolder
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
+import java.nio.file.Path
 import javax.imageio.ImageIO
 
 class ScreenshotManagerTest {
-    @get:Rule
-    val tempFolder = TemporaryFolder()
+    // JUnit 5's @TempDir replaces JUnit 4's @Rule TemporaryFolder. Using the
+    // Path form lets the body drop the .toPath() boilerplate.
+    @TempDir
+    lateinit var tempFolder: Path
 
     @Test
     fun `should create screenshots directory if it does not exist`() {
-        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val screenshotsDir = tempFolder.resolve("screenshots")
         // Instantiate to trigger directory creation in init block
         @Suppress("UNUSED_VARIABLE")
         val manager = ScreenshotManager(screenshotsDir)
@@ -24,7 +26,7 @@ class ScreenshotManagerTest {
 
     @Test
     fun `should be idempotent when directory already exists`() {
-        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val screenshotsDir = tempFolder.resolve("screenshots")
         // Create once
         ScreenshotManager(screenshotsDir)
 
@@ -37,7 +39,7 @@ class ScreenshotManagerTest {
 
     @Test
     fun `should generate screenshot filename with timestamp`() {
-        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val screenshotsDir = tempFolder.resolve("screenshots")
         val manager = ScreenshotManager(screenshotsDir)
 
         val filename = manager.generateScreenshotFilename()
@@ -47,7 +49,7 @@ class ScreenshotManagerTest {
 
     @Test
     fun `should save frame buffer as PNG file`() {
-        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val screenshotsDir = tempFolder.resolve("screenshots")
         val manager = ScreenshotManager(screenshotsDir)
 
         // Create a simple test frame buffer: 4x4 pixels, RGB (3 bytes per pixel)
@@ -76,7 +78,7 @@ class ScreenshotManagerTest {
 
     @Test
     fun `should throw exception for invalid dimensions`() {
-        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val screenshotsDir = tempFolder.resolve("screenshots")
         val manager = ScreenshotManager(screenshotsDir)
 
         val testFrame = ByteArray(12)  // 2x2x3 bytes
@@ -94,7 +96,7 @@ class ScreenshotManagerTest {
 
     @Test
     fun `should throw exception for mismatched buffer size`() {
-        val screenshotsDir = tempFolder.root.toPath().resolve("screenshots")
+        val screenshotsDir = tempFolder.resolve("screenshots")
         val manager = ScreenshotManager(screenshotsDir)
 
         val testFrame = ByteArray(12)  // 12 bytes, but we're claiming 4x4 (should be 48)

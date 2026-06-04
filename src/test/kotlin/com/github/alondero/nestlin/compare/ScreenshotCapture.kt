@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin.compare
 
-import org.junit.Assert
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Test
 import java.nio.file.Path
 import java.nio.file.Paths
 
@@ -43,7 +43,7 @@ class ScreenshotCapture {
     @Test
     fun captureScreenshots() {
         val roms = getRoms()
-        Assert.assertFalse("No ROMs specified. Set NESTLIN_SCREENSHOT_ROMS.", roms.isEmpty())
+        Assertions.assertFalse(roms.isEmpty(), "No ROMs specified. Set NESTLIN_SCREENSHOT_ROMS.")
 
         val frame = getFrame()
         val outputDir = getOutputDir()
@@ -74,6 +74,6 @@ class ScreenshotCapture {
         println("\n=== Summary ===")
         results.forEach { println(it) }
         val passed = results.count { it.startsWith("✓") }
-        Assert.assertTrue("Some screenshots failed: $results", passed == results.size)
+        Assertions.assertTrue(passed == results.size, "Some screenshots failed: $results")
     }
 }

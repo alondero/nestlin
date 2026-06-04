@@ -3,7 +3,7 @@ package com.github.alondero.nestlin.compare
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path

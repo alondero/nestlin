@@ -4,7 +4,7 @@ import com.github.alondero.nestlin.Memory
 import com.github.alondero.nestlin.ui.FrameListener
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 /**
  * Regression for the Micro Machines (mapper 71) "band that doesn't transition"

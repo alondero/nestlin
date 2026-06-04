@@ -4,9 +4,9 @@ import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Region
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
-import org.junit.Test
-import org.junit.Assume.assumeTrue
-import org.junit.Assert.*
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Assertions.*
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -45,15 +45,15 @@ class GimmickPalBootTest {
     @Test
     fun `Gimmick Europe boots under PAL timing`() {
         val rom = locateRom()
-        assumeTrue("Mr. Gimmick (Europe) ROM not found — set NESTLIN_GIMMICK_ROM or place it in the NO-INTRO library. Skipping PAL boot validation.", rom != null)
+        assumeTrue(rom != null, "Mr. Gimmick (Europe) ROM not found — set NESTLIN_GIMMICK_ROM or place it in the NO-INTRO library. Skipping PAL boot validation.")
 
         val pal = run(rom!!, Region.PAL, frames = 900)
         println("[GimmickPalBoot] PAL  -> $pal")
 
         // Booting means the game left its spin loop, enabled rendering, and drew a
         // real (multi-colour) frame rather than a flat backdrop.
-        assertTrue("PAL: rendering never enabled (PPUMASK=${pal.ppuMask}, maxSeen=${pal.maxMaskSeen}) — still stuck at boot", pal.maxMaskSeen and 0x18 != 0)
-        assertTrue("PAL: frame is essentially blank (${pal.distinctColors} colours) — game did not boot", pal.distinctColors > 4)
+        assertTrue(pal.maxMaskSeen and 0x18 != 0, "PAL: rendering never enabled (PPUMASK=${pal.ppuMask}, maxSeen=${pal.maxMaskSeen}) — still stuck at boot")
+        assertTrue(pal.distinctColors > 4, "PAL: frame is essentially blank (${pal.distinctColors} colours) — game did not boot")
     }
 
     private fun run(rom: Path, region: Region, frames: Int): BootResult {
