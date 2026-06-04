@@ -31,6 +31,8 @@ class Vrc4VariantDecodeTest {
 
     private fun createTestGamePak(mapperNumber: Int): GamePak {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = 4.toByte()                                  // 64KB PRG
         header[5] = 1.toByte()                                  // 8KB CHR
         header[6] = (((mapperNumber and 0x0F) shl 4)).toByte()  // horizontal default

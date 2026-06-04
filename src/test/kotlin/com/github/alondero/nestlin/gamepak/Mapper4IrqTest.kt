@@ -8,6 +8,8 @@ class Mapper4IrqTest {
 
     private fun createTestGamePak(prgSize: Int = 2, chrSize: Int = 1): GamePak {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = prgSize.toByte()
         header[5] = chrSize.toByte()
         header[6] = 0x04.toByte()       // Mapper 4 (MMC3)

@@ -33,6 +33,8 @@ class Mapper206Test {
         mirroring: Header.Mirroring = Header.Mirroring.VERTICAL
     ): GamePak {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = (prg8k / 2).toByte()           // PRG ROM size in 16KB units
         header[5] = (chr1k / 8).toByte()           // CHR ROM size in 8KB units
         // mapper 206 = 0xCE. flags6 = mapper-low nibble in upper 4 bits, plus bit 0 = mirror.
@@ -57,6 +59,8 @@ class Mapper206Test {
     /** Build a GamePak with stamped CHR for unambiguous read-after-bank-write tests. */
     private fun createStampedGamePak(chr1kBanks: Int, prg8kBanks: Int = 4): GamePak {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = (prg8kBanks / 2).toByte()       // 16KB units
         header[5] = (chr1kBanks / 8).toByte()       // 8KB units
         // Mapper 206 = 0xCE: low nibble 0xE in byte 6 bits 4-7, high nibble 0xC in byte 7 bits 4-7.
@@ -289,6 +293,8 @@ class Mapper206Test {
     @Test
     fun `CHR RAM is writable when chrRom is empty`() {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = 0x01.toByte()                          // 16KB PRG (1 × 16KB)
         header[5] = 0x00.toByte()                          // 0 CHR ROM
         header[6] = (((206 and 0x0F) shl 4) or 0x00).toByte()   // mapper 206, horizontal mirror
