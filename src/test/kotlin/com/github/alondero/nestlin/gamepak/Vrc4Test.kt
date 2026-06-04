@@ -31,6 +31,8 @@ class Vrc4Test {
         mirroring: Header.Mirroring = Header.Mirroring.VERTICAL
     ): GamePak {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = (prg8k / 2).toByte()        // 16KB PRG units
         header[5] = (chr1k / 8).toByte()        // 8KB CHR units
         val mirrorBit = if (mirroring == Header.Mirroring.VERTICAL) 0x01 else 0x00
@@ -170,6 +172,8 @@ class Vrc4Test {
     @Test
     fun `CHR RAM is writable when chrRom is empty`() {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = 0x02.toByte()                                       // 32KB PRG
         header[5] = 0x00.toByte()                                       // no CHR ROM
         header[6] = (((25 and 0x0F) shl 4) or 0x00).toByte()            // mapper 25, horizontal

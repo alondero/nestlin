@@ -25,6 +25,8 @@ class Mapper16Test {
     ): GamePak {
         require(prg16k in 1..16) { "prg16k must be 1..16 (16KB units)" }
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = prg16k.toByte()
         header[5] = chr8k.toByte()
         // Mapper 16 = 0x10. Low nibble in byte 6 high nibble, high nibble in byte 7 high nibble.

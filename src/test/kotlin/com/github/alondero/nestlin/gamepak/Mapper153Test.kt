@@ -23,6 +23,8 @@ class Mapper153Test {
         prg16k: Int = 4, chr8k: Int = 2, hasBattery: Boolean = false
     ): GamePak {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = prg16k.toByte()
         header[5] = chr8k.toByte()
         // Mapper 153: low nibble = 9, high nibble = 9. Byte 6 = 0x90, byte 7 = 0x90.

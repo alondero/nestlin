@@ -1,8 +1,27 @@
 package com.github.alondero.nestlin.gamepak
 
+import com.github.alondero.nestlin.BadHeaderException
 import com.natpryce.hamkrest.assertion.assertThat
+import com.natpryce.hamkrest.containsSubstring
 import com.natpryce.hamkrest.equalTo
 import org.junit.Test
+
+/**
+ * Run [block] and return the [BadHeaderException] it throws (or fail the test
+ * if it throws something else / doesn't throw). JUnit 4 has no built-in
+ * equivalent of `kotlin.test.assertFailsWith` and we don't pull in
+ * `kotlin-test`, so this 4-line helper is the idiomatic stand-in.
+ */
+private inline fun assertBadHeader(block: () -> Unit): BadHeaderException {
+    try {
+        block()
+    } catch (e: BadHeaderException) {
+        return e
+    } catch (e: Throwable) {
+        throw AssertionError("Expected BadHeaderException, got ${e.javaClass.simpleName}: ${e.message}", e)
+    }
+    throw AssertionError("Expected BadHeaderException, but no exception was thrown")
+}
 
 class GamePakTest {
 
@@ -41,7 +60,7 @@ class GamePakTest {
         // PRG=1 (16KB) + CHR=1 (8KB) + 16-byte header = 24592 bytes minimum.
         val data = ByteArray(24592)
         // NES magic.
-        data[0] = 0x4E; data[1] = 0x45; data[2] = 0x53
+        data[0] = 0x4E; data[1] = 0x45; data[2] = 0x53; data[3] = 0x1A.toByte()
         // PRG=1 bank, CHR=1 bank, mapper 0, vertical mirroring.
         data[4] = 0x01
         data[5] = 0x01
@@ -110,5 +129,98 @@ class GamePakTest {
         val h = Header(header)
         assertThat(h.isNes20, equalTo(false))
         assertThat(h.mapper, equalTo(0x12))
+    }
+
+    // --- GitHub issue #16: GamePak must validate iNES header magic + size. ---
+    // Each test below uses `assertBadHeader { ... }` (defined at top of file)
+    // so the assertion fails cleanly with the message we asked for, instead of
+    // letting ArrayIndexOutOfBoundsException leak out of the constructor.
+
+    @Test
+    fun gamePakWithWrongMagicBytesThrowsBadHeaderException() {
+        // Bytes 0..3 are "FOO\x00" instead of the required "NES\x1A". The
+        // constructor must reject this BEFORE slicing the array (otherwise
+        // `data.copyOfRange(16, ...)` would throw ArrayIndexOutOfBoundsException
+        // with no message about the actual problem).
+        val data = ByteArray(24592) { i ->
+            when (i) { 0 -> 'F'.code.toByte(); 1 -> 'O'.code.toByte(); 2 -> 'O'.code.toByte(); else -> 0 }
+        }
+        val ex = assertBadHeader { GamePak(data) }
+        assertThat(ex.message ?: "", containsSubstring("NES"))
+    }
+
+    @Test
+    fun gamePakWithMissing0x1AByteInHeaderThrowsBadHeaderException() {
+        // Bytes 0..2 are "NES" but byte 3 is 0 (common when someone stubs a
+        // header by writing the ASCII letters but forgets the MS-DOS EOF
+        // marker). The spec requires the full 4-byte magic.
+        val data = ByteArray(24592)
+        data[0] = 0x4E; data[1] = 0x45; data[2] = 0x53
+        // data[3] deliberately left as 0.
+        val ex = assertBadHeader { GamePak(data) }
+        assertThat(ex.message ?: "", containsSubstring("NES"))
+    }
+
+    @Test
+    fun gamePakShorterThanHeaderThrowsBadHeaderException() {
+        // 5 bytes is too short for the 16-byte iNES header; the old constructor
+        // would throw an unhelpful ArrayIndexOutOfBoundsException. The fix
+        // must check length first and throw BadHeaderException with the size
+        // in the message.
+        val data = ByteArray(5)
+        val ex = assertBadHeader { GamePak(data) }
+        assertThat(ex.message ?: "", containsSubstring("16"))
+    }
+
+    @Test
+    fun gamePakWithDeclaredPrgLargerThanFileThrowsBadHeaderException() {
+        // Header is a valid 16-byte iNES header, but programRomSize (byte 4) =
+        // 32 16KB banks = 512KB. The file is only 16 header + 16 PRG = 32 bytes,
+        // so the declared PRG is grossly out of range. The constructor must
+        // refuse rather than letting `copyOfRange(16, 524304)` blow up.
+        val data = ByteArray(32)
+        data[0] = 0x4E; data[1] = 0x45; data[2] = 0x53; data[3] = 0x1A.toByte()
+        data[4] = 32  // declares 32 banks of PRG (512KB)
+        data[5] = 0   // no CHR
+        val ex = assertBadHeader { GamePak(data) }
+        // Message should mention the declared size (in 16KB banks) so the user
+        // can identify the corrupt header byte.
+        assertThat(ex.message ?: "", containsSubstring("32"))
+    }
+
+    @Test
+    fun gamePakWithDeclaredChrLargerThanFileThrowsBadHeaderException() {
+        // Valid magic + valid PRG size, but chrRomSize (byte 5) = 16 8KB banks
+        // = 128KB. The file has no CHR data at all. Old constructor would
+        // throw ArrayIndexOutOfBoundsException on the chrRom slice.
+        val data = ByteArray(16 + 16384)  // header + 1 PRG bank
+        data[0] = 0x4E; data[1] = 0x45; data[2] = 0x53; data[3] = 0x1A.toByte()
+        data[4] = 1   // 1 PRG bank (matches file)
+        data[5] = 16  // declares 16 CHR banks (128KB) but file has none
+        val ex = assertBadHeader { GamePak(data) }
+        assertThat(ex.message ?: "", containsSubstring("16"))
+    }
+
+    /**
+     * Regression: for a 4MB+ file with `programRomSize = 0xFF` (255 banks, the
+     * spec-allowed max), the validator passes (it uses `toUnsignedInt()`), but
+     * `header.programRomSize` is the signed `Byte` -1. If the second init
+     * block naively does `Int * Byte` arithmetic, the slice bound goes
+     * negative and `copyOfRange` throws `IllegalArgumentException` instead of
+     * `BadHeaderException` -- a wrong exception class for exactly the input
+     * that ought to be the *easiest* to handle (the maximum legal value).
+     *
+     * The fix: use `toUnsignedInt()` at the slice site so the consumer and
+     * the validator agree on the type of "PRG bank count".
+     */
+    @Test
+    fun gamePakWithMaxUnsignedPrgBankCountDoesNotThrowIllegalArgument() {
+        val data = ByteArray(16 + 16384 * 255)  // exactly 4,177,936 bytes
+        data[0] = 0x4E; data[1] = 0x45; data[2] = 0x53; data[3] = 0x1A.toByte()
+        data[4] = 0xFF.toByte()  // 255 PRG banks (max legal value, signed -1)
+        data[5] = 0              // no CHR
+        // Should construct cleanly: validator passes, slice uses unsigned.
+        val gp = GamePak(data)
+        assertThat(gp.programRom.size, equalTo(16384 * 255))
     }
 }

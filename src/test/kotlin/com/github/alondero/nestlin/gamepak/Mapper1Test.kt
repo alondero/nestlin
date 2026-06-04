@@ -11,6 +11,8 @@ class Mapper1Test {
     private fun createTestGamePak(prgSize: Int = 2, chrSize: Int = 1): GamePak {
         // Create header (16 bytes)
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = prgSize.toByte()  // PRG ROM size in 16KB units
         header[5] = chrSize.toByte()    // CHR ROM size in 8KB units
         header[6] = 0x21.toByte()       // Mapper 1, vertical mirroring (bit 0 = 1)

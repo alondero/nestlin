@@ -1,14 +1,27 @@
 package com.github.alondero.nestlin.gamepak
 
+import com.github.alondero.nestlin.BadHeaderException
 import com.github.alondero.nestlin.Region
 import com.github.alondero.nestlin.toUnsignedInt
 import java.util.zip.CRC32
 
 private const val TEST_ROM_CRC = 0x9e179d92
+private const val INES_HEADER_SIZE = 16
+private const val PRG_BANK_BYTES = 16384
+private const val CHR_BANK_BYTES = 8192
 
 class GamePak(data: ByteArray, displayName: String = "") {
 
-    val header = Header(data.copyOfRange(0, 16))
+    init {
+        // Issue #16: validate the iNES header BEFORE any slice/copy, so a
+        // corrupt or truncated ROM throws a descriptive BadHeaderException
+        // instead of leaking ArrayIndexOutOfBoundsException from copyOfRange.
+        // Order matters: length first (otherwise reading data[3] is unsafe),
+        // then the 4-byte magic ("NES\x1A"), then the declared PRG/CHR sizes.
+        requireValidHeader(data)
+    }
+
+    val header = Header(data.copyOfRange(0, INES_HEADER_SIZE))
     val name: String = when {
         // NES 2.0 bit 4 (in header byte 7) marks the optional 128-byte title at
         // 0x10..0x90. The spec only guarantees ASCII, but Famicom dumps routinely
@@ -38,9 +51,63 @@ class GamePak(data: ByteArray, displayName: String = "") {
     val region: Region = header.detectedRegion ?: regionFromName(name) ?: Region.NTSC
 
     init {
-        programRom = data.copyOfRange(16, 16 + 16384 * header.programRomSize)
-        chrRom = data.copyOfRange(16 + programRom.size, 16 + programRom.size + 8192 * header.chrRomSize)
+        // Use toUnsignedInt() because Header.programRomSize / chrRomSize are
+        // raw Byte fields. Without it, header.programRomSize = 0xFF (i.e. 255
+        // PRG banks, the spec-allowed max) sign-extends to -1 and the bound
+        // goes negative -- copyOfRange then throws IllegalArgumentException
+        // instead of our BadHeaderException, leaking the wrong exception class
+        // for exactly one input value per field. The validator above already
+        // treats the byte as unsigned; this just keeps the slice consistent.
+        val prgBanks = header.programRomSize.toUnsignedInt()
+        val chrBanks = header.chrRomSize.toUnsignedInt()
+        programRom = data.copyOfRange(INES_HEADER_SIZE, INES_HEADER_SIZE + PRG_BANK_BYTES * prgBanks)
+        chrRom = data.copyOfRange(INES_HEADER_SIZE + programRom.size, INES_HEADER_SIZE + programRom.size + CHR_BANK_BYTES * chrBanks)
         crc = CRC32().apply { update(data)}
+    }
+
+    /**
+     * Reject ROMs that are not a valid iNES file before any header field is
+     * dereferenced. Without this, a truncated or garbage file produces
+     * `ArrayIndexOutOfBoundsException` (from `data.copyOfRange(16, ...)`) or
+     * a silent default-zero `header.programRomSize` / `header.chrRomSize` —
+     * both useless to the user. BadHeaderException is the project's existing
+     * typed signal for this exact class of failure (see RomUtils.validate).
+     */
+    private fun requireValidHeader(data: ByteArray) {
+        if (data.size < INES_HEADER_SIZE) {
+            throw BadHeaderException(
+                "ROM is ${data.size} bytes; iNES header requires at least $INES_HEADER_SIZE bytes"
+            )
+        }
+        if (data[0] != 0x4E.toByte() || data[1] != 0x45.toByte() ||
+            data[2] != 0x53.toByte() || data[3] != 0x1A.toByte()) {
+            throw BadHeaderException(
+                "Missing iNES header magic \"NES\\x1A\" (got bytes " +
+                    "${data[0].toUnsignedInt()}, ${data[1].toUnsignedInt()}, " +
+                    "${data[2].toUnsignedInt()}, ${data[3].toUnsignedInt()})"
+            )
+        }
+        // Read the declared sizes straight from the raw bytes (NOT from
+        // header.programRomSize etc.) so the messages can cite the literal
+        // value the user sees in the header. The numbers are bytes 4 and 5.
+        val prgBanks = data[4].toUnsignedInt()
+        val chrBanks = data[5].toUnsignedInt()
+        val declaredPrgBytes = prgBanks.toLong() * PRG_BANK_BYTES
+        val declaredChrBytes = chrBanks.toLong() * CHR_BANK_BYTES
+        val availableForPrg = data.size - INES_HEADER_SIZE
+        if (declaredPrgBytes > availableForPrg) {
+            throw BadHeaderException(
+                "Header declares $prgBanks 16KB PRG bank(s) (${declaredPrgBytes} bytes) " +
+                    "but ROM is only $data.size bytes ($availableForPrg bytes after the header)"
+            )
+        }
+        val availableForChr = availableForPrg - declaredPrgBytes
+        if (declaredChrBytes > availableForChr) {
+            throw BadHeaderException(
+                "Header declares $chrBanks 8KB CHR bank(s) (${declaredChrBytes} bytes) " +
+                    "but only $availableForChr bytes remain in the ROM after the header and PRG"
+            )
+        }
     }
 
     fun isTestRom() = crc.value == TEST_ROM_CRC

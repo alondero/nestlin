@@ -21,6 +21,8 @@ class Mapper69Test {
     // prg16k 16KB units, chr8k 8KB units. Defaults give 8 PRG banks (8KB) and 16 CHR banks (1KB).
     private fun createTestGamePak(prg16k: Int = 4, chr8k: Int = 2): GamePak {
         val header = ByteArray(16)
+        header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
+        header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = prg16k.toByte()
         header[5] = chr8k.toByte()
         header[6] = 0x50.toByte()       // mapper low nibble = 5
