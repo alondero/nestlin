@@ -18,6 +18,11 @@ class Nestlin {
     val ppu: Ppu
     val apu: Apu
     internal val memory: Memory  // internal for test access
+    // @Volatile: start() runs on the emulation thread and reads this in the
+    // while-loop; stop() is called from the UI thread. Without the volatile
+    // barrier the JMM permits the emulation thread to cache the read and the
+    // loop may never observe the stop (issue #12).
+    @Volatile
     private var running = false
     private var nextSyncDeadlineNanos: Long = 0
     private var ticksSinceLastSync: Int = 0
