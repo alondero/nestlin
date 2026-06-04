@@ -43,6 +43,7 @@ class Nestlin {
     }
 
     fun getController1() = memory.controller1
+    fun getController2() = memory.controller2
 
     fun load(romPath: Path) {
         val data = romPath.load()
