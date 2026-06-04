@@ -56,6 +56,7 @@ class GamePak(data: ByteArray, displayName: String = "") {
         9 -> Mapper9(this)
         10 -> Mapper10(this)
         11 -> Mapper11(this)
+        16 -> Mapper16(this, header.submapper)
         21 -> Mapper21(this)
         23 -> Mapper23(this)
         25 -> Mapper25(this)
@@ -63,6 +64,7 @@ class GamePak(data: ByteArray, displayName: String = "") {
         66 -> Mapper66(this)
         69 -> Mapper69(this)
         71 -> Mapper71(this)
+        153 -> Mapper153(this)
         206 -> Mapper206(this)
         else -> throw UnsupportedOperationException("Mapper ${header.mapper} not implemented")
     }
@@ -114,6 +116,16 @@ class Header(headerData: ByteArray) {
     }
     val mirroring: Mirroring = if (headerData[6].toUnsignedInt() and 0x01 == 0) Mirroring.HORIZONTAL else Mirroring.VERTICAL
     val hasBattery: Boolean = headerData[6].toUnsignedInt() and 0x02 != 0
+
+    /**
+     * Submapper number from the NES 2.0 header byte 8 (high nibble). For
+     * iNES 1.0 headers this is byte 8 of the header (the "PRG-RAM size" byte),
+     * which is unrelated; we treat it as 0 unless the header is actually NES 2.0.
+     *
+     * Mappers that ship multiple board variants (mapper 16 = FCG-1/2/LZ93D50;
+     * mapper 4 = MMC3 vs MMC6) read this to pick the right register layout.
+     */
+    val submapper: Int = if (isNes20) (headerData[8].toUnsignedInt() ushr 4) and 0x0F else 0
 
     /**
      * Region implied by header metadata, or null when the header gives no positive

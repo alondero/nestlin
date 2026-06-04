@@ -1,5 +1,7 @@
 # NES Mapper Support Status
 
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 34, 66, 69, 153, 206.**
+
 ## Mapper 0 (NROM)
 **Status:** Working
 
@@ -120,7 +122,104 @@
 
 ---
 
-## Mapper 11 (Color Dreams)
+## Mapper 16 (Bandai FCG / FCG-1 / FCG-2 / LZ93D50)
+**Status:** Working (Added 2026-06-02, issue #86)
+
+- **Games:** Dragon Ball Z series (DBZ RPG, DBZ II), Saint Seiya, SD Gundam Gaiden,
+  Famicom Jump II (submapper 5), Magical Taruruuto-kun 2 (submapper 5), and most
+  Bandai-published cartridges with on-board save EEPROM.
+- **Submapper variants** (NES 2.0 byte 8 high nibble; iNES 1.0 falls back to 0):
+  - **0 (default):** registers at `$8000-$FFFF`, no PRG-RAM, no EEPROM.
+    Writes to `$6000-$7FFF` are open bus (ignored) for the chip. **For iNES
+    1.0 dumps (which carry no submapper byte) Nestlin also accepts writes
+    to `$6000-$7FFF`** — see the "iNES 1.0 submapper ambiguity" note below.
+  - **4 (FCG-1/2):** registers at `$6000-$7FFF`. `$8000-$FFFF` is normal PRG.
+    IRQ writes to `$B/$C` are *direct* (no latch).
+  - **5 (LZ93D50):** registers at `$8000-$FFFF`. `$6000-$7FFF` is unused.
+    `$D` exposes a 24C02 EEPROM via the standard I²C bit-bang protocol
+    (SCL = bit 5, SDA = bit 6 of `$D`).
+- **iNES 1.0 submapper ambiguity:** many NO-INTRO Bandai FCG dumps ship as
+  plain iNES 1.0 (no NES 2.0 submapper byte), but actual games use both
+  register windows. Crayon Shin-chan: Ora to Poi Poi writes to `$8008-$800A`
+  (the submapper-0 default). Dragon Ball: Daimaou Fukkatsu writes to
+  `$7FF0-$7FF9` (the submapper-4 narrow window). Both decode the same way
+  on a real chip — the chip's register-decode is fixed, the board just wires
+  it to one of the two windows. To make both boot, Nestlin's submapper 0/5
+  decode **mirrors register writes to BOTH `$6000-$7FFF` and `$8000-$FFFF`**.
+  This is safe because for submapper 0 there is no PRG-RAM in either window
+  — any open-bus writes would have been discarded by the chip anyway. If
+  the iNES header is upgraded to NES 2.0 with byte 8 high nibble = 4, the
+  narrow window is used exclusively.
+- **Register map** (selected by lower 4 bits of the write address):
+  - `$0`..`$7`: CHR bank for one of eight 1KB windows (`$0000-$1FFF`).
+  - `$8`: PRG page select (low 4 bits select one of sixteen 16KB banks).
+  - `$9`: Mirroring (bits 0-1: 0=Vert, 1=Horiz, 2=1-screen lower, 3=1-screen upper).
+  - `$A`: IRQ enable (bit 0); any write reloads the counter from the `$B:$C` latch.
+  - `$B`: IRQ latch low byte.
+  - `$C`: IRQ latch high byte.
+  - `$D`: EEPROM I²C port (submapper 5 only).
+- **PRG layout (16KB granularity):**
+  - `$8000-$BFFF`: switchable 16KB bank selected by `$8`.
+  - `$C000-$FFFF`: the last 16KB bank (always `prgBankCount - 1`).
+- **CHR layout:** eight independent 1KB pages. No CHR-RAM fallback.
+- **IRQ:** 16-bit counter, decremented once per CPU (M2) cycle when bit 0 of `$A`
+  is set. The counter wraps from `$0000` to `$FFFF` and asserts IRQ on that
+  underflow. Any write to `$A` reloads from the latch. Writing `$A` with
+  bit 0 = 0 disables the IRQ and acknowledges a pending request.
+- **EEPROM (submapper 5 only):** the 24C02 I²C EEPROM is exposed at `$D`. The
+  bus is a single 8-bit register: bit 5 = SCL, bit 6 = SDA. Writing `$D`
+  drives the bus; reading `$D` returns the slave's SDA (so the master can
+  clock data out for reads). Standard 2-wire protocol is implemented in
+  `BandaiEeprom.kt` — start/stop/ack/data, device address `0x50`, 8-bit word
+  address, sequential-read wrap. This is the same chip the LZ93D50 board
+  uses for game saves (replacing the battery-backed PRG-RAM that MMC3
+  boards use for the same purpose).
+- **Verification:**
+  - `Mapper16Test` covers PRG banking (low 4 bits, both register windows for
+    submapper 0, narrow window for submapper 4, last-bank-fixed), CHR
+    banking (all eight 1KB windows), mirroring, the 16-bit CPU-cycle IRQ
+    (load via latch, decrement, underflow, acknowledge), and save/load
+    round-trip.
+  - Submapper-4 narrow register window and direct IRQ writes are tested
+    explicitly.
+  - Submapper-5 enables the EEPROM, which is exercised with a bit-banged
+    24C02 write-then-random-read at `$800D`.
+  - `Mapper16RealGameBootTest` is the regression bar: runs Crayon
+    Shin-chan and Dragon Ball through 240 frames and asserts both reach
+    the title screen (CHR banking active, >200K instructions executed).
+  - `Mapper16ScreenshotTest` captures frames 60, 300, 1500 of both games
+    to `build/reports/bandai-fcg-screenshots/` for visual inspection.
+
+---
+
+## Mapper 153 (Bandai FCG variant)
+**Status:** Working (Added 2026-06-02, issue #86)
+
+- **Games:** Famicom Jump II (Europe) and other Bandai titles that wire the
+  FCG silicon with an 8KB PRG-RAM window at `$6000-$7FFF` instead of using
+  EEPROM. Same physical chip as mapper 16, different board.
+- **What it is:** mapper 16 with one extra register that toggles `$6000-$7FFF`
+  between PRG-RAM (8KB) and an extra PRG bank.
+- **Register map:** identical to mapper 16 submapper 0/5 (registers at
+  `$8000-$FFFF`; with iNES 1.0 ambiguity also at `$6000-$7FFF`) plus:
+  - `$D`: bit 7 selects the source of `$6000-$7FFF`:
+    - bit 7 = 0: `$6000-$7FFF` reads/writes go to 8KB PRG-RAM.
+    - bit 7 = 1: `$6000-$7FFF` reads come from a 16KB PRG bank
+      (low 4 bits of `$D` select the bank; only the low 8KB is visible).
+    Writes to `$6000-$7FFF` while bit 7 = 1 are ignored (masked off), so
+    games can use bit 7 as a write-protect.
+- **PRG layout (16KB granularity):** same as mapper 16 — `$8000-$BFFF` is
+  switchable via `$8`, `$C000-$FFFF` is the last 16KB bank.
+- **CHR layout:** eight 1KB pages (same as mapper 16).
+- **IRQ:** identical to mapper 16 (16-bit counter, CPU-cycle clocked,
+  latch-then-reload-on-`$A`).
+- **PRG-RAM persistence:** when the iNES header's battery bit is set, the
+  8KB PRG-RAM is exposed via `batteryBackedRam()` and writes set
+  `batteryDirty`, so `.sav` persistence works the same as for Mapper 1/4/206.
+- **Verification:** `Mapper153Test` covers PRG banking, the `$D` bit-7
+  PRG-RAM-vs-PRG toggle (with the write-mask behaviour), CHR banking,
+  mirroring, the full 16-bit IRQ, battery-backed RAM, and save/load
+  round-trip.
 **Status:** Working (Fixed 2026-04-17)
 
 - **Games:** Bible Adventures, Action 52, Crystalis (some versions)
@@ -384,13 +483,13 @@
 
 ## Battery-Backed Save RAM (.sav files)
 
-**Status:** Supported on mappers 1, 4, 5, 206 (Added 2026-06-01 for mapper 206)
+**Status:** Supported on mappers 1, 4, 5, 153, 206 (Added 2026-06-02 for mapper 153)
 
 - **Format:** Raw bytes, no header. Bit-for-bit compatible with FCEUX / Nestopia / Mesen / Mesen2.
 - **Location:** `saves/<rom-basename>.sav` next to the working directory.
 - **Trigger:** iNES header byte 6 bit 1 (battery flag). When unset, no `.sav` file is created even if the cartridge has PRG-RAM.
 - **Flush policy:** every 10 seconds if PRG-RAM is dirty, plus on clean shutdown, ROM switch, and hard reset. Atomic file replace (write `.sav.tmp` then move) keeps the existing save intact if the JVM dies mid-write.
-- **Coverage:** Mapper 1 (MMC1 — Zelda, Final Fantasy, Kid Icarus), Mapper 4 (MMC3 — Mega Man 4-6, StarTropics, Crystalis), Mapper 5 (MMC5 — Castlevania III when battery-flagged), Mapper 206 (Namcot 108/109/118 — Gauntlet, RBI Baseball). Mappers without `$6000-$7FFF` PRG-RAM (0, 2, 3, 7, 9, 11, 34) cannot host battery saves and are unaffected.
+- **Coverage:** Mapper 1 (MMC1 — Zelda, Final Fantasy, Kid Icarus), Mapper 4 (MMC3 — Mega Man 4-6, StarTropics, Crystalis), Mapper 5 (MMC5 — Castlevania III when battery-flagged), Mapper 153 (Bandai FCG-153 — Famicom Jump II), Mapper 206 (Namcot 108/109/118 — Gauntlet, RBI Baseball). Mappers without `$6000-$7FFF` PRG-RAM (0, 2, 3, 7, 9, 11, 16, 34) cannot host battery saves and are unaffected. (Mapper 16 submapper 5 uses EEPROM instead.)
 - **Known limitations:**
   - PRG-RAM size is treated as 8 KB regardless of iNES byte 8 / NES 2.0 byte 10. Games with 16/32 KB battery RAM (some MMC5 titles) won't save their full state.
   - MMC5 extended RAM (`$5C00-$5FFF`) is not persisted. Only the `$6000-$7FFF` PRG-RAM window is.
