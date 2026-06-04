@@ -30,7 +30,10 @@ package com.github.alondero.nestlin.gamepak
  */
 class BandaiEeprom(val sizeBytes: Int = 256) {
 
-    val memory = ByteArray(sizeBytes)
+    // A factory-fresh / erased EEPROM reads as 0xFF in every cell. Games that
+    // probe the EEPROM at boot rely on this "blank" pattern to decide whether a
+    // save exists; zero-initialising would look like (corrupt) save data.
+    val memory = ByteArray(sizeBytes) { 0xFF.toByte() }
 
     // Last SCL / SDA the game wrote. Used for edge detection.
     private var scl = false
@@ -86,7 +89,12 @@ class BandaiEeprom(val sizeBytes: Int = 256) {
                     if (bitCount == 8) {
                         val addr = (shiftReg ushr 1) and 0x7F
                         readMode = (shiftReg and 0x01) != 0
-                        state = if (addr == 0x28 /* 0b0101000, the canonical 24C02 addr */) {
+                        // The 24Cxx device-select byte is `1010 A2 A1 A0 R/W`.
+                        // With the Bandai board grounding the address pins it is
+                        // 0xA0 (write) / 0xA1 (read), i.e. a 7-bit device address
+                        // of 0x50 (0b1010000). (NB: 0x50 here, NOT 0x28 — the byte
+                        // already has the R/W bit shifted out by `ushr 1`.)
+                        state = if (addr == 0x50) {
                             State.ACK_AFTER_ADDR
                         } else {
                             State.IDLE
@@ -140,11 +148,20 @@ class BandaiEeprom(val sizeBytes: Int = 256) {
                         sdaOut = false  // slave drives ACK low
                         ackPhase = 1
                     } else {
-                        sdaOut = true   // release SDA
                         state = if (readMode) State.DATA_RX else State.WORD_ADDR
                         bitCount = 0
                         shiftReg = 0
                         ackPhase = 0
+                        // In read mode the slave must present the first data bit
+                        // (MSB) on SDA now, while SCL is low, so the master samples
+                        // it on the very next rising edge. Releasing SDA here
+                        // instead would drop bit 7 and force the MSB high.
+                        if (readMode) {
+                            val byte = memory[wordAddress % sizeBytes].toInt() and 0xFF
+                            sdaOut = (byte and 0x80) != 0
+                        } else {
+                            sdaOut = true   // release SDA for the master's word-address bits
+                        }
                     }
                 }
                 State.ACK_AFTER_WORD -> {

@@ -248,23 +248,47 @@ class Mapper16Test {
     @Test
     fun `submapper 5 enables EEPROM via D register`() {
         val mapper = Mapper16(createTestGamePak(submapper = 5), submapper = 5)
+        // 24Cxx device-select byte is 1010_000_R/W: 0xA0 for write, 0xA1 for read.
         // Write 0xAB to EEPROM address 0x10.
         i2cStart(mapper)
-        i2cSend(mapper, 0x50)                       // device addr + write
+        i2cSend(mapper, 0xA0)                       // device select + write
         i2cSend(mapper, 0x10)                       // word address
         i2cSend(mapper, 0xAB)                       // data
         i2cStop(mapper)
 
         // Random read it back.
         i2cStart(mapper)
-        i2cSend(mapper, 0x50)                       // device addr + write (dummy)
+        i2cSend(mapper, 0xA0)                       // device select + write (sets address pointer)
         i2cSend(mapper, 0x10)                       // word address
         i2cStart(mapper)                            // repeated start
-        i2cSend(mapper, 0x51)                       // device addr + read
+        i2cSend(mapper, 0xA1)                       // device select + read
         val read = i2cRecv(mapper)
         i2cStop(mapper)
 
         assertThat(read, equalTo(0xAB))
+    }
+
+    @Test
+    fun `submapper 5 EEPROM reads back a value with the MSB clear`() {
+        // Regression for the read-path off-by-one: a value whose bit 7 is 0
+        // (e.g. 0x42) was previously read back as 0xC2 because the first data
+        // bit was dropped and the MSB forced high. 0xAB (bit 7 set) hid the bug.
+        val mapper = Mapper16(createTestGamePak(submapper = 5), submapper = 5)
+        i2cStart(mapper)
+        i2cSend(mapper, 0xA0)                       // device select + write
+        i2cSend(mapper, 0x20)                       // word address
+        i2cSend(mapper, 0x42)                       // data (MSB clear)
+        i2cStop(mapper)
+
+        i2cStart(mapper)
+        i2cSend(mapper, 0xA0)                       // device select + write (sets address pointer)
+        i2cSend(mapper, 0x20)                       // word address
+        i2cStart(mapper)                            // repeated start
+        i2cSend(mapper, 0xA1)                       // device select + read
+        val read = i2cRecv(mapper)
+        i2cStop(mapper)
+
+        assertThat(read, equalTo(0x42))
     }
 
     /** SDA falls while SCL is high -> start condition. */
