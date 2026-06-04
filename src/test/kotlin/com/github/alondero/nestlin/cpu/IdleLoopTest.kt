@@ -6,7 +6,7 @@ import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 /**
  * Regression tests for issue #15 — the `idle` flag is set when the CPU enters a

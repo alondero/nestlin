@@ -1,8 +1,8 @@
 package com.github.alondero.nestlin.compare
 
 import com.github.alondero.nestlin.gamepak.Mapper71
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 
 /**
  * Sweeps the Mesen2 state-diff across boot to find the exact frame where
@@ -16,9 +16,9 @@ class MicroMachinesDivergenceSweepTest {
 
     @Test
     fun `find first divergence frame between Nestlin and Mesen2`() {
-        assumeTrue("Mesen2 not available", Mesen2StateCapturer.isMesen2Available())
+        assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
         val romPath = locateRom() ?: run {
-            assumeTrue("Micro Machines ROM not found", false); return
+            assumeTrue(false, "Micro Machines ROM not found"); return
         }
 
         // Sweep the suspect range. Frame 120 already matches (we verified that

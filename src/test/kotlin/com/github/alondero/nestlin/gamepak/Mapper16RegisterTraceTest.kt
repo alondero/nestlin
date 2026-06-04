@@ -1,9 +1,9 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.Nestlin
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -28,7 +28,7 @@ class Mapper16RegisterTraceTest {
     @Test
     fun `trace crayon shin-chan register writes during early boot`() {
         val rom = crayonShinChanRom()
-        assumeTrue("ROM not found at $rom", Files.exists(rom))
+        assumeTrue(Files.exists(rom), "ROM not found at $rom")
         traceWrites(rom, "Crayon Shin-chan",
             "build/reports/bandai-fcg-trace/crayon-shin-chan-writes.txt")
     }
@@ -36,7 +36,7 @@ class Mapper16RegisterTraceTest {
     @Test
     fun `trace dragon ball register writes during early boot`() {
         val rom = dragonBallRom()
-        assumeTrue("ROM not found at $rom", Files.exists(rom))
+        assumeTrue(Files.exists(rom), "ROM not found at $rom")
         traceWrites(rom, "Dragon Ball",
             "build/reports/bandai-fcg-trace/dragon-ball-writes.txt")
     }
@@ -97,10 +97,8 @@ class Mapper16RegisterTraceTest {
         println(report.take(2000))
 
         val total = decorator.writes.size
-        Assert.assertTrue(
-            "$label wrote $total register writes — that's suspicious. See $outPath",
-            total > 0
-        )
+        Assertions.assertTrue(total > 0
+        , "$label wrote $total register writes — that's suspicious. See $outPath")
     }
 
     /** Decorator: forwards everything to the wrapped Mapper and logs cpuWrite. */

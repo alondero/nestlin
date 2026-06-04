@@ -4,7 +4,7 @@ import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import com.natpryce.hamkrest.lessThan
 import com.natpryce.hamkrest.greaterThan
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 class ApuMixingTest {
 

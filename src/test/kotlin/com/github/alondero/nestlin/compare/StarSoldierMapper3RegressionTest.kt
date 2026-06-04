@@ -4,9 +4,9 @@ import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.gamepak.Mapper3
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Paths
 
@@ -28,7 +28,7 @@ class StarSoldierMapper3RegressionTest {
 
     @Test
     fun traceMapperWrites() {
-        assumeTrue("ROM not staged at $romPath", Files.exists(romPath))
+        assumeTrue(Files.exists(romPath), "ROM not staged at $romPath")
 
         val trace = mutableListOf<Mapper3.Write>()
         val bankAtFrame = linkedMapOf<Int, Int>()
@@ -55,14 +55,10 @@ class StarSoldierMapper3RegressionTest {
         })
         nestlin.start()
 
-        Assert.assertTrue(
-            "Star Soldier never wrote to mapper-3 register — ROM may not have booted",
-            trace.isNotEmpty()
-        )
-        Assert.assertTrue(
-            "Star Soldier CHR bank stayed at 0 — mapper-3 write-range regression. " +
-                "Bank-per-frame: $bankAtFrame. First write: ${trace.first()}",
-            bankAtFrame.values.any { it != 0 }
-        )
+        Assertions.assertTrue(trace.isNotEmpty()
+        , "Star Soldier never wrote to mapper-3 register — ROM may not have booted")
+        Assertions.assertTrue(bankAtFrame.values.any { it != 0 }
+        , "Star Soldier CHR bank stayed at 0 — mapper-3 write-range regression. " +
+                "Bank-per-frame: $bankAtFrame. First write: ${trace.first()}")
     }
 }

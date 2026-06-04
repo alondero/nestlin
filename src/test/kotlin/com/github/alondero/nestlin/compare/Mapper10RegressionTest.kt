@@ -1,9 +1,9 @@
 package com.github.alondero.nestlin.compare
 
 import com.github.alondero.nestlin.gamepak.Mapper10
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -37,7 +37,7 @@ class Mapper10RegressionTest {
     @Test
     fun `mmc4 prg bank switches during fire emblem gaiden boot`() {
         val rom = fireEmblemRom()
-        assumeTrue("Fire Emblem Gaiden ROM not found at $rom", Files.exists(rom))
+        assumeTrue(Files.exists(rom), "Fire Emblem Gaiden ROM not found at $rom")
 
         val nestlin = com.github.alondero.nestlin.Nestlin().apply {
             config.speedThrottlingEnabled = false
@@ -58,11 +58,9 @@ class Mapper10RegressionTest {
         nestlin.start()
 
         // A 256KB game cannot run from a single 16KB bank — it must page $8000.
-        Assert.assertTrue(
-            "MMC4 PRG bank never changed during boot (banks seen: $banksSeen) — " +
-                "the \$A000 bank-select register may not be wired.",
-            banksSeen.size > 1
-        )
+        Assertions.assertTrue(banksSeen.size > 1
+        , "MMC4 PRG bank never changed during boot (banks seen: $banksSeen) — " +
+                "the \$A000 bank-select register may not be wired.")
     }
 
     /**
@@ -88,8 +86,8 @@ class Mapper10RegressionTest {
     @Test
     fun `fire emblem gaiden render output matches mesen2 at frame N`() {
         val rom = fireEmblemRom()
-        assumeTrue("Fire Emblem Gaiden ROM not found at $rom", Files.exists(rom))
-        assumeTrue("Mesen2 not available", Mesen2StateCapturer.isMesen2Available())
+        assumeTrue(Files.exists(rom), "Fire Emblem Gaiden ROM not found at $rom")
+        assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
 
         val reportsDir = Paths.get("build/reports/state-diffs/fire-emblem-gaiden-frame-$frameNumber")
 
@@ -125,10 +123,16 @@ class Mapper10RegressionTest {
 
         println("Fire Emblem Gaiden frame $frameNumber render-output: ${if (problems.isEmpty()) "MATCH" else "MISMATCH"}")
         if (problems.isNotEmpty()) {
-            Assert.fail(
-                "Render output diverged from Mesen2 oracle:\n  " + problems.joinToString("\n  ") +
-                    "\nSee: ${reportsDir.resolve("diff-report.txt")}"
-            )
+            // Extract the message to a String-typed local var to disambiguate
+            // JUnit 5's fail(Supplier<String>) overload (which has a phantom
+            // <V> type variable the Kotlin compiler cannot infer when the
+            // argument is a multi-line string concat). Then bypass fail()
+            // entirely and throw AssertionFailedError directly — that's what
+            // fail(String) does internally anyway.
+            val failMessage = "Render output diverged from Mesen2 oracle:\n  " +
+                problems.joinToString("\n  ") +
+                "\nSee: ${reportsDir.resolve("diff-report.txt")}"
+            throw org.opentest4j.AssertionFailedError(failMessage)
         }
     }
 }

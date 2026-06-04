@@ -1,10 +1,10 @@
 package com.github.alondero.nestlin.compare
 
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.junit.runners.Parameterized
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -37,13 +37,13 @@ import java.nio.file.Paths
  * memory note). They are printed for context only.
  *
  * ROMs come from the NO-INTRO library and are skipped when absent (e.g. CI).
+ *
+ * Migrated to JUnit 5: parameters are method parameters, the data source is a
+ * `Stream<Arguments>` discovered via `@MethodSource("data")`, and the per-row
+ * name template moves from `@Parameterized.Parameters(name = ...)` to
+ * `@ParameterizedTest(name = ...)`.
  */
-@RunWith(Parameterized::class)
-class GxRomStateComparisonTest(
-    private val label: String,
-    private val romPathString: String,
-    private val frameNumber: Int
-) {
+class GxRomStateComparisonTest {
 
     companion object {
         private const val GAMES_DIR = "S:\\Media\\Nintendo NES\\Games"
@@ -58,19 +58,19 @@ class GxRomStateComparisonTest(
         // single-frame CHR compare straddles a bank swap and is not phase-stable. It
         // is covered by the non-black render check in MapperVerificationTest instead.
         @JvmStatic
-        @Parameterized.Parameters(name = "{0} @ frame {2}")
-        fun data(): Array<Array<Any>> = arrayOf(
-            arrayOf("Gumshoe", "$GAMES_DIR\\Gumshoe (USA, Europe).nes", 120),
-            arrayOf("Dragon Power", "$GAMES_DIR\\Dragon Power (USA).nes", 120),
-            arrayOf("Doraemon", "$GAMES_DIR\\Doraemon (Japan) (Rev A).nes", 120)
+        fun data(): List<Arguments> = listOf(
+            Arguments.of("Gumshoe", "$GAMES_DIR\\Gumshoe (USA, Europe).nes", 120),
+            Arguments.of("Dragon Power", "$GAMES_DIR\\Dragon Power (USA).nes", 120),
+            Arguments.of("Doraemon", "$GAMES_DIR\\Doraemon (Japan) (Rev A).nes", 120)
         )
     }
 
-    @Test
-    fun `render outputs match Mesen2`() {
-        assumeTrue("Mesen2 not available", Mesen2StateCapturer.isMesen2Available())
+    @ParameterizedTest(name = "{0} @ frame {2}")
+    @MethodSource("data")
+    fun `render outputs match Mesen2`(label: String, romPathString: String, frameNumber: Int) {
+        assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
         val romPath: Path = Paths.get(romPathString)
-        assumeTrue("ROM not present: $romPath", Files.exists(romPath))
+        assumeTrue(Files.exists(romPath), "ROM not present: $romPath")
 
         val nestlin = NestlinStateCapturer.captureState(romPath, frameNumber)
         val mesen2 = Mesen2StateCapturer.captureState(romPath, frameNumber)
@@ -89,17 +89,13 @@ class GxRomStateComparisonTest(
         }
         println(report)
 
-        Assert.assertTrue(
-            "CHR pattern data not captured — cannot validate banking. Mesen2 chr=${mesen2.chr.size} bytes, Nestlin chr=${nestlin.chr.size} bytes.",
-            nestlin.chr.size == 0x2000 && mesen2.chr.size == 0x2000
+        Assertions.assertTrue(nestlin.chr.size == 0x2000 && mesen2.chr.size == 0x2000
+        , "CHR pattern data not captured — cannot validate banking. Mesen2 chr=${mesen2.chr.size} bytes, Nestlin chr=${nestlin.chr.size} bytes.")
+        Assertions.assertNull(chrDiff,
+            "CHR pattern data diverges from Mesen2 — wrong CHR bank mapped (GxROM decode regression).\n$report"
         )
-        Assert.assertNull(
-            "CHR pattern data diverges from Mesen2 — wrong CHR bank mapped (GxROM decode regression).\n$report",
-            chrDiff
-        )
-        Assert.assertNull(
-            "Palette RAM diverges from Mesen2 — wrong PRG bank executed (GxROM decode regression).\n$report",
-            paletteDiff
+        Assertions.assertNull(paletteDiff,
+            "Palette RAM diverges from Mesen2 — wrong PRG bank executed (GxROM decode regression).\n$report"
         )
     }
 

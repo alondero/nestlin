@@ -3,7 +3,7 @@ package com.github.alondero.nestlin.apu
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import com.natpryce.hamkrest.greaterThan
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import kotlin.math.PI
 import kotlin.math.sin
 

@@ -2,11 +2,10 @@ package com.github.alondero.nestlin
 
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.fail
+import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.file.Paths
@@ -57,10 +56,8 @@ class SaveStateTest {
         restore(nes, saveA)
         val saveB = snapshot(nes)
 
-        assertArrayEquals(
-            "Save/load round-trip must preserve state byte-for-byte",
-            saveA, saveB
-        )
+        assertArrayEquals(saveA, saveB
+        , "Save/load round-trip must preserve state byte-for-byte")
     }
 
     @Test
@@ -80,10 +77,8 @@ class SaveStateTest {
         runCpuSteps(nes, 200)
         val actual = snapshot(nes)
 
-        assertArrayEquals(
-            "Restoring then running should produce the same state as running continuously",
-            expected, actual
-        )
+        assertArrayEquals(expected, actual
+        , "Restoring then running should produce the same state as running continuously")
     }
 
     @Test
@@ -97,10 +92,8 @@ class SaveStateTest {
         restore(target, sourceBytes)
         val targetBytes = snapshot(target)
 
-        assertArrayEquals(
-            "A save loaded into a freshly-reset Nestlin must yield the same state",
-            sourceBytes, targetBytes
-        )
+        assertArrayEquals(sourceBytes, targetBytes
+        , "A save loaded into a freshly-reset Nestlin must yield the same state")
     }
 
     @Test
@@ -122,10 +115,8 @@ class SaveStateTest {
             nes.loadState(ByteArrayInputStream(bogus))
             fail("Expected IncompatibleSaveStateException for bad magic")
         } catch (e: SaveState.IncompatibleSaveStateException) {
-            assertTrue(
-                "Expected magic mismatch message, got: ${e.message}",
-                e.message?.contains("magic") == true
-            )
+            assertTrue(e.message?.contains("magic") == true
+            , "Expected magic mismatch message, got: ${e.message}")
         }
     }
 
@@ -183,14 +174,10 @@ class SaveStateTest {
             restore(nes, bytes)
             fail("Expected IncompatibleSaveStateException for mapper version 99")
         } catch (e: SaveState.IncompatibleSaveStateException) {
-            assertTrue(
-                "Expected the message to mention the rejected version, got: ${e.message}",
-                e.message?.contains("99") == true
-            )
-            assertTrue(
-                "Expected the message to identify the mapper, got: ${e.message}",
-                e.message?.contains("Mapper0") == true
-            )
+            assertTrue(e.message?.contains("99") == true
+            , "Expected the message to mention the rejected version, got: ${e.message}")
+            assertTrue(e.message?.contains("Mapper0") == true
+            , "Expected the message to identify the mapper, got: ${e.message}")
         }
     }
 }

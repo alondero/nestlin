@@ -4,9 +4,9 @@ import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Region
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
-import org.junit.Test
-import org.junit.Assume.assumeTrue
-import org.junit.Assert.*
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Assertions.*
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -24,7 +24,7 @@ class KickOffPalSmokeTest {
     @Test
     fun `Kick Off Europe auto-detects PAL and boots to a rendered screen`() {
         val rom = locateRom()
-        assumeTrue("Kick Off (Europe) ROM not found — set NESTLIN_KICKOFF_ROM or place it in the NO-INTRO library. Skipping PAL real-ROM validation.", rom != null)
+        assumeTrue(rom != null, "Kick Off (Europe) ROM not found — set NESTLIN_KICKOFF_ROM or place it in the NO-INTRO library. Skipping PAL real-ROM validation.")
 
         val nestlin = Nestlin().apply { config.speedThrottlingEnabled = false }
         var frame = 0
@@ -43,7 +43,7 @@ class KickOffPalSmokeTest {
         nestlin.load(rom!!)
         nestlin.powerReset()
 
-        assertEquals("ROM should auto-detect as PAL from its NO-INTRO region tag", Region.PAL, nestlin.currentRegion())
+        assertEquals(Region.PAL, nestlin.currentRegion(), "ROM should auto-detect as PAL from its NO-INTRO region tag")
 
         var guard = 240L * 40_000
         while (frame < 240 && guard-- > 0) nestlin.stepCpuCycle()
@@ -51,8 +51,8 @@ class KickOffPalSmokeTest {
         val colors = last?.let { f -> f.scanlines.flatMap { it.asList() }.toHashSet().size } ?: 0
         println("[KickOffPal] region=${nestlin.currentRegion()} firstRenderFrame=$firstRenderFrame maxMask=${"%02X".format(maxMask)} colors=$colors")
 
-        assertTrue("rendering never enabled under PAL (maxMask=${"%02X".format(maxMask)}) — PAL timing did not let the game boot", maxMask and 0x18 != 0)
-        assertTrue("frame essentially blank ($colors colours) — game did not reach a real screen", colors > 4)
+        assertTrue(maxMask and 0x18 != 0, "rendering never enabled under PAL (maxMask=${"%02X".format(maxMask)}) — PAL timing did not let the game boot")
+        assertTrue(colors > 4, "frame essentially blank ($colors colours) — game did not reach a real screen")
     }
 
     private fun locateRom(): Path? {

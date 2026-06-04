@@ -5,7 +5,7 @@ import com.github.alondero.nestlin.setBit
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.greaterThanOrEqualTo
 import com.natpryce.hamkrest.lessThanOrEqualTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 /**
  * Verifies that PPU pattern-table accesses produce exactly one A12 rising edge

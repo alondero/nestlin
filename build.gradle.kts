@@ -54,7 +54,10 @@ dependencies {
     // JSON parsing for config files
     implementation("com.google.code.gson:gson:2.10.1")
 
-    testImplementation("junit:junit:4.13.2")
+    // JUnit 5 (Jupiter). The aggregator pulls in api/params/engine. Hamkrest is
+    // framework-agnostic and works with Jupiter unchanged. (Issue #28)
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
     testImplementation("com.natpryce:hamkrest:1.8.0.1")
 }
 
@@ -119,6 +122,7 @@ tasks.test {
     auxiliaryTests.forEach { testClass ->
         exclude("**/${testClass.replace('.', '/')}.class")
     }
+    useJUnitPlatform()
 }
 
 // Separate task to run Mesen comparison tests only when explicitly invoked
@@ -128,7 +132,7 @@ tasks.register<Test>("testMesenComparison") {
     mesenTests.forEach { testClass ->
         include("**/${testClass.replace('.', '/')}.class")
     }
-    useJUnit()
+    useJUnitPlatform()
     // Forward MESEN2_PATH to the test JVM so the runner can locate Mesen2.
     // The Gradle daemon may not inherit shell env vars cleanly between invocations,
     // so we read it explicitly and pass it through.

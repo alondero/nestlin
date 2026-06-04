@@ -4,7 +4,7 @@ import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toUnsignedInt
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 /**
  * Unit tests for Mapper 10 (MMC4 / FxROM) — Fire Emblem Gaiden, Famicom Wars.

@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.cpu.UnhandledOpcodeException
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.file.Files

@@ -3,8 +3,8 @@ package com.github.alondero.nestlin
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.Ppu
 import com.github.alondero.nestlin.ui.FrameListener
-import org.junit.Test
-import org.junit.Assert.*
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.*
 
 /**
  * Core PAL vs NTSC timing: the PPU:CPU dot ratio, per-frame scanline geometry, and

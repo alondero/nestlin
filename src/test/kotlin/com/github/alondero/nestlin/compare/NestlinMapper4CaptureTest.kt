@@ -3,7 +3,7 @@ package com.github.alondero.nestlin.compare
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.toUnsignedInt
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.nio.file.Paths
 
 /**

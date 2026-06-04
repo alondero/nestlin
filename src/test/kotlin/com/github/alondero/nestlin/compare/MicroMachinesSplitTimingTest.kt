@@ -4,8 +4,8 @@ import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.toUnsignedInt
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -21,7 +21,7 @@ class MicroMachinesSplitTimingTest {
 
     @Test
     fun `log PPUMASK and PPUCTRL write scanlines during frame 360`() {
-        val rom = locateRom() ?: run { assumeTrue("ROM not found", false); return }
+        val rom = locateRom() ?: run { assumeTrue(false, "ROM not found"); return }
 
         val nestlin = Nestlin().apply { config.speedThrottlingEnabled = false }
         var frame = 0
@@ -63,10 +63,8 @@ class MicroMachinesSplitTimingTest {
         // cycle-counted split currently lands a hair early (~scanline 107, re-enable
         // ~114-115) — a known cycle-accuracy residual. A wide tolerance catches a gross
         // regression (split drifting tens of scanlines) without pinning the exact dot.
-        org.junit.Assert.assertTrue(
-            "Forced-blank split landed at scanline $forcedBlankScanline, expected ~107 (100..114)",
-            forcedBlankScanline in 100..114
-        )
+        org.junit.jupiter.api.Assertions.assertTrue(forcedBlankScanline in 100..114
+        , "Forced-blank split landed at scanline $forcedBlankScanline, expected ~107 (100..114)")
     }
 
     private fun locateRom(): Path? {

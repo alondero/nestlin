@@ -6,7 +6,7 @@ import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.ppu.Frame
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.nio.file.Path
 import javax.imageio.ImageIO

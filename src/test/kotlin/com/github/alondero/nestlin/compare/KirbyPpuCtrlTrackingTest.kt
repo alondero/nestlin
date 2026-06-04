@@ -4,7 +4,7 @@ import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.toUnsignedInt
 import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.ppu.Frame
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.nio.file.Paths
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo

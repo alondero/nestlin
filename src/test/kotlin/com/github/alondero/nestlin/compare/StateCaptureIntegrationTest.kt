@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin.compare
 
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Paths
 
 /**
@@ -22,7 +22,7 @@ class StateCaptureIntegrationTest {
 
     @Test
     fun captureMesen2StateAtFrame60() {
-        assumeTrue("Mesen2 not available", Mesen2StateCapturer.isMesen2Available())
+        assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
 
         val romPath = Paths.get("testroms/tetris.nes")
         val state = Mesen2StateCapturer.captureState(romPath, 60)
@@ -35,7 +35,7 @@ class StateCaptureIntegrationTest {
 
     @Test
     fun compareNestlinAndMesen2() {
-        assumeTrue("Mesen2 not available", Mesen2StateCapturer.isMesen2Available())
+        assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
 
         val romPath = Paths.get("testroms/tetris.nes")
 

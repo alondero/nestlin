@@ -5,7 +5,7 @@ import com.natpryce.hamkrest.equalTo
 import com.natpryce.hamkrest.greaterThan
 import com.natpryce.hamkrest.lessThan
 import com.natpryce.hamkrest.greaterThanOrEqualTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import com.github.alondero.nestlin.Memory
 import com.github.alondero.nestlin.Apu
 

@@ -5,7 +5,7 @@ import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 class OpcodeCMPTest {
 

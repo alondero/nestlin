@@ -4,7 +4,7 @@ import com.github.alondero.nestlin.BadHeaderException
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.containsSubstring
 import com.natpryce.hamkrest.equalTo
-import org.junit.Test
+import org.junit.jupiter.api.Test
 
 /**
  * Run [block] and return the [BadHeaderException] it throws (or fail the test

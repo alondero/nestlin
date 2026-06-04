@@ -2,8 +2,8 @@ package com.github.alondero.nestlin
 
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Assert
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Test
 
 class UnsignedOpsTest {
 
@@ -29,8 +29,8 @@ class UnsignedOpsTest {
 
     @Test
     fun correctlyIdentifiesSetBit() {
-        Assert.assertFalse(0b00110011.toSignedByte().isBitSet(3))
-        Assert.assertTrue(0b00110011.toSignedByte().isBitSet(0))
+        Assertions.assertFalse(0b00110011.toSignedByte().isBitSet(3))
+        Assertions.assertTrue(0b00110011.toSignedByte().isBitSet(0))
     }
 }
 

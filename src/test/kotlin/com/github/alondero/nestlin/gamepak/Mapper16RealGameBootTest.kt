@@ -6,9 +6,9 @@ import com.github.alondero.nestlin.compare.NestlinStateCapturer
 import com.github.alondero.nestlin.compare.StateComparator
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
-import org.junit.Assert
-import org.junit.Assume.assumeTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -43,7 +43,7 @@ class Mapper16RealGameBootTest {
     }
 
     private fun bootIndicatesProgress(rom: Path, label: String) {
-        assumeTrue("$label ROM not found at $rom", Files.exists(rom))
+        assumeTrue(Files.exists(rom), "$label ROM not found at $rom")
 
         val nestlin = Nestlin().apply {
             config.speedThrottlingEnabled = false
@@ -85,16 +85,12 @@ class Mapper16RealGameBootTest {
         // the game wrote to the register window. (PRG bank ends at 0 for many
         // games, so we don't require >1 PRG distinct values — just that CHR
         // banking is being driven, which a visible title screen implies.)
-        Assert.assertTrue(
-            "$label never wrote to the CHR register ($progress) — the register window is not wired",
-            chrDistinct.size > 1 || chrDistinct.contains(0).not()
-        )
+        Assertions.assertTrue(chrDistinct.size > 1 || chrDistinct.contains(0).not()
+        , "$label never wrote to the CHR register ($progress) — the register window is not wired")
         // 1500 instructions/frame is a healthy boot; a frozen game does <500.
         // (Bandai FCG games spend a lot of time in idle loops between NMIs.)
-        Assert.assertTrue(
-            "$label barely ran ($progress) — game is stuck",
-            totalInstructions > 200_000
-        )
+        Assertions.assertTrue(totalInstructions > 200_000
+        , "$label barely ran ($progress) — game is stuck")
     }
 
     @Test
@@ -122,8 +118,8 @@ class Mapper16RealGameBootTest {
     }
 
     private fun maybeRunMesen2Diff(rom: Path, label: String, frameNumber: Int) {
-        assumeTrue("$label ROM not found at $rom", Files.exists(rom))
-        assumeTrue("Mesen2 not available", Mesen2StateCapturer.isMesen2Available())
+        assumeTrue(Files.exists(rom), "$label ROM not found at $rom")
+        assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
         if (System.getenv("NESTLIN_RUN_MESEN2_DIFF")?.toBooleanStrictOrNull() != true) {
             println("Skipping byte-diff for $label (set NESTLIN_RUN_MESEN2_DIFF=1 to enable)")
             return
