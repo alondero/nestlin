@@ -95,8 +95,20 @@ class Controller {
         } else {
             buttons = buttons and button.mask.inv()
         }
-        
+
         // If strobe is active, update the shift register immediately (transparent latch)
+        if (strobe) {
+            shiftRegister = buttons
+        }
+    }
+
+    /**
+     * Overwrite the entire button bitmap in one shot (bit order: A=0 … Right=7).
+     * Used by the movie replayer to latch a whole frame's input atomically, rather than
+     * issuing eight [setButton] calls. Honours the transparent-latch rule like [setButton].
+     */
+    fun setButtonBitmap(value: Int) {
+        buttons = value and 0xFF
         if (strobe) {
             shiftRegister = buttons
         }

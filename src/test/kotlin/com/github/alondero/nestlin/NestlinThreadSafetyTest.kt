@@ -2,8 +2,7 @@ package com.github.alondero.nestlin
 
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
-import org.junit.Assert.fail
-import org.junit.Test
+import org.junit.jupiter.api.Test
 import java.lang.reflect.Modifier
 
 /**
@@ -67,8 +66,12 @@ class NestlinThreadSafetyTest {
         if (thread.isAlive) {
             thread.interrupt()
             thread.join(1_000)
-            fail("Nestlin.start() did not return within 2s of stop(). " +
-                "The running flag is likely not @Volatile — see issue #12.")
+            // JUnit 5's fail(String) is declared `<V> V`, which Kotlin can't infer here;
+            // throw the underlying assertion error directly (see junit5-migration-lessons memory).
+            throw org.opentest4j.AssertionFailedError(
+                "Nestlin.start() did not return within 2s of stop(). " +
+                    "The running flag is likely not @Volatile — see issue #12."
+            )
         }
     }
 }
