@@ -76,6 +76,35 @@ class NestlinApplication : FrameListener, Application() {
         strokeWidth = 1.0
         isVisible = false
     }
+    // Save-state feedback toast (issue #129). Same scene-graph approach as
+    // the fast-forward indicator — overlaid on canvasHolder rather than
+    // pixels poked into frameImage, so it stays a crisp 18px no matter the
+    // canvas upscale or fullscreen state. Anchored bottom-centre per the
+    // issue. The pill is semi-transparent so the game pixels it partially
+    // covers stay visible during the brief display window.
+    //
+    // Why Label instead of Text: Label gets a CSS-backed pill background +
+    // internal padding for free. Outlined Text was legible on dark scenes
+    // but disappeared on bright NES backdrops (Kirby's pink title screen);
+    // a 72%-opacity black pill is the standard "transient overlay" treatment.
+    private val toastController = ToastController()
+    private val toastIndicator = javafx.scene.control.Label("").apply {
+        font = javafx.scene.text.Font.font("Monospaced", javafx.scene.text.FontWeight.BOLD, 18.0)
+        // Pill: semi-transparent black background, rounded ends, generous
+        // horizontal padding so short messages still look like a pill not
+        // a square. Background-radius matches the height so the corners
+        // form true semicircles, mobile-toast style.
+        style = "-fx-background-color: rgba(0, 0, 0, 0.72);" +
+                "-fx-background-radius: 14;" +
+                "-fx-padding: 6 14 6 14;"
+        // Cap the width and wrap long error messages (e.g. multi-line
+        // IncompatibleSaveStateException diagnostics) so the pill never
+        // extends past the canvas at small upscale factors.
+        maxWidth = (RESOLUTION_WIDTH * 2).toDouble()
+        isWrapText = true
+        textAlignment = javafx.scene.text.TextAlignment.CENTER
+        isVisible = false
+    }
     private var running = false
     // Frame buffer synchronization for thread-safe screenshot capture
     private val frameBufferLock = Any()
@@ -331,6 +360,16 @@ class NestlinApplication : FrameListener, Application() {
             StackPane.setAlignment(movieIndicator, javafx.geometry.Pos.TOP_LEFT)
             StackPane.setMargin(movieIndicator, javafx.geometry.Insets(4.0, 6.0, 0.0, 0.0))
 
+            // Save-state toast: pinned bottom-centre with a 28px inset. The
+            // pill is semi-transparent (0.72 alpha) so the game pixels behind
+            // it remain visible — important because at integer scales the
+            // canvas fills the holder bottom-up and there is no letterbox
+            // gap to sit in. Toast duration is brief (~1s success / ~2.5s
+            // error) so the partial occlusion is tolerable.
+            canvasHolder.children.add(toastIndicator)
+            StackPane.setAlignment(toastIndicator, javafx.geometry.Pos.BOTTOM_CENTER)
+            StackPane.setMargin(toastIndicator, javafx.geometry.Insets(0.0, 0.0, 28.0, 0.0))
+
             // Letterbox area outside the scaled canvas paints black.
             canvasHolder.style = "-fx-background-color: black;"
             // Decouple holder's min size from the Group's bounds. Without this, the scaled
@@ -519,6 +558,11 @@ class NestlinApplication : FrameListener, Application() {
                 }
                 // Same cheap-toggle pattern for the REC/PLAY movie indicator.
                 refreshMovieIndicator()
+
+                // Save-state toast: pull from the controller each frame. We're
+                // already on the JavaFX Application Thread (AnimationTimer.handle
+                // runs here), so direct scene-node mutation is safe.
+                refreshToastIndicator(System.currentTimeMillis())
             }
 
         }.start()
@@ -678,6 +722,9 @@ class NestlinApplication : FrameListener, Application() {
             nestlin.powerReset()
             nestlin.loadBatteryRam(romPath)
             clearPauseState()
+            // Drop any stale "Saved/Loaded slot N" message from the previous ROM
+            // before its slot CRC changes underneath the user.
+            toastController.clear()
             updateTitle()
             // Refresh the slot menu: new ROM = new CRC = different slot files.
             updateSlotMenu()
@@ -775,6 +822,9 @@ class NestlinApplication : FrameListener, Application() {
         nestlin.load(path)
         nestlin.powerReset()
         clearPauseState()
+        // Drop any stale "Saved/Loaded slot N" toast from the previous ROM —
+        // the slot CRC changes underneath the user (parallel to handleLoadGame).
+        toastController.clear()
         updateTitle()
         // Refresh slot menu so each slot's label reflects disk state for
         // the new ROM's CRC. Without this, a user loading ROM B would see
@@ -797,9 +847,11 @@ class NestlinApplication : FrameListener, Application() {
             try {
                 nestlin.saveState(file.toPath())
                 println("[STATE] Saved to: ${file.absolutePath}")
+                showToast("Saved ${file.name}")
             } catch (e: Exception) {
                 println("[STATE] Save failed: ${e.message}")
                 e.printStackTrace()
+                showToast("Save failed: ${e.message ?: "unknown error"}", ToastSeverity.ERROR)
                 Platform.runLater { showError("Save Failed", e.message ?: "Unknown error") }
             }
         }
@@ -818,12 +870,19 @@ class NestlinApplication : FrameListener, Application() {
             try {
                 nestlin.loadState(file.toPath())
                 println("[STATE] Loaded from: ${file.absolutePath}")
+                showToast("Loaded ${file.name}")
             } catch (e: SaveState.IncompatibleSaveStateException) {
+                // The toast itself is the user feedback; the legacy modal
+                // Alert was the only feedback before issue #129 and is now
+                // redundant with the red pill (and intrusive — it pauses
+                // gameplay until the user clicks OK). Keep the println for
+                // log diagnostics.
                 println("[STATE] Incompatible save: ${e.message}")
-                Platform.runLater { showError("Incompatible Save State", e.message ?: "") }
+                showToast("Incompatible: ${e.message ?: "unknown reason"}", ToastSeverity.ERROR)
             } catch (e: Exception) {
                 println("[STATE] Load failed: ${e.message}")
                 e.printStackTrace()
+                showToast("Load failed: ${e.message ?: "unknown error"}", ToastSeverity.ERROR)
                 Platform.runLater { showError("Load Failed", e.message ?: "Unknown error") }
             }
         }
@@ -849,10 +908,12 @@ class NestlinApplication : FrameListener, Application() {
                 nestlin.saveState(stateOut)
                 saveStateSlotManager.save(slot, stateOut.toByteArray(), frameRgb)
                 println("[STATE] Saved slot $slot: ${saveStateSlotManager.statePath(slot)}")
+                showToast("Saved to slot $slot")
                 Platform.runLater { updateSlotMenu() }
             } catch (e: Exception) {
                 println("[STATE] Slot $slot save failed: ${e.message}")
                 e.printStackTrace()
+                showToast("Slot $slot save failed: ${e.message ?: "unknown error"}", ToastSeverity.ERROR)
             }
         }
     }
@@ -870,14 +931,19 @@ class NestlinApplication : FrameListener, Application() {
                 val stateBytes = saveStateSlotManager.loadStateBytes(slot)
                 nestlin.loadState(java.io.ByteArrayInputStream(stateBytes))
                 println("[STATE] Loaded slot $slot: ${saveStateSlotManager.statePath(slot)}")
+                showToast("Loaded slot $slot")
             } catch (e: java.nio.file.NoSuchFileException) {
                 println("[STATE] Slot $slot is empty")
+                showToast("Slot $slot is empty", ToastSeverity.SUBTLE)
             } catch (e: SaveState.IncompatibleSaveStateException) {
+                // Toast alone — see handleLoadState's parallel branch for the
+                // rationale on dropping the modal Alert for issue #129.
                 println("[STATE] Slot $slot is incompatible: ${e.message}")
-                Platform.runLater { showError("Incompatible Save State", e.message ?: "") }
+                showToast("Slot $slot incompatible: ${e.message ?: "unknown reason"}", ToastSeverity.ERROR)
             } catch (e: Exception) {
                 println("[STATE] Slot $slot load failed: ${e.message}")
                 e.printStackTrace()
+                showToast("Slot $slot load failed: ${e.message ?: "unknown error"}", ToastSeverity.ERROR)
             }
         }
     }
@@ -1209,6 +1275,37 @@ class NestlinApplication : FrameListener, Application() {
         nestlin.getController2().pendingButtons = 0
     }
 
+    /**
+     * Show a save-state toast (issue #129) at the current wall-clock. Thread-safe:
+     * only mutates the controller's volatile field, never a scene-graph node. The
+     * AnimationTimer picks it up on the next frame via [refreshToastIndicator].
+     */
+    private fun showToast(text: String, severity: ToastSeverity = ToastSeverity.INFO) {
+        toastController.show(text, severity, System.currentTimeMillis())
+    }
+
+    /**
+     * Reflect the controller's current toast (or its absence) onto the JavaFX
+     * Label. Called every frame from the AnimationTimer. The text fill is
+     * looked up from a per-severity constant (TOAST_FILLS) to avoid allocating
+     * a new Color every frame — Paint.equals is reference-based on parsed
+     * colours, so a fresh Color.web() would force textFill = ... on every
+     * frame even though the visible colour is unchanged.
+     */
+    private fun refreshToastIndicator(nowMillis: Long) {
+        val toast = toastController.currentToast(nowMillis)
+        if (toast == null) {
+            if (toastIndicator.isVisible) toastIndicator.isVisible = false
+            return
+        }
+        // Only mutate the scene node when content actually changes, mirroring
+        // the fast-forward indicator's cheap-toggle pattern.
+        if (toastIndicator.text != toast.text) toastIndicator.text = toast.text
+        val targetFill = TOAST_FILLS.getValue(toast.severity)
+        if (toastIndicator.textFill != targetFill) toastIndicator.textFill = targetFill
+        if (!toastIndicator.isVisible) toastIndicator.isVisible = true
+    }
+
     private fun handleHardReset() {
         if (currentRomPath == null) {
             val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
@@ -1488,6 +1585,16 @@ class NestlinApplication : FrameListener, Application() {
             javafx.scene.input.KeyCode.F5, javafx.scene.input.KeyCode.F6,
             javafx.scene.input.KeyCode.F7, javafx.scene.input.KeyCode.F8,
             javafx.scene.input.KeyCode.F9
+        )
+
+        // Per-severity text fill for the save-state toast (issue #129).
+        // Hoisted to a constant map so refreshToastIndicator doesn't allocate
+        // a new Color per AnimationTimer frame (Paint comparison is
+        // reference-based for Color.web-parsed colours).
+        private val TOAST_FILLS: Map<ToastSeverity, javafx.scene.paint.Color> = mapOf(
+            ToastSeverity.INFO   to javafx.scene.paint.Color.web("#FFFFFF"),
+            ToastSeverity.SUBTLE to javafx.scene.paint.Color.web("#CCCCCC"),
+            ToastSeverity.ERROR  to javafx.scene.paint.Color.web("#FF6B6B"),
         )
     }
 }
