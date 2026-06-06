@@ -3,7 +3,6 @@ package com.github.alondero.nestlin
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.jupiter.api.Test
-import org.opentest4j.AssertionFailedError
 import java.lang.reflect.Modifier
 
 /**
@@ -67,12 +66,12 @@ class NestlinThreadSafetyTest {
         if (thread.isAlive) {
             thread.interrupt()
             thread.join(1_000)
-            // Use AssertionFailedError directly: JUnit 5's Assertions.fail(Supplier<String>)
-            // has a phantom <V> type parameter that defeats inference (see
-            // junit5-migration-lessons memory). Throwing the raw opentest4j type
-            // gets the same effect with no inference ambiguity.
-            throw AssertionFailedError("Nestlin.start() did not return within 2s of stop(). " +
-                "The running flag is likely not @Volatile — see issue #12.")
+            // JUnit 5's fail(String) is declared `<V> V`, which Kotlin can't infer here;
+            // throw the underlying assertion error directly (see junit5-migration-lessons memory).
+            throw org.opentest4j.AssertionFailedError(
+                "Nestlin.start() did not return within 2s of stop(). " +
+                    "The running flag is likely not @Volatile — see issue #12."
+            )
         }
     }
 }
