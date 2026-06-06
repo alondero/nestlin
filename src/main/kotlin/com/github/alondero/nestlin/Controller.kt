@@ -7,6 +7,17 @@ class Controller {
     var buttons: Int = 0 // Bitmap: Right Left Down Up Start Select B A (0..7)
                          // Wait, standard order read is A, B, Select, Start, Up, Down, Left, Right.
                          // So bit 0 should be A.
+
+    /**
+     * Keyboard input buffer, separate from the live [buttons] the game actually polls. While a
+     * movie is being recorded in real time, the keyboard writes here instead of to [buttons] —
+     * the live [buttons] is held constant for the entire frame, and a frame-end latch hook
+     * copies this buffer to [buttons] once per frame. The recorder captures the (frozen) [buttons]
+     * so a human mid-frame button release doesn't leak into the recorded row. When no movie
+     * session is active, [pendingButtons] is unused and [buttons] is written directly.
+     */
+    var pendingButtons: Int = 0
+
     private var shiftRegister: Int = 0
     private var strobe: Boolean = false
 
@@ -81,12 +92,17 @@ class Controller {
         out.writeInt(buttons)
         out.writeInt(shiftRegister)
         out.writeBoolean(strobe)
+        // pendingButtons is intentionally NOT saved: it's a transient keyboard buffer
+        // that's only meaningful during an active movie session. On state load, the game
+        // resumes with the latched `buttons` value; the pending buffer is reset to match
+        // so the user's most recent input is preserved.
     }
 
     fun loadState(input: DataInput) {
         buttons = input.readInt()
         shiftRegister = input.readInt()
         strobe = input.readBoolean()
+        pendingButtons = buttons
     }
 
     fun setButton(button: Button, pressed: Boolean) {
@@ -109,6 +125,23 @@ class Controller {
      */
     fun setButtonBitmap(value: Int) {
         buttons = value and 0xFF
+        if (strobe) {
+            shiftRegister = buttons
+        }
+    }
+
+    /**
+     * Commit the keyboard buffer ([pendingButtons]) to the live game-visible [buttons].
+     * Called by the real-time movie recorder's frame-end latch hook — exactly once per
+     * frame, AFTER the recorder has captured the current [buttons] for the row that just
+     * finished. The game will see this committed value as the input for the upcoming
+     * frame, which is what the recorder will capture at the *next* frame end.
+     *
+     * Honours the transparent-latch rule: if a strobe is high, the shift register mirrors
+     * the new value so the next `$4016` read returns the just-committed bit.
+     */
+    fun commitPendingToButtons() {
+        buttons = pendingButtons and 0xFF
         if (strobe) {
             shiftRegister = buttons
         }
