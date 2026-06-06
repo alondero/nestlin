@@ -5,8 +5,14 @@ import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Controller
 import com.github.alondero.nestlin.SaveState
 import com.github.alondero.nestlin.apu.AudioResampler
+import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.input.GamepadInput
 import com.github.alondero.nestlin.input.InputConfig
+import com.github.alondero.nestlin.movie.Fm2Format
+import com.github.alondero.nestlin.movie.Movie
+import com.github.alondero.nestlin.movie.MovieLivePlayer
+import com.github.alondero.nestlin.movie.MovieLiveRecorder
+import com.github.alondero.nestlin.movie.MovieState
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
 import com.github.alondero.nestlin.ppu.RESOLUTION_WIDTH
@@ -133,6 +139,39 @@ class NestlinApplication : FrameListener, Application() {
     // Load Recent submenu
     private val recentRomsMenu = Menu("Load Recent")
 
+    // --- Movie record/playback state (issue #123) ---
+    //
+    // Exactly one of [liveRecorder] / [livePlayer] is non-null when a movie session is
+    // active. The keyboard handler routes input differently based on [movieState]:
+    //   - NONE:       keyboard writes directly to controller.buttons (normal play)
+    //   - RECORDING:  keyboard writes to controller.pendingButtons; the frame-end latch
+    //                 hook (MovieLiveRecorder) commits pending -> buttons once per frame
+    //                 and captures the previous value as the recorded row.
+    //   - PLAYING:    keyboard writes are dropped; the frame-end latch hook
+    //                 (MovieLivePlayer) writes the next movie row to controller.buttons.
+    //
+    // @Volatile because the JavaFX thread writes and the emulation thread reads via the
+    // keyboard handler. The latch hooks are installed/removed on the JavaFX thread.
+    @Volatile
+    private var movieState: MovieState = MovieState.NONE
+    private var liveRecorder: MovieLiveRecorder? = null
+    private var livePlayer: MovieLivePlayer? = null
+    // Current FM2 file path (set when recording stops with "Save" or when playback starts).
+    // Surfaced in the REC/PLAY indicator as the "what are we recording" hint.
+    private var activeMoviePath: java.nio.file.Path? = null
+    // The on-screen REC/PLAY indicator. Same scene-graph-Text pattern as the fast-forward
+    // indicator: top-left corner (fast-forward is top-right so they don't collide), gold/red
+    // glyph with a black stroke, hidden when no movie is active.
+    private val movieIndicator = javafx.scene.text.Text("").apply {
+        font = javafx.scene.text.Font.font("Monospaced", javafx.scene.text.FontWeight.BOLD, 16.0)
+        fill = javafx.scene.paint.Color.web("#FF4040")
+        stroke = javafx.scene.paint.Color.BLACK
+        strokeWidth = 1.0
+        isVisible = false
+    }
+    // Cached so the AnimationTimer's per-frame refresh can decide whether to repaint.
+    private var movieIndicatorText: String = ""
+
     override fun start(stage: Stage) {
         // Assign lateinit *before* the apply block — applyScale (called inside) reads this.stage.
         this.stage = stage
@@ -257,6 +296,23 @@ class NestlinApplication : FrameListener, Application() {
             emulationMenu.items.add(pauseItem)
             menuBar.menus.add(emulationMenu)
 
+            // Movie menu (issue #123). Three actions: toggle recording, load + play a movie,
+            // stop whatever session is active. Hotkeys: Ctrl+Shift+R (record), Ctrl+Shift+P
+            // (play), Esc (stop). The "Stop" item is always enabled — when no session is
+            // active it's a no-op, which is harmless and lets the Esc hotkey work uniformly.
+            val movieMenu = javafx.scene.control.Menu("Movie")
+            val startRecordItem = MenuItem("Start Recording")
+            startRecordItem.accelerator = javafx.scene.input.KeyCombination.keyCombination("Ctrl+Shift+R")
+            startRecordItem.setOnAction { handleStartRecording() }
+            val playMovieItem = MenuItem("Play Movie...")
+            playMovieItem.accelerator = javafx.scene.input.KeyCombination.keyCombination("Ctrl+Shift+P")
+            playMovieItem.setOnAction { handlePlayMovie() }
+            val stopMovieItem = MenuItem("Stop Movie")
+            stopMovieItem.accelerator = javafx.scene.input.KeyCombination.keyCombination("Esc")
+            stopMovieItem.setOnAction { handleStopMovie() }
+            movieMenu.items.addAll(startRecordItem, playMovieItem, stopMovieItem)
+            menuBar.menus.add(movieMenu)
+
             // Create layout with menu bar and the canvas holder. VBox.setVgrow lets the
             // holder expand to fill remaining vertical space in fullscreen / Fit mode.
             val root = VBox()
@@ -267,6 +323,13 @@ class NestlinApplication : FrameListener, Application() {
             canvasHolder.children.add(fastForwardIndicator)
             StackPane.setAlignment(fastForwardIndicator, javafx.geometry.Pos.TOP_RIGHT)
             StackPane.setMargin(fastForwardIndicator, javafx.geometry.Insets(4.0, 6.0, 0.0, 0.0))
+
+            // Overlay the REC/PLAY indicator on top-LEFT so it doesn't collide with the
+            // fast-forward indicator. Same Text-node pattern — crisp at any scale, hidden
+            // when no movie session is active.
+            canvasHolder.children.add(movieIndicator)
+            StackPane.setAlignment(movieIndicator, javafx.geometry.Pos.TOP_LEFT)
+            StackPane.setMargin(movieIndicator, javafx.geometry.Insets(4.0, 6.0, 0.0, 0.0))
 
             // Letterbox area outside the scaled canvas paints black.
             canvasHolder.style = "-fx-background-color: black;"
@@ -335,13 +398,47 @@ class NestlinApplication : FrameListener, Application() {
                         println("[APP] Speed throttling ${if (nestlin.config.speedThrottlingEnabled) "enabled" else "disabled"}")
                         event.consume()
                     }
-                    // Ctrl+P: toggle pause
-                    event.code == javafx.scene.input.KeyCode.P && event.isControlDown -> {
+                    // Ctrl+P: toggle pause. The `!isShiftDown` guard is load-bearing — the
+                    // Ctrl+Shift+P "Play Movie" hotkey must NOT be swallowed by this branch
+                    // (per [[function-key-modifier-ordering]], modifier-specific branches
+                    // come BEFORE the bare-modifier branch, or the bare branch wins).
+                    event.code == javafx.scene.input.KeyCode.P
+                        && event.isControlDown && !event.isShiftDown -> {
                         nestlin.config.paused = !nestlin.config.paused
                         pauseMenuItem?.isSelected = nestlin.config.paused
                         updateTitle()
                         println("[APP] Emulation ${if (nestlin.config.paused) "paused" else "resumed"}")
                         event.consume()
+                    }
+                    // Ctrl+Shift+R: toggle recording (issue #123). If a session is already
+                    // active, the toggle becomes a stop. We check the modifier EXPLICITLY
+                    // (per [[function-key-modifier-ordering]]) so a bare R keypress still
+                    // routes to handleInput for the game to see.
+                    event.code == javafx.scene.input.KeyCode.R
+                        && event.isControlDown && event.isShiftDown -> {
+                        if (movieState == MovieState.RECORDING) {
+                            handleStopMovie()
+                        } else if (movieState == MovieState.NONE) {
+                            handleStartRecording()
+                        }
+                        event.consume()
+                    }
+                    // Ctrl+Shift+P: load + play a movie. No-op if a session is already active.
+                    event.code == javafx.scene.input.KeyCode.P
+                        && event.isControlDown && event.isShiftDown -> {
+                        if (movieState == MovieState.NONE) {
+                            handlePlayMovie()
+                        }
+                        event.consume()
+                    }
+                    // Esc: stop any active movie session (record or playback). Always
+                    // captured — Esc is a natural "cancel" gesture and we want it to win
+                    // over game input regardless of focus.
+                    event.code == javafx.scene.input.KeyCode.ESCAPE -> {
+                        if (movieState != MovieState.NONE) {
+                            handleStopMovie()
+                            event.consume()
+                        }
                     }
                     // F1..F9: load slot N (F1=slot 1, F2=slot 2, etc.)
                     // Shift+F1..F9: save into slot N. Shift+save mirrors FCEUX's
@@ -420,6 +517,8 @@ class NestlinApplication : FrameListener, Application() {
                 if (fastForwardIndicator.isVisible != fastForward.active) {
                     fastForwardIndicator.isVisible = fastForward.active
                 }
+                // Same cheap-toggle pattern for the REC/PLAY movie indicator.
+                refreshMovieIndicator()
             }
 
         }.start()
@@ -568,6 +667,9 @@ class NestlinApplication : FrameListener, Application() {
         val file = chooser.showOpenDialog(stage)
         if (file != null) {
             val romPath = file.toPath()
+            // Drop any active movie session — a recording against ROM A is meaningless
+            // once ROM B loads, and playback must restart from a freshly-cold-booted game.
+            cancelMovieSession()
             stopEmulation()
             // Flush the previous ROM's SRAM before its mapper is replaced.
             currentRomPath?.let { nestlin.saveBatteryRam(it) }
@@ -666,6 +768,8 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     private fun loadRom(path: Path) {
+        // Drop any active movie session — playback/recording is per-ROM.
+        cancelMovieSession()
         stopEmulation()
         currentRomPath = path
         nestlin.load(path)
@@ -841,6 +945,270 @@ class NestlinApplication : FrameListener, Application() {
         alert.showAndWait()
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Movie record / playback (issue #123)
+    //
+    // The state machine has three states (MovieState). All transitions are owned by the
+    // JavaFX thread; the emulation thread only ever invokes the latch hook that's installed
+    // by MovieLiveRecorder / MovieLivePlayer. We deliberately do NOT call startEmulation /
+    // stopEmulation here — the latch hooks run in the existing emulation loop, so adding
+    // movie support is purely additive on top of the normal play flow.
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * Begin recording the current ROM. Prompts for a destination `.fm2` file (defaults to
+     * `<rom-name>.fm2` next to the ROM). On success: starts a [MovieLiveRecorder], flips
+     * [movieState] to RECORDING, and seeds the controller's pending pad with the current
+     * buttons so the first captured row matches what the game just saw.
+     */
+    private fun handleStartRecording() {
+        if (currentRomPath == null) {
+            showError("No ROM Loaded", "Load a game before recording.")
+            return
+        }
+        if (movieState != MovieState.NONE) return
+
+        val chooser = FileChooser()
+        chooser.title = "Record Movie"
+        chooser.extensionFilters.add(
+            FileChooser.ExtensionFilter("FCEUX Movie (*.fm2)", "*.fm2")
+        )
+        chooser.initialFileName = defaultMovieFileName()
+        val file = chooser.showSaveDialog(stage) ?: return
+
+        val rom = currentRomPath!!
+        val romImage = rom.load() ?: run {
+            showError("Recording Failed", "Could not load ROM: $rom")
+            return
+        }
+        val checksum = Fm2Format.romChecksum(romImage)
+        val palFlag = nestlin.currentRegion() == Region.PAL
+
+        // Power-cycle the machine so the recording starts from a known boot state
+        // (mirrors FCEUX / Mesen "Movie → Record from Power-on" semantics). Without
+        // this, a recording that started mid-game would carry whatever transient RAM
+        // / mapper state the user happened to be in, and replaying from a different
+        // boot would diverge on frame 1. performWithEmulationPaused guarantees the
+        // reset sees a quiescent CPU/PPU/APU; the recorder installs its hook AFTER
+        // the reset, so the first captured row reflects the post-reset state.
+        performWithEmulationPaused {
+            resetRomForMovieSession(rom)
+        }
+
+        // The reset zeroed the controllers; seed pending with the (now 0) buttons so
+        // the latch's first commit is a no-op and the very first captured row matches
+        // the freshly-booted pad.
+        nestlin.getController1().pendingButtons = nestlin.getController1().buttons
+        nestlin.getController2().pendingButtons = nestlin.getController2().buttons
+
+        val recorder = MovieLiveRecorder(
+            nestlin = nestlin,
+            romFilename = rom.fileName.toString(),
+            romChecksum = checksum,
+            palFlag = palFlag,
+        )
+        recorder.start()
+        liveRecorder = recorder
+        activeMoviePath = file.toPath()
+        movieState = MovieState.RECORDING
+        println("[MOVIE] Recording started (from power-on) → ${file.absolutePath}")
+    }
+
+    /**
+     * Stop any active movie session (record OR playback) and clean up the latch hook.
+     * For recordings, prompts the user to save the captured FM2 (defaults to the file
+     * chosen at record-start; if the user cancels, the recording is discarded).
+     */
+    private fun handleStopMovie() {
+        when (movieState) {
+            MovieState.NONE -> return
+            MovieState.RECORDING -> {
+                val recorder = liveRecorder ?: return
+                val movie = recorder.stopAndSnapshot()
+                liveRecorder = null
+                movieState = MovieState.NONE
+
+                val target = activeMoviePath
+                if (target == null) {
+                    println("[MOVIE] Recording stopped (${movie.length} frames); no file to save to")
+                } else {
+                    try {
+                        java.nio.file.Files.newOutputStream(target).use { out ->
+                            out.write(Fm2Format.write(movie).toByteArray(Charsets.UTF_8))
+                        }
+                        println("[MOVIE] Recording saved (${movie.length} frames) → $target")
+                    } catch (e: Exception) {
+                        showError("Save Failed", "Could not write FM2: ${e.message}")
+                    }
+                }
+                activeMoviePath = null
+            }
+            MovieState.PLAYING -> {
+                val player = livePlayer ?: return
+                val played = player.framesDrivenCount
+                player.stop()
+                livePlayer = null
+                movieState = MovieState.NONE
+                activeMoviePath = null
+                println("[MOVIE] Playback stopped after $played / ${player.totalFrames} frames")
+            }
+        }
+        // Restore the controller's pending pad to the current buttons so the next key
+        // event after a stop has a sensible baseline. Otherwise a stale pending value
+        // would get committed on the next frame.
+        nestlin.getController1().pendingButtons = nestlin.getController1().buttons
+        nestlin.getController2().pendingButtons = nestlin.getController2().buttons
+    }
+
+    /**
+     * Open a file dialog for an `.fm2`, load it, and start real-time playback. The
+     * MovieLivePlayer installs its own latch hook that writes each row to
+     * controller.buttons at every frame boundary, so the game sees the movie input
+     * without any further UI plumbing.
+     */
+    private fun handlePlayMovie() {
+        if (currentRomPath == null) {
+            showError("No ROM Loaded", "Load a game before playing a movie.")
+            return
+        }
+        if (movieState != MovieState.NONE) return
+
+        val chooser = FileChooser()
+        chooser.title = "Play Movie"
+        chooser.extensionFilters.add(
+            FileChooser.ExtensionFilter("FCEUX Movie (*.fm2)", "*.fm2")
+        )
+        val file = chooser.showOpenDialog(stage) ?: return
+
+        val movie = try {
+            java.nio.file.Files.newInputStream(file.toPath()).use { input ->
+                Fm2Format.read(input.readBytes().toString(Charsets.UTF_8))
+            }
+        } catch (e: Exception) {
+            showError("Load Failed", "Could not parse FM2: ${e.message}")
+            return
+        }
+        if (movie.inputs.isEmpty()) {
+            showError("Empty Movie", "The selected .fm2 file has no input rows.")
+            return
+        }
+
+        // Same "boot from power-on" reset as recording: a movie file only encodes the
+        // input log, not the boot state. If we don't reset, the first frame of playback
+        // sees whatever state the user happened to be in when they hit Ctrl+Shift+P —
+        // which won't match the boot state the recording started from, so the replay
+        // diverges on frame 1.
+        val rom = currentRomPath!!
+        performWithEmulationPaused {
+            resetRomForMovieSession(rom)
+        }
+
+        val player = MovieLivePlayer(nestlin, movie)
+        player.start()
+        livePlayer = player
+        activeMoviePath = file.toPath()
+        movieState = MovieState.PLAYING
+        println("[MOVIE] Playing ${movie.inputs.size}-frame movie from power-on → ${file.absolutePath}")
+    }
+
+    /**
+     * Tear down the active movie session WITHOUT saving. Used when the ROM is reloaded
+     * (load / hard reset / file watcher) or when the application is exiting.
+     */
+    private fun cancelMovieSession() {
+        if (movieState == MovieState.NONE) return
+        liveRecorder?.cancel()
+        liveRecorder = null
+        livePlayer?.stop()
+        livePlayer = null
+        movieState = MovieState.NONE
+        activeMoviePath = null
+    }
+
+    /**
+     * Refresh the REC/PLAY indicator. Called every frame from the AnimationTimer. Uses
+     * the cheap-toggle pattern (only mutate the scene node when something actually
+     * changed), same approach as the fast-forward indicator refresh.
+     */
+    private fun refreshMovieIndicator() {
+        // End-of-movie auto-stop: the player reports isFinished once the last row's input
+        // has been written. We clean up here (JavaFX thread) rather than from inside the
+        // latch hook (emulation thread) so the on-screen indicator and any menu state can
+        // be touched without crossing threads. Idempotent — handleStopMovie is a no-op
+        // when movieState != PLAYING.
+        if (movieState == MovieState.PLAYING && livePlayer?.isFinished == true) {
+            handleStopMovie()
+        }
+
+        val text = when (movieState) {
+            MovieState.NONE -> ""
+            MovieState.RECORDING -> {
+                val n = liveRecorder?.frameCount ?: 0
+                "● REC $n"
+            }
+            MovieState.PLAYING -> {
+                val n = (livePlayer?.currentRow ?: -1) + 1
+                val total = livePlayer?.totalFrames ?: 0
+                if (livePlayer?.isFinished == true) "▶ END" else "▶ PLAY $n/$total"
+            }
+        }
+        if (text != movieIndicatorText) {
+            movieIndicatorText = text
+            movieIndicator.text = text
+        }
+        val shouldShow = movieState != MovieState.NONE
+        if (movieIndicator.isVisible != shouldShow) {
+            movieIndicator.isVisible = shouldShow
+        }
+        val color = when (movieState) {
+            MovieState.RECORDING -> javafx.scene.paint.Color.web("#FF4040")
+            MovieState.PLAYING -> javafx.scene.paint.Color.web("#40FF40")
+            else -> javafx.scene.paint.Color.web("#FF4040")
+        }
+        if (movieIndicator.fill != color) {
+            movieIndicator.fill = color
+        }
+    }
+
+    private fun defaultMovieFileName(): String {
+        val romName = currentRomPath?.fileName?.toString()
+            ?.removeSuffix(".nes")?.removeSuffix(".7z") ?: "movie"
+        return "$romName.fm2"
+    }
+
+    /**
+     * Reload [romPath] from disk and power-cycle the machine, preserving battery RAM.
+     *
+     * Used to put the emulator in a known boot state before a movie record or playback
+     * session — without this, the captured/played movie would inherit whatever transient
+     * state the user happened to be in when they hit the hotkey, and the recording
+     * couldn't be reproduced deterministically (replaying from a different boot would
+     * diverge immediately).
+     *
+     * **Must be called from the JavaFX thread with emulation paused** — directly mutates
+     * CPU/PPU/APU/mapper state and the GamePak. Callers handle the stop/start around
+     * this method (see [performWithEmulationPaused] for the canonical wrapper).
+     */
+    private fun resetRomForMovieSession(romPath: Path) {
+        // Real cartridges keep their battery alive across a power-cycle. Mirror that:
+        // persist current SRAM, then reload it post-reset so the boot state matches
+        // what a real player would see after flicking the power switch.
+        nestlin.saveBatteryRam(romPath)
+        nestlin.load(romPath)
+        nestlin.powerReset()
+        nestlin.loadBatteryRam(romPath)
+        // powerReset() leaves the controllers untouched — the user may still have been
+        // holding a button when they hit the hotkey. For a movie session we want the
+        // game to see a "no buttons held" state on frame 0, otherwise the very first
+        // captured row of a recording (or the first latched row of a playback) would
+        // include a phantom press that wasn't part of the user's input. Clear both the
+        // live pad and the keyboard buffer.
+        nestlin.getController1().setButtonBitmap(0)
+        nestlin.getController1().pendingButtons = 0
+        nestlin.getController2().setButtonBitmap(0)
+        nestlin.getController2().pendingButtons = 0
+    }
+
     private fun handleHardReset() {
         if (currentRomPath == null) {
             val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
@@ -849,13 +1217,11 @@ class NestlinApplication : FrameListener, Application() {
             alert.showAndWait()
             return
         }
+        // Hard reset = same ROM, but a fresh boot. Drop any active movie session so
+        // playback doesn't get out of sync with the new boot state.
+        cancelMovieSession()
         stopEmulation()
-        // Real cartridges keep their battery alive across a power-cycle.
-        // Mirror that: persist current SRAM, then reload it post-reset.
-        nestlin.saveBatteryRam(currentRomPath!!)
-        nestlin.load(currentRomPath!!)
-        nestlin.powerReset()
-        nestlin.loadBatteryRam(currentRomPath!!)
+        resetRomForMovieSession(currentRomPath!!)
         clearPauseState()
         updateTitle()
         // CRC is unchanged by a hard reset, but refresh the slot menu
@@ -865,6 +1231,14 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     private fun handleExit() {
+        // If we're recording, save the partial movie before tearing down — losing the
+        // last few seconds of input is annoying but better than losing the whole run.
+        // We reuse the regular stop-and-save path, which also clears the latch hook.
+        if (movieState == MovieState.RECORDING) {
+            handleStopMovie()
+        } else {
+            cancelMovieSession()
+        }
         stopEmulation()
         currentRomPath?.let { nestlin.saveBatteryRam(it) }
         Platform.exit()
@@ -1049,10 +1423,29 @@ class NestlinApplication : FrameListener, Application() {
             return
         }
 
-        // Use configurable keyboard mapping
+        // Use configurable keyboard mapping. Routing depends on movie state (issue #123):
+        //   - NONE:       write directly to the live pad. Game sees updates within the
+        //                 same frame they're typed — the standard NES-accurate behavior.
+        //   - RECORDING:  write to pendingButtons; the frame-end latch will commit once
+        //                 per frame so the game sees a per-frame-latched value.
+        //   - PLAYING:    drop the input — the latch hook is writing the next movie row
+        //                 to the controller, and we don't want a stray keypress to land
+        //                 in controller.buttons between latch commits.
         val controller = nestlin.getController1()
-        inputConfig.getButtonForKey(code)?.let { button ->
-            controller.setButton(button, pressed)
+        val button = inputConfig.getButtonForKey(code) ?: return
+        when (movieState) {
+            MovieState.NONE ->
+                controller.setButton(button, pressed)
+            MovieState.RECORDING -> {
+                val current = controller.pendingButtons
+                controller.pendingButtons = if (pressed)
+                    current or button.mask
+                else
+                    current and button.mask.inv()
+            }
+            MovieState.PLAYING -> {
+                // intentionally drop — the movie owns the input
+            }
         }
     }
 

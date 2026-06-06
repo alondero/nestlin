@@ -76,7 +76,19 @@ class Ppu(var memory: Memory) {
     private var spriteTileHighLatch: Byte = 0
     private var spritePatternAddrLatch: Int = 0
 
-    private var listener: FrameListener? = null
+    // Multicast frame listeners. The renderer (Application.frameUpdated) is one entry; the movie
+    // replayer is another. Listeners are fired in registration order at end-of-frame, so a later
+    // listener (e.g. a latch hook) can see the frame the renderer has already observed. Multicast
+    // was chosen over a dedicated movie hook so the PPU stays ignorant of input semantics.
+    //
+    // CopyOnWriteArrayList: the emulation thread iterates these at end-of-frame while the
+    // JavaFX thread may concurrently add/remove (when a movie session starts/stops). A regular
+    // ArrayList would throw ConcurrentModificationException on that interleaving — exactly
+    // what the latch hook add/remove does. CoW pays a small per-write cost (defensive copy
+    // on mutation) for lock-free, exception-free iteration, which is the right shape for
+    // "many readers, rare writer" (issue #123, post-review).
+    private val frameListeners = java.util.concurrent.CopyOnWriteArrayList<FrameListener>()
+    private val frameCompletionListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
     private var vBlank = false
     private var frame = Frame()
     private var frameCount = 0
@@ -85,7 +97,6 @@ class Ppu(var memory: Memory) {
 
     // Frame completion tracking for throttling
     private var frameCompletedThisTick = false
-    private var frameCompletionListener: (() -> Unit)? = null
 
     fun tick() {
         ticksElapsed++
@@ -227,12 +238,22 @@ class Ppu(var memory: Memory) {
     }
 
     private fun endFrame() {
-        listener?.frameUpdated(frame)
+        // Fire all registered frame listeners (renderer, then later consumers like the movie
+        // latch hook). Listeners run in registration order; if any one throws, the remaining
+        // listeners for this frame are skipped (we still reset scanline/vBlank below).
+        for (listener in frameListeners) {
+            listener.frameUpdated(frame)
+        }
         frameCount++
 
-        // Signal frame completion for throttling
+        // Signal frame completion for throttling + the movie latch hook. The latch hook uses
+        // this to commit the next frame's input, which is why it must fire AFTER the render
+        // listener — by the time the latch writes to controller.buttons, the renderer has
+        // already observed the frame that just ended.
         frameCompletedThisTick = true
-        frameCompletionListener?.invoke()
+        for (listener in frameCompletionListeners) {
+            listener.invoke()
+        }
 
         //  What to do here?
         scanline = 0
@@ -591,8 +612,23 @@ class Ppu(var memory: Memory) {
         }
     }
 
+    /**
+     * Register a frame listener. Multiple listeners are supported; all registered listeners
+     * fire in registration order at the end of each frame. Pre-existing single-slot callers
+     * (e.g. `NestlinApplication.frameUpdated`) continue to work — they're simply one entry
+     * in a list of one.
+     */
     fun addFrameListener(listener: FrameListener) {
-        this.listener = listener
+        frameListeners.add(listener)
+    }
+
+    /**
+     * Remove a previously-registered frame listener. Used by the movie recorder/player to
+     * detach its latch hook when the session ends. Safe to call with a listener that was
+     * never registered.
+     */
+    fun removeFrameListener(listener: FrameListener) {
+        frameListeners.remove(listener)
     }
 
     /**
@@ -607,11 +643,21 @@ class Ppu(var memory: Memory) {
     }
 
     /**
-     * Add a listener to be notified when a frame completes.
-     * Used for frame rate throttling and timing.
+     * Register a frame-completion listener. Fires at the end of each frame, AFTER the frame
+     * listeners (so the renderer has observed the frame first). Used by the throttle loop
+     * and by the movie replayer to commit per-frame input latches.
      */
     fun addFrameCompletionListener(listener: () -> Unit) {
-        frameCompletionListener = listener
+        frameCompletionListeners.add(listener)
+    }
+
+    /**
+     * Remove a previously-registered frame-completion listener. Used by the movie
+     * recorder/player to detach its latch hook when the session ends. Safe to call with a
+     * listener that was never registered.
+     */
+    fun removeFrameCompletionListener(listener: () -> Unit) {
+        frameCompletionListeners.remove(listener)
     }
 
     fun saveState(out: DataOutput) {
