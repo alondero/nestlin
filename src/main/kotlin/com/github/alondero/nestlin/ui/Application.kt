@@ -78,6 +78,10 @@ class NestlinApplication : FrameListener, Application() {
 
     private var displayConfig = DisplayConfig.load()
     private val scaleMenuItems = mutableMapOf<ScaleMode, javafx.scene.control.RadioMenuItem>()
+    // Slot menu items (File → Save State → Slot 1..9). Filled during start() and
+    // refreshed on ROM change and after every save. The map is keyed by slot
+    // number so handlers can find the item to update its label/disable state.
+    private val slotMenuItems = mutableMapOf<Int, javafx.scene.control.MenuItem>()
 
     // Cached windowed dimensions so we can restore the stage explicitly on fullscreen exit
     // (JavaFX on Windows doesn't always restore prior size reliably, especially in Fit mode
@@ -99,6 +103,14 @@ class NestlinApplication : FrameListener, Application() {
 
     // Screenshot management
     private val screenshotManager = ScreenshotManager(Paths.get("screenshots"))
+
+    // Slot-based save states (issue #45). Owns the savestates/<rom-crc>.slot-N
+    // directory layout. Initialised once on first access (`by lazy`) so the
+    // constructor's `Files.createDirectories` runs at most once per session,
+    // not once per save / per menu refresh / per F-key.
+    private val saveStateSlotManager by lazy {
+        SaveStateSlotManager(nestlin, Paths.get("savestates"))
+    }
 
     // Automated screenshot interval mode (for validation)
     private var screenshotIntervalSeconds: Int = 0
@@ -160,9 +172,42 @@ class NestlinApplication : FrameListener, Application() {
             val exitItem = MenuItem("Exit")
             exitItem.setOnAction { handleExit() }
 
-            fileMenu.items.addAll(loadGameItem, recentRomsMenu, hardResetItem, saveStateItem, loadStateItem, exitItem)
+            // Save State submenu: nine numbered slots that share a CRC-keyed
+            // directory with their PNG thumbnails. Each item is clickable to
+            // load the slot (issue #45 acceptance criteria), and disabled when
+            // the slot is empty. The slot submenu is refreshed on every ROM
+            // change and after every save so the labels always reflect disk
+            // state. F1..F9 is also set as the MenuItem accelerator so the
+            // hotkey shows up in the open menu as a right-aligned hint; the
+            // scene key filter is still the source of truth because
+            // MenuItem accelerators don't fire while the menu is hidden.
+            val slotMenu = Menu("Save State")
+            slotMenuItems.clear()
+            for (n in 1..9) {
+                val item = MenuItem("Slot $n (empty)")
+                item.accelerator = javafx.scene.input.KeyCombination.keyCombination("F$n")
+                item.setOnAction { handleSlotLoad(n) }
+                slotMenuItems[n] = item
+                slotMenu.items.add(item)
+            }
+            // Separator + escape hatches for users who still want arbitrary
+            // .nstl files outside the slot system (cross-emulator shares, etc.).
+            slotMenu.items.addAll(
+                javafx.scene.control.SeparatorMenuItem(),
+                saveStateItem,
+                loadStateItem
+            )
+
+            fileMenu.items.addAll(
+                loadGameItem,
+                recentRomsMenu,
+                hardResetItem,
+                slotMenu,
+                exitItem
+            )
             menuBar.menus.add(fileMenu)
             updateRecentMenu(EmulatorConfig.getRecentRoms())
+            updateSlotMenu()
 
             // Settings menu
             val settingsMenu = javafx.scene.control.Menu("Settings")
@@ -298,14 +343,13 @@ class NestlinApplication : FrameListener, Application() {
                         println("[APP] Emulation ${if (nestlin.config.paused) "paused" else "resumed"}")
                         event.consume()
                     }
-                    // F5: quick save state (Mesen/FCEUX convention)
-                    event.code == javafx.scene.input.KeyCode.F5 -> {
-                        handleQuickSaveState()
-                        event.consume()
-                    }
-                    // F8: quick load state
-                    event.code == javafx.scene.input.KeyCode.F8 -> {
-                        handleQuickLoadState()
+                    // F1..F9: load slot N (F1=slot 1, F2=slot 2, etc.)
+                    // Shift+F1..F9: save into slot N. Shift+save mirrors FCEUX's
+                    // "shift = write, no-shift = read" muscle memory for the
+                    // existing quick-save convention.
+                    isSlotKey(event.code) && !event.isControlDown && !event.isAltDown -> {
+                        val slot = slotNumberFromKey(event.code)
+                        if (event.isShiftDown) handleSlotSave(slot) else handleSlotLoad(slot)
                         event.consume()
                     }
                     // F11 is handled by the Fullscreen menu accelerator (see Settings menu).
@@ -451,7 +495,12 @@ class NestlinApplication : FrameListener, Application() {
                 load(currentRomPath!!)
                 powerReset()
                 loadBatteryRam(currentRomPath!!)
-                Platform.runLater { updateTitle() }
+                // Both calls mutate JavaFX UI nodes, so they need to hop back
+                // to the JavaFX thread (we're inside a `thread { ... }` here).
+                Platform.runLater {
+                    updateTitle()
+                    updateSlotMenu()
+                }
                 startEmulation()
             }
         }.also { emulationThread = it }
@@ -528,6 +577,8 @@ class NestlinApplication : FrameListener, Application() {
             nestlin.loadBatteryRam(romPath)
             clearPauseState()
             updateTitle()
+            // Refresh the slot menu: new ROM = new CRC = different slot files.
+            updateSlotMenu()
             EmulatorConfig.addRecentRom(romPath)
             updateRecentMenu(EmulatorConfig.getRecentRoms())
             startEmulation()
@@ -621,6 +672,10 @@ class NestlinApplication : FrameListener, Application() {
         nestlin.powerReset()
         clearPauseState()
         updateTitle()
+        // Refresh slot menu so each slot's label reflects disk state for
+        // the new ROM's CRC. Without this, a user loading ROM B would see
+        // ROM A's slot timestamps until they saved into a slot of their own.
+        updateSlotMenu()
         startEmulation()
     }
 
@@ -670,45 +725,102 @@ class NestlinApplication : FrameListener, Application() {
         }
     }
 
-    private fun handleQuickSaveState() {
+    /**
+     * Save current state + frame buffer into [slot] (1..9). Pauses emulation
+     * to serialise CPU/PPU/APU state safely (the same pattern as the legacy
+     * quick-save / single-file-save). The frame is captured under the same
+     * lock that protects it for the on-screen canvas, so the saved thumbnail
+     * matches the pixels the user just saw.
+     */
+    private fun handleSlotSave(slot: Int) {
         if (currentRomPath == null) return
-        val path = quickSavePath() ?: return
+        // Snapshot the frame BEFORE pausing emulation: pausing the emulation
+        // thread doesn't stop the render thread, but it does mean the
+        // animation timer is still pulling from `nextFrame` under
+        // frameBufferLock — so capture here, while the lock is uncontested.
+        val frameRgb = synchronized(frameBufferLock) { nextFrame.copyOf() }
         performWithEmulationPaused {
             try {
-                java.nio.file.Files.createDirectories(path.parent)
-                nestlin.saveState(path)
-                println("[STATE] Quick-saved to: $path")
+                val stateOut = java.io.ByteArrayOutputStream()
+                nestlin.saveState(stateOut)
+                saveStateSlotManager.save(slot, stateOut.toByteArray(), frameRgb)
+                println("[STATE] Saved slot $slot: ${saveStateSlotManager.statePath(slot)}")
+                Platform.runLater { updateSlotMenu() }
             } catch (e: Exception) {
-                println("[STATE] Quick-save failed: ${e.message}")
+                println("[STATE] Slot $slot save failed: ${e.message}")
+                e.printStackTrace()
             }
         }
     }
 
-    private fun handleQuickLoadState() {
+    /**
+     * Load state from [slot] (1..9). Pauses emulation while the state bytes
+     * are deserialised into CPU/PPU/APU (same race-avoidance as save). Missing
+     * slot is a normal flow (user typed F3 before saving into 3) — just log
+     * and move on, no error dialog.
+     */
+    private fun handleSlotLoad(slot: Int) {
         if (currentRomPath == null) return
-        val path = quickSavePath() ?: return
         performWithEmulationPaused {
             try {
-                nestlin.loadState(path)
-                println("[STATE] Quick-loaded from: $path")
+                val stateBytes = saveStateSlotManager.loadStateBytes(slot)
+                nestlin.loadState(java.io.ByteArrayInputStream(stateBytes))
+                println("[STATE] Loaded slot $slot: ${saveStateSlotManager.statePath(slot)}")
             } catch (e: java.nio.file.NoSuchFileException) {
-                println("[STATE] No quick-save at $path")
+                println("[STATE] Slot $slot is empty")
+            } catch (e: SaveState.IncompatibleSaveStateException) {
+                println("[STATE] Slot $slot is incompatible: ${e.message}")
+                Platform.runLater { showError("Incompatible Save State", e.message ?: "") }
             } catch (e: Exception) {
-                println("[STATE] Quick-load failed: ${e.message}")
+                println("[STATE] Slot $slot load failed: ${e.message}")
+                e.printStackTrace()
             }
         }
     }
+
+    /**
+     * Walk all 9 slot menu items and refresh label/disable state from the
+     * current disk contents. Called on ROM change (CRC changes) and after
+     * every save. Format: "Slot N - 2026-06-06 14:32:15" or "Slot N (empty)".
+     */
+    private fun updateSlotMenu() {
+        if (currentRomPath == null) {
+            for (n in 1..9) {
+                slotMenuItems[n]?.let {
+                    it.text = "Slot $n (no ROM loaded)"
+                    it.isDisable = true
+                }
+            }
+            return
+        }
+        for (n in 1..9) {
+            val item = slotMenuItems[n] ?: continue
+            val lm = try { saveStateSlotManager.lastModifiedMillis(n) } catch (e: Exception) { null }
+            if (lm == null) {
+                item.text = "Slot $n (empty)"
+                item.isDisable = true
+            } else {
+                val stamp = java.time.Instant.ofEpochMilli(lm)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                item.text = "Slot $n  -  $stamp"
+                item.isDisable = false
+            }
+        }
+    }
+
+    /** True iff [code] is one of the F1..F9 keys that map to a save slot. */
+    private fun isSlotKey(code: javafx.scene.input.KeyCode): Boolean =
+        code in SLOT_KEYS
+
+    /** Map an F-key to its slot number. Precondition: isSlotKey(code) is true. */
+    private fun slotNumberFromKey(code: javafx.scene.input.KeyCode): Int =
+        SLOT_KEYS.indexOf(code) + 1
 
     private fun defaultSaveFileName(): String {
         val romName = currentRomPath?.fileName?.toString()
             ?.removeSuffix(".nes")?.removeSuffix(".7z") ?: "state"
         return "$romName.nstl"
-    }
-
-    private fun quickSavePath(): java.nio.file.Path? {
-        val rom = currentRomPath ?: return null
-        val name = rom.fileName.toString().removeSuffix(".nes").removeSuffix(".7z")
-        return Paths.get("savestates", "$name.quick.nstl")
     }
 
     /**
@@ -746,6 +858,9 @@ class NestlinApplication : FrameListener, Application() {
         nestlin.loadBatteryRam(currentRomPath!!)
         clearPauseState()
         updateTitle()
+        // CRC is unchanged by a hard reset, but refresh the slot menu
+        // defensively in case future changes alter the GamePak identity.
+        updateSlotMenu()
         startEmulation()
     }
 
@@ -967,5 +1082,19 @@ class NestlinApplication : FrameListener, Application() {
                 e.printStackTrace()
             }
         }
+    }
+
+    companion object {
+        // The 9 F-keys that map to save state slots. Order matters: index 0
+        // corresponds to slot 1 (F1), index 8 to slot 9 (F9). Used by
+        // isSlotKey() / slotNumberFromKey() to keep the F1..F9 → 1..9 mapping
+        // in a single place.
+        private val SLOT_KEYS = listOf(
+            javafx.scene.input.KeyCode.F1, javafx.scene.input.KeyCode.F2,
+            javafx.scene.input.KeyCode.F3, javafx.scene.input.KeyCode.F4,
+            javafx.scene.input.KeyCode.F5, javafx.scene.input.KeyCode.F6,
+            javafx.scene.input.KeyCode.F7, javafx.scene.input.KeyCode.F8,
+            javafx.scene.input.KeyCode.F9
+        )
     }
 }
