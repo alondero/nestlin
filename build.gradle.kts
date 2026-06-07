@@ -79,6 +79,7 @@ val mesenTests = listOf(
     "com.github.alondero.nestlin.compare.DebugStateCaptureTest",
     "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest",
     "com.github.alondero.nestlin.compare.Mapper10RegressionTest",
+    "com.github.alondero.nestlin.compare.Mapper33RegressionTest",
     "com.github.alondero.nestlin.compare.GxRomStateComparisonTest",
     "com.github.alondero.nestlin.compare.MicroMachinesMapper71SmokeTest",
     "com.github.alondero.nestlin.compare.MicroMachinesMapper71StateComparisonTest",
@@ -150,6 +151,11 @@ tasks.register<Test>("testMesenComparison") {
     val microMachinesRom = System.getenv("NESTLIN_MICRO_MACHINES_ROM")
     if (microMachinesRom != null) {
         environment("NESTLIN_MICRO_MACHINES_ROM", microMachinesRom)
+    }
+    // Forward the optional Don Doko Don ROM override (Mapper 33 regression test).
+    val donDokoDonRom = System.getenv("NESTLIN_DON_DOKO_DON_ROM")
+    if (donDokoDonRom != null) {
+        environment("NESTLIN_DON_DOKO_DON_ROM", donDokoDonRom)
     }
     // Show stdout/stderr from tests (e.g. the diff% println) so we can see results.
     testLogging {
