@@ -80,6 +80,21 @@ class Memory : DmaPort {
             }
             0x4014 -> {
                 val base = value.toUnsignedInt() shl 8
+                // NESdev: writing $4014 sets OAMADDR ($2003) to 0 at the start of
+                // the DMA — every DMA always writes $base+0 to OAM[0], $base+1 to
+                // OAM[1], etc. Without this reset, a non-zero oamAddress (e.g. from
+                // the game doing manual $2004 writes to mask sprite 0 just before
+                // triggering the DMA) shifts every DMA byte by that offset, so
+                // $0200[0] lands in OAM[oamAddress] instead of OAM[0] and sprite 0
+                // keeps the manually-written mask bytes instead of the real data.
+                // This was the silent cause of the Akira (mapper 33) title→gameplay
+                // freeze (issue #141): the game hides sprite 0 with 4 manual $2004
+                // writes (Y=$FF, tile=0, attr=0, X=0) then runs the DMA, expecting
+                // the real sprite-0 tile=$81 from the data table to land in OAM[0].
+                // On Nestlin the DMA shifted by 4, leaving OAM[0] = $FF $00 $00 $00,
+                // the game polled PPUSTATUS bit 6 forever, and sprite-0 hit never
+                // fired because the real sprite was at OAM[1] instead of OAM[0].
+                ppuAddressedMemory.oamAddress = 0
                 for (i in 0 until 256) {
                     val data = this[base + i]
                     ppuAddressedMemory.writeOamData(data)
