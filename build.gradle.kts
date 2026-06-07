@@ -80,6 +80,7 @@ val mesenTests = listOf(
     "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest",
     "com.github.alondero.nestlin.compare.Mapper10RegressionTest",
     "com.github.alondero.nestlin.compare.Mapper33RegressionTest",
+    "com.github.alondero.nestlin.compare.Mapper113RegressionTest",
     "com.github.alondero.nestlin.compare.GxRomStateComparisonTest",
     "com.github.alondero.nestlin.compare.MicroMachinesMapper71SmokeTest",
     "com.github.alondero.nestlin.compare.MicroMachinesMapper71StateComparisonTest",
@@ -156,6 +157,11 @@ tasks.register<Test>("testMesenComparison") {
     val donDokoDonRom = System.getenv("NESTLIN_DON_DOKO_DON_ROM")
     if (donDokoDonRom != null) {
         environment("NESTLIN_DON_DOKO_DON_ROM", donDokoDonRom)
+    }
+    // Forward the optional Mind Blower Pak ROM override (Mapper 113 regression test).
+    val mindBlowerPakRom = System.getenv("NESTLIN_MIND_BLOWER_PAK_ROM")
+    if (mindBlowerPakRom != null) {
+        environment("NESTLIN_MIND_BLOWER_PAK_ROM", mindBlowerPakRom)
     }
     // Show stdout/stderr from tests (e.g. the diff% println) so we can see results.
     testLogging {

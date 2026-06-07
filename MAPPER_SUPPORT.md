@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 64, 66, 69, 153, 206.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 64, 66, 69, 113, 153, 206.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -440,6 +440,75 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 64, 66,
     natural oracles.
 
 ---
+
+## Mapper 113 (HES NTD-8 / PT-554A)
+**Status:** Working (Added 2026-06-07, issue #139)
+
+- **Games:** *Mind Blower Pak* and *Total Funpak* (HES Australia, 1992 — the
+  two HES unlicensed ROMs in the local NO-INTRO library).
+- **What it is:** the HES NTD-8 chip (a.k.a. PT-554A, the silicon behind
+  the HES 6-in-1 multicart). Functionally a NINA-003/006 with **four
+  extra control bits** — one mirroring bit, one extra CHR select bit,
+  and two extra PRG select bits — but the silicon is *unrelated* to
+  NINA; only the register shape overlaps. Mesen2 implements it as a
+  `Nina03_06` subclass with a `multicartMode = true` flag
+  (`Core/NES/Mappers/Unlicensed/Nina03_06.h`).
+- **The register decode is the only Nestlin mapper with banking outside
+  the normal PRG space:** writes to `$4100-$5FFF` (mask `0xE100`) latch
+  the same single-byte control register. The decode is A8 set, A9-A12
+  clear, A13-A15 clear; the low 8 bits are aliased. 16 distinct
+  256-byte pages all hit the same register.
+- **Register bit layout** (one byte, decoded by the chip-select gate):
+  ```
+    bit  7  6  5  4 | 3  2  1  0
+        M  P  P  P | C  C  C  C
+  ```
+  - Bit 7 (`M`): mirroring — 1 = vertical, 0 = horizontal.
+  - Bits 4-6 (`PPP`): 32 KB PRG bank select (8 banks → 256 KB max PRG).
+  - Bit 3 (`C`): high bit of CHR bank.
+  - Bits 0-2 (`CCC`): low 3 bits of CHR bank.
+  Net: 8 PRG banks × 16 CHR banks (128 KB max CHR).
+- **PRG geometry:** 32 KB window at `$8000-$FFFF`, **fully banked**
+  (no fixed last bank, unlike UNROM/Mapper 2 which fixes the second
+  16 KB at `$C000`). Mirrors the Mapper 0 (NROM-256) shape, but with
+  bank switching.
+- **CHR geometry:** 8 KB window at `$0000-$1FFF`, banked.
+- **No PRG-RAM, no IRQ, no audio expansion.**
+- **PAL by default** — both HES ROMs are tagged `(Australia)` in NO-INTRO,
+  which `GamePak.regionFromName` resolves to PAL via the `palMarkers`
+  list. PAL timing is already supported (issue #77).
+- **Implementation notes:**
+  - The chip-select gate is implemented as a single
+    `if ((address and 0xE100) != 0x4100) return` at the top of
+    `cpuWrite`. Everything else is a plain `when` over the value bits.
+  - Mirroring is a `Boolean` (not a nullable mode) so the header's
+    initial value drives the boot state until the game writes the
+    register — the same pattern Mapper 33 uses.
+  - PRG and CHR bank fields are taken modulo the bank count at the read
+    site (`% prgRom.size` / `% chrRom.size`) so a buggy write to a
+    non-existent bank just mirrors within the existing data, not an
+    `ArrayIndexOutOfBoundsException`.
+  - No `Memory.kt` change is needed: the existing
+    `in 0x4020..0xFFFF -> mapper?.cpuWrite(...)` route already covers
+    the `$4100-$5FFF` window, and the per-mapper chip-select gate does
+    the actual decoding.
+- **Verification:** `Mapper113Test` covers dispatch from the iNES header
+  (mapper byte 6/7 = `0x10`/`0x70`), default state (PRG bank 0 at all
+  four $8000/$A000/$C000/$E000 sample points + XOR sentinel at $FFFF),
+  every one of the 8 PRG banks reachable, the low 4 bits / bit 7 PRG
+  field being ignored, the 32 KB bank covering the whole $8000-$FFFF
+  window (no fixed bank at $C000), oversized bank numbers wrapping
+  modulo, the 4-bit CHR field across all 16 banks (including bit 3
+  high-bit set, and bank 8 / 15 explicitly), the `(address and 0xE100)
+  == 0x4100` chip-select gate (every page in $4100-$5FFF, plus the
+  rejects at $0000-$3FFF, $4000-$40FF, $4080/$4200/$4400/$4800/$5000/
+  $6100/$8100 and the PRG/PRG-RAM windows), the low 8 address bits
+  being aliased, the header-driven initial mirroring, bit 7 driving
+  mirroring independently of the PRG/CHR fields, multiple writes
+  overwriting the register, CHR-RAM fallback, save/load round-trip
+  (PRG + CHR + mirroring), save/load round-trip of CHR RAM when
+  present, and the `snapshot()` output reporting `prgBank`, `chrBank`,
+  and `verticalMirroring` in the `banks` / `registers` maps.
 
 ## Mapper 71 (Camerica / Codemasters / BF909x)
 **Status:** Working (Added 2026-06-02, issue #88)
