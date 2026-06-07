@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 34, 66, 69, 153, 206.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 66, 69, 153, 206.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -189,6 +189,41 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 34, 66, 69, 153
     the title screen (CHR banking active, >200K instructions executed).
   - `Mapper16ScreenshotTest` captures frames 60, 300, 1500 of both games
     to `build/reports/bandai-fcg-screenshots/` for visual inspection.
+
+---
+
+## Mapper 33 (Taito TC0190 / TC0350)
+**Status:** Working (Added 2026-06-07, issue #131)
+
+- **Games:** Don Doko Don, Akira, *Power Blazer*, *Operation Wolf*, and the Famicom port of *Bubble Bobble*. Roughly 12 Taito-published Famicom titles in total.
+- **What it is:** a discrete-logic Taito mapper — an MMC3-class chip *without* an IRQ counter. Closer in spirit to the Bandai FCG family (multi-bank CHR, 8KB PRG slots) than to UNROM-style mappers. The register-decode (`addr & 0xA003`, picking the register from bit 13 plus bits 0-1) is the same shape used by many discrete-logic mappers of the era.
+- **Register layout (eight registers, decoded via `addr & 0xA003`):**
+  - `$8000` — **PRG bank 0** (low 6 bits) + **mirroring** (bit 6: 0=Vert, 1=Horiz).
+  - `$8001` — **PRG bank 1** (low 6 bits).
+  - `$8002` — **CHR pair** for `$0000-$07FF` (2KB bank number).
+  - `$8003` — **CHR pair** for `$0800-$0FFF` (2KB bank number).
+  - `$A000`..`$A003` — **CHR 1KB banks** for `$1000-$1FFF` (one register per 1KB page).
+  - The `$Axxx` registers decode across the whole `$A000-$BFFF` range, so e.g. `$BFFE` hits `$A002`. Same for `$8xxx`.
+- **PRG geometry (8KB granularity, 4 banks):**
+  - `$8000-$9FFF` — switchable via `$8000` (low 6 bits, modulo PRG-bank count).
+  - `$A000-$BFFF` — switchable via `$8001` (low 6 bits, modulo PRG-bank count).
+  - `$C000-$DFFF` — fixed to `prgBankCount - 2` (second-to-last 8KB bank).
+  - `$E000-$FFFF` — fixed to `prgBankCount - 1` (last 8KB bank).
+  - The "fixed at second-to-last / last" pair is the same trick used by Mapper 16, Mapper 2 (UNROM), and the half-MMC3 family. No PRG-RAM.
+- **CHR geometry (mixed 2KB+1KB granularity, 8 banks in 1KB units):**
+  - `$0000-$03FF`, `$0400-$07FF` — 1KB pair set by `$8002` as `(v*2, v*2+1)`. The LSB of the written value is *preserved* (unlike MMC3 R0/R1, which mask it off). NESdev is explicit: "the value written for the two 2 KiB CHR banks do not drop the LSB."
+  - `$0800-$0BFF`, `$0C00-$0FFF` — same scheme via `$8003`.
+  - `$1000-$13FF`..`$1C00-$1FFF` — four 1KB pages, one register each, via `$A000`..`$A003`.
+- **Mirroring:** bit 6 of the most recent `$8000` write. There is no separate mirroring register — the chip latches it on every `$8000` write. Initial value at power-on is the iNES header's mirroring bit. No 1-screen mode.
+- **No IRQ. No PRG-RAM.** (The TC0350 *variant* — separate iNES mapper number 48 — adds a scanline IRQ and is out of scope here.)
+- **Implementation notes:**
+  - The `addr & 0xA003` mask is the key thing to get right; bits 2-12 of the address are dropped. Every existing test that doesn't have an explicit aliasing check relies on this implicitly, so `Mapper33Test` covers it with `$8042`, `$8FF2`, `$9FFA`, `$A040`, `$BFFE` aliases.
+  - The mirroring flag is stored as a `Boolean` (not a nullable mirroring mode) so the header's initial value drives the boot state until the game writes `$8000` for the first time.
+  - `prgBankCount` is `coerceAtLeast(1)` so a malformed 0-PRG ROM (truncated dump) can't make the fixed-bank read path compute a negative index.
+  - CHR RAM fallback for 0KB-CHR dumps (same pattern as Mapper 2 / 3 / 11 / 71) so homebrew ROMs don't crash on PPU read.
+- **Verification:**
+  - `Mapper33Test` covers dispatch from the iNES header, default PRG state (penultimate-at-`$C000`, last-at-`$E000`), `prgBank0`/`prgBank1` selection via the low 6 bits (and high bits being ignored), single-bank wrap, the `addr & 0xA003` register aliasing, the 2KB pair decode at `$8002`/`$8003` (with LSB preserved, distinguishing it from MMC3 R0/R1), the four 1KB registers at `$A000`..`$A003`, mirroring header-driven initial state and bit-6-driven override, mirroring independence from the PRG field, mirror-write isolation (`$8001`/`$8002`/`$8003`/`$Axxx` writes don't change mirroring), CHR-RAM fallback, save/load round-trip, and `snapshot()` reporting of all eight CHR banks plus the mirroring flag.
+  - `Mapper33RegressionTest` (Mesen-comparison group) — boots *Don Doko Don (Japan)* on the real ROM. Asserts (1) the TC0190 PRG bank actually pages during boot (proves `$8000`/`$8001` are wired, the cheap "did the mapper do anything" guard from the Star Soldier recipe), and (2) Nestlin's CHR pattern-table is **byte-identical** to Mesen2's across all eight 1KB windows at frame 60. The full OAM/palette/PPUCTRL comparison is reported alongside for human inspection but not asserted, because Don Doko Don's NMI handler rewrites OAM between Mesen2's pre-NMI capture (scanline 240) and Nestlin's post-NMI capture (scanline 261) — the same documented cross-emulator offset as `BigNoseHangTest` / `MicroMachines...`, and not a TC0190 bug. The decisive evidence is the **byte-identical CHR section** in the diff report at `build/reports/state-diffs/don-doko-don-frame-60/diff-report.txt`.
 
 ---
 
