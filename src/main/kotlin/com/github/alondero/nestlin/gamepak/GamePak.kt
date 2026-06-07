@@ -17,27 +17,17 @@ class GamePak(data: ByteArray, displayName: String = "") {
         // corrupt or truncated ROM throws a descriptive BadHeaderException
         // instead of leaking ArrayIndexOutOfBoundsException from copyOfRange.
         // Order matters: length first (otherwise reading data[3] is unsafe),
-        // then the 4-byte magic ("NES\x1A"), then the declared PRG/CHR sizes.
+        // then the 4-byte magic ("NES"), then the declared PRG/CHR sizes.
         requireValidHeader(data)
     }
 
     val header = Header(data.copyOfRange(0, INES_HEADER_SIZE))
-    val name: String = when {
-        // NES 2.0 bit 4 (in header byte 7) marks the optional 128-byte title at
-        // 0x10..0x90. The spec only guarantees ASCII, but Famicom dumps routinely
-        // put Shift-JIS or Latin-1 bytes here. `String(bytes)` would fall back to
-        // the JVM platform charset (windows-1252 on Western Windows), which
-        // corrupts non-ASCII titles and surfaces as mojibake in the window title.
-        // Latin-1 is a 1:1 byte->codepoint mapping for 0x00..0xFF, so it preserves
-        // the original bytes without substitution; callers who know the real
-        // encoding (e.g. Shift-JIS) can re-decode.
-        data.size >= 144 && data[7].toUnsignedInt() and 0x10 != 0 -> {
-            String(data.copyOfRange(0x10, 0x10 + 128), Charsets.ISO_8859_1)
-                .trim().replace('\u0000', ' ').trim()
-        }
-        displayName.isNotEmpty() -> displayName
-        else -> ""
-    }
+    // The display name comes from the filename. There is NO in-ROM title field at
+    // offset 0x10 in iNES / NES 2.0 — that is the start of PRG ROM. Reading it as a
+    // title (gated on byte 7 bit 4, which is actually mapper bit D4) rendered PRG
+    // opcodes as text and surfaced as a "question mark" titlebar for mapper-16 games
+    // like Crayon Shin-chan. See GH #118.
+    val name: String = displayName
     val programRom: ByteArray
     val chrRom: ByteArray
     val crc: CRC32
@@ -169,19 +159,16 @@ class Header(headerData: ByteArray) {
     /** True when bits 2-3 of byte 7 are `10`, marking this as a NES 2.0 header. */
     val isNes20: Boolean = (headerData[7].toUnsignedInt() and 0x0C) == 0x08
 
-    // In plain iNES, byte 7 bits 4-7 are the mapper high nibble (4 bits).
-    // In NES 2.0, bit 4 of byte 7 is the title-present flag, NOT a mapper bit --
-    // so the mapper high bits come from byte 7 bits 5-7 (3 bits, giving mapper
-    // bits 4-6) plus byte 8 for the extended mapper bits 8-15. Without this split,
-    // any NES 2.0 dump with a title (basically every modern Famicom dump) is
-    // misread with mapper 16 too high.
-    val mapper: Int = if (isNes20) {
-        (headerData[6].toUnsignedInt() shr 4) or
-        ((headerData[7].toUnsignedInt() and 0xE0) ushr 1) or
-        ((headerData[8].toUnsignedInt() and 0xFF) shl 8)
-    } else {
-        headerData[6].toUnsignedInt() shr(4) or (headerData[7].toUnsignedInt() and 0xF0)
-    }
+    // Mapper number (NESdev iNES / NES 2.0):
+    //   bits 0-3  = byte 6 bits 4-7
+    //   bits 4-7  = byte 7 bits 4-7  (bit 4 IS mapper bit D4 in both iNES and
+    //               NES 2.0 — there is no "title-present" flag here)
+    //   bits 8-11 = byte 8 bits 0-3  (NES 2.0 only; byte 8 bits 4-7 are the
+    //               submapper and must NOT leak into the mapper number)
+    // In plain iNES, byte 8 is the PRG-RAM size, so it is excluded.
+    val mapper: Int = (headerData[6].toUnsignedInt() ushr 4) or
+        (headerData[7].toUnsignedInt() and 0xF0) or
+        (if (isNes20) ((headerData[8].toUnsignedInt() and 0x0F) shl 8) else 0)
     val mirroring: Mirroring = if (headerData[6].toUnsignedInt() and 0x01 == 0) Mirroring.HORIZONTAL else Mirroring.VERTICAL
     val hasBattery: Boolean = headerData[6].toUnsignedInt() and 0x02 != 0
 
