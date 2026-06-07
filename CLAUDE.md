@@ -21,6 +21,15 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 ./gradlew run --args="rom.nes --debug"             # verbose CPU logging
 ./gradlew run --args="rom.nes --region=pal"        # override NTSC/PAL auto-detect
 ./gradlew run --args="rom.nes --no-audio"          # mute audio
+
+# Headless replay-as-test (issue #62): deterministically replay an FM2 against a ROM,
+# print state=/frame= SHA-256 fingerprints + write a PNG of the frame reached. No display.
+# This is the "agent takes a ROM + an .fm2 bug repro and lands the exact state" entry point.
+java -jar build/libs/nestlin-all.jar replay rom.nes bug.fm2            # record: print hashes + PNG
+java -jar build/libs/nestlin-all.jar replay rom.nes bug.fm2 --frame N  # capture a mid-movie frame
+java -jar build/libs/nestlin-all.jar replay rom.nes bug.fm2 \
+    --expect-state <sha> --expect-frame <sha>                          # verify: exit 0 match / 1 mismatch
+# Exit codes: 0 ok/match · 1 hash mismatch · 2 usage/checksum · 3 emulator threw mid-replay.
 ```
 
 **Requirements:** JDK 21 (Gradle toolchain pinned in `build.gradle.kts`), Kotlin 1.9.22, JavaFX 21.0.1.
@@ -37,6 +46,7 @@ src/main/kotlin/com/github/alondero/nestlin/
 ├── Apu.kt                  # 5 channels + frame counter + mixer
 ├── SaveState.kt            # .nstl binary format
 ├── SaveRam.kt              # .sav battery-backed PRG-RAM persistence
+├── cli/                    # headless `replay` subcommand (ReplayCli args → ReplayCommand): FM2 replay-as-test
 ├── cpu/                    # 6502 core + 151 opcodes + addressing modes
 ├── ppu/                    # 2C02: rendering, OAM, palette, vram address, regs
 ├── apu/                    # channels, envelope, sweep, length, frame counter, resampler

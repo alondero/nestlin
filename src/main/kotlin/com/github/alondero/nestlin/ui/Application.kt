@@ -47,6 +47,13 @@ import kotlin.concurrent.thread
 private const val BATTERY_FLUSH_INTERVAL_MS = 10_000L
 
 fun main(args: Array<String>) {
+    // Headless `replay` subcommand (issue #62): deterministically replay an FM2 against a ROM and
+    // emit a state/frame fingerprint + PNG. Dispatched before Application.launch so it never starts
+    // the JavaFX toolkit — it must run on a CI box or worktree with no display, and exit with a
+    // status code an agent can branch on.
+    if (args.isNotEmpty() && args[0] == "replay") {
+        kotlin.system.exitProcess(com.github.alondero.nestlin.cli.ReplayCli.main(args.drop(1)))
+    }
     Application.launch(NestlinApplication::class.java, *args)
 }
 
