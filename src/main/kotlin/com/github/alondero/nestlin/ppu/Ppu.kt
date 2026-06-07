@@ -124,22 +124,23 @@ class Ppu(var memory: Memory) {
                 preloadFirstTwoTiles()
             }
 
-            // Sprite evaluation for the *next* scanline happens at cycle 65 in real hardware.
-            // We do the full scan in one cycle for simplicity; it has no pattern-table accesses,
-            // so it does not affect A12.
-            if (cycle == 65) {
+            // Sprite evaluation for the *next* scanline happens at NES dot 65. Nestlin's
+            // cycle counter is 0-indexed (endLine resets to 0), so dot 65 == cycle 64.
+            // We do the full scan in one cycle for simplicity; it has no pattern-table
+            // accesses, so it does not affect A12.
+            if (cycle == 64) {
                 evaluateSpritesForTargetScanline(targetScanlineForSpriteEval())
             }
 
-            //  Fetch tile data
+            //  Fetch tile data. All three windows are 0-indexed (cycle 0 == NES dot 1).
             when (cycle) {
-                in 1..256 -> fetchData()
-                in 257..320 -> fetchSpriteTile()
-                in 321..336 -> fetchData() // Ready for next scanline
+                in 0..255 -> fetchData()
+                in 256..319 -> fetchSpriteTile()
+                in 320..335 -> fetchData() // Ready for next scanline
             }
             checkAndSetVerticalAndHorizontalData()
 
-        } else if (scanline < RESOLUTION_HEIGHT && cycle in 2..257) {
+        } else if (scanline < RESOLUTION_HEIGHT && cycle in 1..256) {
             // Rendering disabled on a visible scanline: a real PPU still scans out a
             // pixel every dot — the backdrop colour at $3F00 (or, if the VRAM address
             // happens to point into the palette, that entry — the "background palette
@@ -148,23 +149,25 @@ class Ppu(var memory: Memory) {
             // title-screen palette swap) leaves a frozen "band" of stale tiles.
             // Issue #88 follow-up.
             val backdropIndex = memory.ppuAddressedMemory.ppuInternalMemory[backdropPaletteAddress()].toUnsignedInt()
-            frame[cycle - 2, scanline] = NesPalette.getRgb(backdropIndex)
+            frame[cycle - 1, scanline] = NesPalette.getRgb(backdropIndex)
         }
 
-        // VBlank is set at scanline 241, cycle 1 (NESdev: dot 1)
-        if (scanline == 241 && cycle == 1) {
+        // VBlank is set at scanline 241, NES dot 1 == Nestlin cycle 0.
+        if (scanline == 241 && cycle == 0) {
             vBlank = true
             memory.ppuAddressedMemory.setVBlank()
         }
 
-        if (scanline == region.preRenderScanline && cycle == 1) {memory.ppuAddressedMemory.clearVBlankAtPreRender()}
+        if (scanline == region.preRenderScanline && cycle == 0) {memory.ppuAddressedMemory.clearVBlankAtPreRender()}
 
         // MMC3 scanline IRQ is triggered solely by A12 rising edges from pattern fetches.
 
-        // Load shift registers every 8 cycles (at cycles 9, 17, 25, ..., 249, 329, 337)
-        // Note: NES reloads at 329 and 337 for post-render (cycles 321-340), NOT at 321
-        // Visible reloads: cycles 1-256 at 9, 17, 25, ..., 249 (NOT at 257 which is sprite eval)
-        if (renderingActive && cycle % 8 == 1 && cycle > 1 && ((cycle <= 256) || (cycle >= 329 && cycle <= 337))) {
+        // Load shift registers every 8 cycles (at NES dots 9, 17, 25, ..., 249, 329, 337
+        // == Nestlin cycles 8, 16, 24, ..., 248, 328, 336). Nestlin's cycle is 0-indexed
+        // (cycle 0 == NES dot 1), so the reload fires when cycle % 8 == 0 starting at 8.
+        // Note: NES reloads at 329 and 337 for post-render (cycles 321-340), NOT at 321.
+        // Visible reloads: cycles 0-255 at 8, 16, 24, ..., 248 (NOT at 256 which is sprite eval).
+        if (renderingActive && cycle % 8 == 0 && cycle > 0 && ((cycle <= 255) || (cycle >= 328 && cycle <= 336))) {
             // Load the lower 8 bits of pattern shift registers with fetched tile data (Next Tile)
             // Keep upper 8 bits (Current Tile) which have shifted from previous fetch
             patternShiftLow = (patternShiftLow and 0xFF00) or patternLatchLow.toUnsignedInt()
@@ -210,10 +213,10 @@ class Ppu(var memory: Memory) {
 
     private fun checkAndSetVerticalAndHorizontalData() {
         when (cycle) {
-            256 -> memory.ppuAddressedMemory.vRamAddress.incrementVerticalPosition()
+            255 -> memory.ppuAddressedMemory.vRamAddress.incrementVerticalPosition()
         }
 
-        if (scanline == region.preRenderScanline && cycle in 280..304) {
+        if (scanline == region.preRenderScanline && cycle in 279..303) {
             with (memory.ppuAddressedMemory) {
                 vRamAddress.coarseYScroll = tempVRamAddress.coarseYScroll
                 vRamAddress.verticalNameTable = tempVRamAddress.verticalNameTable
@@ -304,9 +307,9 @@ class Ppu(var memory: Memory) {
      * the spurious per-sprite A12 toggles caused by garbage NT reads between sprites.
      */
     private fun fetchSpriteTile() {
-        val slotIndex = (cycle - 257) / 4
+        val slotIndex = (cycle - 256) / 4
         if (slotIndex >= 8) return
-        val accessType = (cycle - 257) % 4
+        val accessType = (cycle - 256) % 4
 
         val mem = memory.ppuAddressedMemory.ppuInternalMemory
         val entry = secondaryOam.getOrNull(slotIndex)
@@ -430,11 +433,11 @@ class Ppu(var memory: Memory) {
 
     private fun fetchData() {
         when (cycle % 8) {
-            1 -> with (memory.ppuAddressedMemory){
+            0 -> with (memory.ppuAddressedMemory){
                 val ntAddr = 0x2000 or (vRamAddress.asAddress() and 0x0FFF)
                 lastNametableByte = ppuInternalMemory[ntAddr]
             }
-            3 -> with(memory.ppuAddressedMemory){
+            2 -> with(memory.ppuAddressedMemory){
                 // Fetch Attribute Table Byte
                 // Formula from nesdev wiki for attribute table addressing
                 val v = vRamAddress.asAddress()
@@ -448,7 +451,7 @@ class Ppu(var memory: Memory) {
                 paletteLatch = ((attributeByte shr shift) and 0x03)
 
             }
-            5 -> with(memory.ppuAddressedMemory) {
+            4 -> with(memory.ppuAddressedMemory) {
                 //  Fetch Low Tile Byte (bit 0 of each pixel)
                 val patternTableBase = controller.backgroundPatternTableAddress()
                 val tileIndex = lastNametableByte.toUnsignedInt()
@@ -456,7 +459,7 @@ class Ppu(var memory: Memory) {
                 val address = patternTableBase + (tileIndex * 16) + fineY
                 patternLatchLow = ppuInternalMemory[address]
             }
-            7 -> with(memory.ppuAddressedMemory) {
+            6 -> with(memory.ppuAddressedMemory) {
                 //  Fetch High Tile Byte (bit 1 of each pixel, 8 bytes after low byte)
                 val patternTableBase = controller.backgroundPatternTableAddress()
                 val tileIndex = lastNametableByte.toUnsignedInt()
@@ -466,8 +469,8 @@ class Ppu(var memory: Memory) {
             }
         }
 
-        // Increment horizontal position after fetching pattern data (cycle 7)
-        if (cycle % 8 == 7 && (cycle in 1..256 || cycle in 321..336)) {
+        // Increment horizontal position after fetching pattern data (NES dot 7 == Nestlin cycle 6)
+        if (cycle % 8 == 6 && (cycle in 0..255 || cycle in 320..335)) {
             with(memory.ppuAddressedMemory) {
                 vRamAddress.incrementHorizontalPosition()
             }
@@ -488,11 +491,13 @@ class Ppu(var memory: Memory) {
 //
 //        While all of this is going on, sprite evaluation for the next scanline is taking place as a seperate process, independent to what's happening here.
 
-        // Render pixel during visible scanline and cycles 2-257
-        // NES renders first pixel at cycle 10 (not cycle 1), so we shift our rendering by 1 cycle
-        // Our cycle 2 corresponds to NES cycle 10 where first pixel is rendered
-        if (scanline < RESOLUTION_HEIGHT && cycle >= 2 && cycle <= 257) {
-            val x = cycle - 2
+        // Render pixel during visible scanline and cycles 1-256
+        // NES renders first pixel at NES dot 10 (not dot 1), so we shift our rendering by
+        // 1 cycle: our cycle 1 corresponds to NES dot 2 (the first visible dot after the
+        // pre-render 2-tile preload). With the cycle counter now 0-indexed (cycle 0 ==
+        // NES dot 1), the visible range is cycle 1..256, mapping to x = 0..255.
+        if (scanline < RESOLUTION_HEIGHT && cycle >= 1 && cycle <= 256) {
+            val x = cycle - 1
 
             // Extract pixel from shift registers
             val fineX = memory.ppuAddressedMemory.fineXScroll
