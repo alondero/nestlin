@@ -11,6 +11,24 @@ interface Mapper {
     fun ppuWrite(address: Int, value: Byte)
     fun currentMirroring(): MirroringMode
 
+    /**
+     * CPU data-bus value, set by [Memory] before each `cpuRead` call. Open-
+     * bus reads (i.e. addresses the mapper has no byte of its own to return
+     * for) should return this value, matching real 6502 hardware where
+     * unmapped reads return the last byte driven on the bus. The default
+     * implementation is a no-op (data-bus unknown → mapper returns 0 as
+     * before). Mappers that need open-bus behaviour override the setter
+     * to capture the value, then read [dataBus] inside [cpuRead].
+     *
+     * This is the second half of the fix for the Mind Blower Pak /
+     * Klax / Mapper 64 / Mapper 113 boot divergence from Mesen2 — see
+     * the diagnostic in `Mapper113RegressionTest` and the related memory
+     * entry `hes-mb-mesen2-divergence-2026-06-07`.
+     */
+    var dataBus: Byte
+        get() = 0
+        set(_) {}
+
     // IRQ support (for mappers like MMC3 that have scanline IRQs)
     fun notifyA12Edge(rising: Boolean) {}
     fun acknowledgeIrq() {}
