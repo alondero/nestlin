@@ -29,6 +29,15 @@ CLAUDE.local.md
 # Debug output files
 *.debug.txt
 
+# Stray scratch artifacts at the repo root (test PNGs, ephemeral markdown)
+# If a future legitimate file matches one of these, use `git add -f`.
+/test*.png
+/todo.md
+/nextsessionprompt.md
+/incompatability*.md
+/SPEED_THROTTLING_PLAN.md
+/NES_REFERENCE_GUIDE_FINDINGS.md
+
 # Screenshot directory (generated at runtime)
 screenshots/
 
