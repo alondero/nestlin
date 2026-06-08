@@ -639,14 +639,23 @@ class NestlinApplication : FrameListener, Application() {
                         else -> null
                     }
                 }
-                // Take only the first non-flag parameter as the ROM path (rest are other arguments)
-                val romPath = nonFlagParams.firstOrNull() ?: throw IllegalStateException("No ROM file provided")
-                currentRomPath = Paths.get(romPath)
-                load(currentRomPath!!)
-                powerReset()
-                loadBatteryRam(currentRomPath!!)
+                // Take only the first non-flag parameter as the ROM path (rest are other arguments).
+                // A ROM is optional at launch: the user can now start the emulator with no game
+                // and use File → Load Game... (or Load Recent) once the UI is up. We still spin
+                // up the emulation thread so the canvas/UI stay responsive while idle, and the
+                // pre-existing null-safety in cpu.reset() / loadBatteryRam() / nestlin.start()
+                // means no special-casing is needed in the engine.
+                val romPathArg = nonFlagParams.firstOrNull()
+                if (romPathArg != null) {
+                    currentRomPath = Paths.get(romPathArg)
+                    load(currentRomPath!!)
+                    powerReset()
+                    loadBatteryRam(currentRomPath!!)
+                }
                 // Both calls mutate JavaFX UI nodes, so they need to hop back
-                // to the JavaFX thread (we're inside a `thread { ... }` here).
+                // to the JavaFX thread (we're inside a `thread { ... }` here). When no
+                // ROM is loaded, updateTitle() shows "Nestlin - No Game Loaded" and
+                // updateSlotMenu() disables every slot with a "(no ROM loaded)" label.
                 Platform.runLater {
                     updateTitle()
                     updateSlotMenu()
