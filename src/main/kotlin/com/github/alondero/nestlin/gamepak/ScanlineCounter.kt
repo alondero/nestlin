@@ -95,33 +95,42 @@ class ScanlineCounter {
      */
     fun clock() {
         if (reloadPlusOne) {
-            // Tengen RAMBO-1, modelled exactly on Mesen2 (the reference
-            // oracle). There are two distinct reload paths, unlike MMC3:
+            // Tengen RAMBO-1, modelled exactly on Mesen2's `Rambo1.h` (the
+            // reference oracle). Two distinct reload paths, unlike MMC3:
             //   - explicit reload (after a $C001 write): counter =
-            //     (latch <= 1) ? latch + 1 : latch + 2. The extra +1 over
-            //     the auto-reload path is the documented "Klax needs +1"
-            //     quirk and only applies on the first reload after $C001.
+            //     (latch <= 1) ? latch + 1 : latch + 2.
             //   - auto-reload when the counter underflows to 0: counter =
-            //     latch + 1 (no +2).
+            //     latch + 1.
+            //
+            // CRITICAL: the IRQ fires ONLY when the counter is *decremented*
+            // to zero — never when a reload sets it to zero. Klax disarms its
+            // single-per-frame split by reloading a large latch (0xFE), which
+            // wraps to (0xFE + 2) & 0xFF = 0x00. Firing on that reload-to-zero
+            // produced a spurious second IRQ that corrupted every CHR bank
+            // below the split (the "garbage 0s" glitch). Mesen2 puts the
+            // trigger test inside the decrement branch for exactly this reason.
             when {
                 irqReload -> {
                     irqCounter = (if (irqLatch <= 1) irqLatch + 1 else irqLatch + 2) and 0xFF
                     irqReload = false
                 }
                 irqCounter == 0 -> irqCounter = (irqLatch + 1) and 0xFF
-                else -> irqCounter--
+                else -> {
+                    irqCounter = (irqCounter - 1) and 0xFF
+                    if (irqCounter == 0 && irqEnabled) irqPending = true
+                }
             }
         } else {
-            // Standard MMC3.
+            // Standard MMC3: fires on reload-to-zero or decrement-to-zero.
             if (irqCounter == 0 || irqReload) {
                 irqCounter = irqLatch
                 irqReload = false
             } else {
                 irqCounter--
             }
-        }
-        if (irqCounter == 0 && irqEnabled) {
-            irqPending = true
+            if (irqCounter == 0 && irqEnabled) {
+                irqPending = true
+            }
         }
     }
 
