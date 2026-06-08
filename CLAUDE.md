@@ -96,6 +96,15 @@ Read `docs/TESTING_STRATEGY.md` before adding tests. The pyramid, top to bottom:
 3. **Pixel diffs are a last resort** — `ScreenshotComparisonTest` exists but tells you *nothing about why*. Don't add new pixel-diff cases.
 4. **Anti-patterns:** `assumeTrue(mesen2Available)` silent skips; dumping files to `build/` expecting eyeballs; reflection into private `Cpu`/`Ppu` fields. Each false-greens CI or breaks on rename.
 
+## Documentation
+
+- `MAPPER_SUPPORT.md` — per-mapper game coverage and known quirks. Actively maintained.
+- `docs/TESTING_STRATEGY.md` — the test pyramid and how to add a regression test. Actively maintained.
+- `README.md` — build/test/run entry points and the full tooling list.
+- `tools/dump_analyzer.py` — parse 64KB CPU memory dumps (`.dmp`) from debug sessions and query them by region, register, or address. Useful for post-mortem debugging.
+
+`docs/` also contains older design notes (`PPU_RENDERING_PLAN.md`, `DONKEY_KONG_RENDERING_PLAN.md`) that describe specific milestones. They're kept for context but not actively maintained — reference them from commit messages or PR descriptions when relevant, not from this file.
+
 ## Local-only context
 
 - Per-machine ROM/emu paths, env vars, and worktree quirks live in `CLAUDE.local.md` (gitignored). Read it on first session.

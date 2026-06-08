@@ -177,10 +177,7 @@ The CPU has a single gold-standard regression: **`GoldenLogTest`** runs `nestest
 
 - **[`MAPPER_SUPPORT.md`](MAPPER_SUPPORT.md)** — which mappers are working, what games are known to play, and what each one's quirks are.
 - **[`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md)** — the test pyramid and how to add a new regression test the right way.
-- **[`docs/PPU_RENDERING_PLAN.md`](docs/PPU_RENDERING_PLAN.md)** — original design notes for background + sprite rendering.
-- **[`docs/DONKEY_KONG_RENDERING_PLAN.md`](docs/DONKEY_KONG_RENDERING_PLAN.md)** — milestone-by-milestone walkthrough of bringing up rendering on a real game.
-- **[`NES_REFERENCE_GUIDE_FINDINGS.md`](NES_REFERENCE_GUIDE_FINDINGS.md)** — distilled findings from the NESdev wiki and other reference material; the implementation's "why" notes.
-- **[`dump_analyzer.py`](dump_analyzer.py)** — parse 64KB CPU memory dumps (`.dmp`) from debug sessions and query them by region, register, or address. Useful for post-mortem debugging.
+- **[`tools/dump_analyzer.py`](tools/dump_analyzer.py)** — parse 64KB CPU memory dumps (`.dmp`) from debug sessions and query them by region, register, or address. Useful for post-mortem debugging.
 
 ---
 
