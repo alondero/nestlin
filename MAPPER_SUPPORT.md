@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 66, 69, 153, 206.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 64, 66, 69, 153, 206.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -264,6 +264,40 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 66, 69,
   2. PRG banking was fixed to bank 0 only; now properly switches 32KB PRG banks via bits 0-1
 - **Format (per NESdev wiki):** `CCCC LLPP` where CCCC = 8KB CHR bank (bits 4-7), LL = unused/lockout, PP = 32KB PRG bank (bits 0-1)
 - **Verified:** Bible Adventures now shows gameplay content (was all-black before fix)
+
+## Mapper 64 (Tengen RAMBO-1)
+**Status:** Working (Added 2026-06-07, issue #132)
+
+- **Games:** ~12-15 Tengen-published titles including *Skull & Crossbones*, *Alien Syndrome*, *Klax*, *Road Runner*, *Rolling Thunder*, *Toobin'*. Tengen's unlicensed MMC3 derivative.
+- **What it is:** an MMC3-*like* chip that shares the register protocol ($8000/$8001 select+data, $A000 mirroring, $C000-$E001 IRQ) but has genuinely different *banking*. Modelled byte-for-byte on Mesen2's `Rambo1.h` (the reference oracle); where the nesdev prose and Mesen disagree, Mesen wins because the state-diff tests compare against it. Differences from MMC3:
+  - **4-bit register select.** `$8000` bits 0-3 select R0-R15 (MMC3 uses bits 0-2). This makes R8/R9 (extra 1 KB CHR banks) and R15 (a third switchable PRG bank) reachable.
+  - **Three switchable 8 KB PRG banks** — R6, R7, R15. `$E000` is fixed to the last bank; neither `$8000` nor `$C000` is ever a fixed second-to-last bank (that's the MMC3 layout).
+  - **1 KB CHR mode** (`$8000` bit 5, the "K" bit) adds R8/R9.
+  - `$A001` is "not implemented" — RAMBO-1 has no PRG-RAM to enable/protect, so writes are discarded.
+  - **No PRG-RAM** at `$6000-$7FFF` (real hardware: "PRG RAM capacity: None"). Reads return 0; writes discarded.
+  - **CPU-cycle IRQ mode** (`$C001` bit 0) in addition to the MMC3 A12/scanline mode.
+- **PRG layout (8 KB granularity):**
+  - PRG mode 0 (`$8000` bit 6 = 0): `$8000`=R6, `$A000`=R7, `$C000`=R15.
+  - PRG mode 1 (`$8000` bit 6 = 1): `$8000`=R15, `$A000`=R6, `$C000`=R7.
+  - `$E000-$FFFF` — always fixed to the last 8 KB bank.
+- **CHR layout (eight 1 KB pages):** physical page index XOR'd with 4 when CHR A12 inversion (`$8000` bit 7) is set. Logical slot → register: slot0=R0, slot1=`K?R8:R0+1`, slot2=R1, slot3=`K?R9:R1+1`, slot4-7=R2-R5. (Matches Mesen exactly — the 2 KB windows use R0/R0+1 directly, no low-bit masking.) CHR-RAM fallback for 0 KB-CHR dumps.
+- **PRG-RAM:** none. `$6000-$7FFF` reads return 0; writes discarded. `batteryBackedRam()` returns `null`.
+- **Mirroring:** `$A000` even-address write (bit 0 = 0 vertical, 1 horizontal) overrides the iNES header (inherited from Mapper4).
+- **IRQ:** two clock sources, mutually exclusive, selected by `$C001` bit 0:
+  - **A12 / scanline mode** (default): clocked by PPU A12 rising edges, like MMC3.
+  - **CPU-cycle mode**: the counter is clocked once every **4** CPU cycles (Mesen: `_cpuClockCounter = (_cpuClockCounter+1) & 3`). A12 edges are ignored in this mode.
+  - **Reload** (in `ScanlineCounter`, RAMBO-1 path): explicit `$C001` reload sets counter = `latch+1` (latch ≤ 1) or `latch+2` (latch > 1); auto-reload after underflow sets `latch+1`. This is the documented "Klax needs +1" quirk.
+  - **Fire only on decrement-to-zero**, never on reload-to-zero (Mesen2 `Rambo1.h` puts the trigger test inside the decrement branch). This matters because a game disarms its single per-frame split by reloading a LARGE latch (Klax uses `0xFE`, which wraps `0xFE+2 → 0x00`): firing on that reload-to-zero produced a spurious second IRQ that corrupted every CHR bank below the split (the "garbage 0s" glitch). The MMC3 path still fires on reload-or-decrement to zero. Regression: `Mapper64IrqDisarmTest`.
+- **Implementation notes:**
+  - `Mapper64` subclasses `Mapper4` to reuse the IRQ counter, mirroring, and CHR-RAM fallback, but **owns its PRG/CHR banking** (a 16-entry register file `reg[0..15]` plus the mode flags) because RAMBO-1's layout genuinely differs from MMC3. It overrides `handleBankSelectWrite` (4-bit select + the K/PRG-mode/invert bits), `handleBankDataWrite`, `cpuRead`, `ppuRead`, `notifyA12Edge` (ignore A12 in CPU-cycle mode), `tickCpuCycle` (div-4), `saveState`/`loadState`, and `snapshot`.
+  - **Why it was originally broken:** the first implementation inherited MMC3's 3-bit register select, two-PRG-bank layout, and 2 KB-only CHR. The register *protocol* is identical to MMC3, so games booted and ran "stably" — but Klax selects R15, R8/R9, and K-mode (verified by `Mapper64KlaxBankTraceTest`), all of which the MMC3 decode silently aliased or ignored. Klax `JSR`s into `$C000` (=R15 on RAMBO-1, a wrong fixed bank under MMC3 decode), diverged on the first frame, and rendered a blank screen. The misleading "boots stably" plus MMC3-shaped unit tests is why earlier work chased CPU/PPU timing and open-bus instead of the banking.
+  - **Data-bus tracking** (in `Memory.kt` + `Mapper.kt`) remains in place but **opt-in** — `Mapper64.cpuRead` returns 0 for open-bus, which Klax does not depend on. The infrastructure is for mappers that genuinely need it (HES NTD-8 / Mapper 113; see memory entry `hes-mb-mesen2-divergence-2026-06-07`).
+- **Verification:**
+  - `Mapper64Test` (32 tests) covers: header dispatch; power-on PRG banks (all register 0, `$E000` last); R6/R7 PRG switching; **R15 as the third PRG bank at `$C000` (mode 0) / `$8000` (mode 1)**; **4-bit register select (R15 not aliased onto R7)**; PRG mode 1 swap; 2 KB CHR (R0/R0+1, R1/R1+1, no masking); R2-R5 1 KB banks; **K-mode 1 KB CHR with R8/R9**; CHR A12 inversion (XOR 4); bank-select/data protocol; `$A000` mirroring; `$A001` no-op; `$6000-$7FFF`/`$4020-$5FFF` read 0; writes discarded; `batteryBackedRam()` null; A12 IRQ with the latch+1/latch+2 reload; explicit-reload latch+2 for latch>1; **CPU-cycle IRQ clocked every 4 cycles**; CPU-cycle mode ignores A12; CHR-RAM fallback; save/load round-trips banking + modes + IRQ state + CPU-cycle mode; snapshot reports mapper 64 / `prgRam = null`.
+  - `Mapper64KlaxBankTraceTest` asserts Klax actually exercises R15, K-mode, and R8/R9 — guarding *why* the full decode is required.
+  - `Mapper64RealGameBootTest` boots *Klax*, *Skull & Crossbones*, and *Road Runner* for 600 frames (rendering enabled throughout, mapper switching banks, not stalled).
+  - `Mapper64IrqDisarmTest` guards the split-screen IRQ: arm `latch=0x3F` → fires once → disarm `latch=0xFE` → assert NO fire within 240 scanlines. This is the regression for the "garbage 0s below the split" double-fire.
+  - `Mapper64KlaxRegressionTest` (Mesen2 state diff) — at the title-screen frames (60, 240) Klax's CHR and palette are **byte-identical to Mesen2** and the CPU PC matches within the capture-scanline offset. After the IRQ disarm fix, Klax renders its **full title screen** (KLAX logo, START/OPTION/STUFF menu, Aztec borders, copyright) matching Mesen2 — previously the region below the scanline split was garbage. All five RAMBO-1 titles (Klax, Skull & Crossbones, Road Runner, Rolling Thunder, Toobin') render their title/attract screens cleanly. Remaining state-diff deltas (OAM, PPU control/mask) are the documented pre-NMI-vs-post-NMI capture offset, not a render bug.
 
 ## Mapper 66 (GxROM)
 **Status:** Working (Added 2026-05-30, register decode fixed 2026-05-31)

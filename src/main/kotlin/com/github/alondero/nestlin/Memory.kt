@@ -29,12 +29,39 @@ class Memory : DmaPort {
     // Mapper for cartridge bank switching (set during readCartridge)
     var mapper: Mapper? = null
 
+    /**
+     * Last byte driven on the 6502 data bus. Tracked globally across
+     * every CPU read OR write (regardless of which component handled
+     * the access), so open-bus reads — addresses the mapper has no byte
+     * of its own to return, e.g. $4020-$5FFF on MMC3, $6000-$7FFF on
+     * chips without PRG-RAM — can return the value a real 6502 would
+     * see. Without this, games that rely on the 6502's data-bus open-bus
+     * behaviour diverge from Mesen2 at boot (Klax's IRQ-driven bonus
+     * timer, Mind Blower Pak's reset vector trampoline, etc.).
+     *
+     * Updated at the END of every get/set so the value a caller sees is
+     * the value that was actually returned / written. Set on the mapper
+     * (via [Mapper.dataBus]) just before `cpuRead` so open-bus paths
+     * in the mapper can read it.
+     */
+    var dataBus: Byte = 0
+
     fun readCartridge(data: GamePak) {
         val m = data.createMapper()
         mapper = m
 
-        // Wire CHR banking delegates to the mapper
-        ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = { addr -> m.ppuRead(addr) }
+        // Wire CHR banking delegates to the mapper. PPU CHR reads also
+        // update the system data-bus, since the PPU drives the shared
+        // 6502 bus on its cycles. Without this, a CPU open-bus read at
+        // $4020-$7FFF (e.g. Klax's $6000 polling) would see whatever the
+        // last CPU access was, not the PPU's last CHR byte — diverging
+        // from real hardware. Klax specifically relies on this for its
+        // boot sequence.
+        ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = { addr ->
+            val result = m.ppuRead(addr)
+            dataBus = result
+            result
+        }
         ppuAddressedMemory.ppuInternalMemory.chrWriteDelegate = { addr, v -> m.ppuWrite(addr, v) }
 
         // Wire A12 edge detection for MMC3 scanline IRQ
@@ -118,16 +145,37 @@ class Memory : DmaPort {
                 mapper?.let { applyMirroringFromMapper(it) }  // sync mirroring after each write
             }
         }
+        // The 6502 drives the data bus with the value it's writing. Track
+        // it globally so mappers that opt into open-bus reads (e.g. HES
+        // NTD-8 / Mapper 113) can return the correct value. The
+        // default Mapper implementation of `dataBus` is 0, so mappers
+        // that don't override `cpuRead` get the old 0-on-open-bus behaviour.
+        dataBus = value
     }
 
-    override operator fun get(address: Int) = when (address) {
-        in 0x0000..0x1FFF -> internalRam[address % 0x800]
-        in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
-        0x4016 -> controller1.read()
-        0x4017 -> controller2.read()
-        in 0x4000..0x401F -> apu?.handleRegisterRead(address - 0x4000) ?: apuAddressedMemory[address - 0x4000]
-        in 0x4020..0xFFFF -> mapper?.cpuRead(address) ?: 0
-        else -> 0
+    override operator fun get(address: Int): Byte {
+        val result: Byte = when (address) {
+            in 0x0000..0x1FFF -> internalRam[address % 0x800]
+            in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
+            0x4016 -> controller1.read()
+            0x4017 -> controller2.read()
+            in 0x4000..0x401F -> apu?.handleRegisterRead(address - 0x4000) ?: apuAddressedMemory[address - 0x4000]
+            in 0x4020..0xFFFF -> {
+                // Push the current data-bus value into the mapper BEFORE
+                // calling `cpuRead`, so mappers that opt into open-bus
+                // reads can return the correct value. The default Mapper
+                // property is no-op, so mappers that don't override it
+                // see dataBus=0 and fall back to the old 0-on-open-bus
+                // behaviour. This is the minimum-blast-radius fix: only
+                // mappers that EXPLICITLY want open-bus reads get them.
+                mapper?.dataBus = dataBus
+                mapper?.cpuRead(address) ?: 0
+            }
+            else -> 0
+        }
+        // Track the result on the data bus for the next access.
+        dataBus = result
+        return result
     }
 
     operator fun get(address1: Int, address2: Int): Short {

@@ -14,6 +14,11 @@ import java.io.DataOutput
  *
  * The A12 edge detection itself (with 3 M2 cycle requirement) lives in PpuInternalMemory.
  * This class only implements the counter semantics.
+ *
+ * Tengen RAMBO-1 (Mapper 64) has a documented quirk: the reload value is
+ * `(latch + 1) and 0xFF` instead of just `latch`. Per the nesdev wiki,
+ * "Klax still requires +1 to run perfectly" because of this. Toggle via
+ * [setReloadPlusOne] — off by default (standard MMC3 behaviour).
  */
 class ScanlineCounter {
     private var irqLatch = 0
@@ -21,6 +26,12 @@ class ScanlineCounter {
     private var irqEnabled = false
     private var irqCounter = 0
     private var irqPending = false
+    private var reloadPlusOne = false
+    // Tengen RAMBO-1 (Mapper 64) supports two IRQ clock modes per nesdev:
+    // scanline (A12-clocked, the MMC3 default) and CPU cycle (clocked once
+    // per `clock()` call, intended to be wired to `tickCpuCycle()`). The
+    // mode is selected by `$C001` bit 0. Off by default.
+    private var cpuCycleMode = false
 
     /**
      * Write to $C000 — IRQ latch value.
@@ -49,18 +60,77 @@ class ScanlineCounter {
     }
 
     /**
+     * Toggle the Tengen RAMBO-1 reload behaviour. Off by default (standard
+     * MMC3 behaviour). When on, [clock] uses RAMBO-1's two-path reload
+     * (explicit reload = latch+1 or latch+2; auto-reload = latch+1), matching
+     * Mesen2. The rest of the IRQ machinery (enable, acknowledge, pending) is
+     * identical between MMC3 and RAMBO-1.
+     */
+    fun setReloadPlusOne(enabled: Boolean) {
+        reloadPlusOne = enabled
+    }
+
+    /**
+     * Toggle the Tengen RAMBO-1 CPU-cycle IRQ clock mode. Off by default
+     * (scanline / A12-clocked, standard MMC3 behaviour). When on, the
+     * counter clocks once per `clock()` call regardless of the PPU A12
+     * edge — the mapper is expected to call `clock()` from its
+     * `tickCpuCycle()` hook. The mode is selected at runtime by `$C001`
+     * bit 0 (set → CPU cycle, clear → A12).
+     */
+    fun setCpuCycleMode(enabled: Boolean) {
+        cpuCycleMode = enabled
+    }
+
+    /**
+     * True if the counter is being clocked from CPU cycles rather than
+     * PPU A12 edges. Exposed for snapshot/debugging — Mapper 64 uses
+     * `tickCpuCycle()` to gate `clock()` calls based on this flag.
+     */
+    fun isCpuCycleMode(): Boolean = cpuCycleMode
+
+    /**
      * Clock the counter on an A12 rising edge.
      * Called by the mapper's notifyA12Edge() implementation.
      */
     fun clock() {
-        if (irqCounter == 0 || irqReload) {
-            irqCounter = irqLatch
-            irqReload = false
+        if (reloadPlusOne) {
+            // Tengen RAMBO-1, modelled exactly on Mesen2's `Rambo1.h` (the
+            // reference oracle). Two distinct reload paths, unlike MMC3:
+            //   - explicit reload (after a $C001 write): counter =
+            //     (latch <= 1) ? latch + 1 : latch + 2.
+            //   - auto-reload when the counter underflows to 0: counter =
+            //     latch + 1.
+            //
+            // CRITICAL: the IRQ fires ONLY when the counter is *decremented*
+            // to zero — never when a reload sets it to zero. Klax disarms its
+            // single-per-frame split by reloading a large latch (0xFE), which
+            // wraps to (0xFE + 2) & 0xFF = 0x00. Firing on that reload-to-zero
+            // produced a spurious second IRQ that corrupted every CHR bank
+            // below the split (the "garbage 0s" glitch). Mesen2 puts the
+            // trigger test inside the decrement branch for exactly this reason.
+            when {
+                irqReload -> {
+                    irqCounter = (if (irqLatch <= 1) irqLatch + 1 else irqLatch + 2) and 0xFF
+                    irqReload = false
+                }
+                irqCounter == 0 -> irqCounter = (irqLatch + 1) and 0xFF
+                else -> {
+                    irqCounter = (irqCounter - 1) and 0xFF
+                    if (irqCounter == 0 && irqEnabled) irqPending = true
+                }
+            }
         } else {
-            irqCounter--
-        }
-        if (irqCounter == 0 && irqEnabled) {
-            irqPending = true
+            // Standard MMC3: fires on reload-to-zero or decrement-to-zero.
+            if (irqCounter == 0 || irqReload) {
+                irqCounter = irqLatch
+                irqReload = false
+            } else {
+                irqCounter--
+            }
+            if (irqCounter == 0 && irqEnabled) {
+                irqPending = true
+            }
         }
     }
 

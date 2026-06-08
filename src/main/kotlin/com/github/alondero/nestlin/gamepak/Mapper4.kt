@@ -14,44 +14,59 @@ import java.io.DataOutput
  * - Scanline IRQ via PPU A12 edge detection
  *
  * Games: Mega Man 4-6, Contra, Kirby's Adventure, StarTropics, Crystalis, etc.
+ *
+ * The class is `open` so stripped-down MMC3 derivatives (e.g. Mapper 64 /
+ * Tengen RAMBO-1) can override the per-register write handlers without
+ * duplicating the PRG / CHR decode or save-state code. The override
+ * pattern is documented on each `protected open` write handler below.
  */
-class Mapper4(private val gamePak: GamePak) : Mapper {
+open class Mapper4(private val gamePak: GamePak) : Mapper {
 
-    private val programRom = gamePak.programRom
-    private val chrRom = gamePak.chrRom
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    protected val programRom = gamePak.programRom
+    protected val chrRom = gamePak.chrRom
+    protected val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
 
     // PRG bank count (8KB units)
-    private val prgBankCount = programRom.size / 0x2000
+    protected val prgBankCount = programRom.size / 0x2000
 
     // 8KB PRG banks
-    private var prgBank6 = 0  // $8000-$9FFF
-    private var prgBankA = 1  // $A000-$BFFF (R7, always switchable)
+    protected var prgBank6 = 0  // $8000-$9FFF
+    protected var prgBankA = 1  // $A000-$BFFF (R7, always switchable)
     // $C000-$DFFF uses prgBankCount-2 when prgMode=0, prgBank6 when prgMode=1
     // $E000-$FFFF always last bank (fixed)
 
     // 2KB CHR banks (R0, R1) and 1KB CHR banks (R2-R5)
-    private var chrBanks = IntArray(6) { 0 }
+    protected var chrBanks = IntArray(6) { 0 }
 
-    // PRG RAM ($6000-$7FFF)
-    private val prgRam = ByteArray(0x2000)
+    // PRG RAM ($6000-$7FFF). Exposed as `protected` so subclasses (e.g. Mapper
+    // 64) can write through it directly when they remove the enable/protect
+    // gating that MMC3 exposes at $A001.
+    protected val prgRam = ByteArray(0x2000)
     private var prgRamEnabled = true
     private var prgRamWriteProtect = false
     override var batteryDirty: Boolean = false
     override fun batteryBackedRam(): ByteArray? = prgRam
 
     // Bank select register ($8000)
-    private var bankSelect = 0
+    protected var bankSelect = 0
     // CHR/PRG inversion mode (bit 6 of $8000)
     private var chrPrgInvert = false
     // PRG banking mode (bit 7 of $8000)
     private var prgMode = false
 
-    // IRQ counter (MMC3 scanline IRQ)
-    private val scanlineCounter = ScanlineCounter()
+    // IRQ counter (MMC3 scanline IRQ). Exposed as `protected` so stripped-
+    // down derivatives (Mapper 64 / Tengen RAMBO-1) can install the
+    // (latch + 1) reload quirk via `scanlineCounter.setReloadPlusOne(true)`.
+    protected val scanlineCounter = ScanlineCounter()
 
     // Mirroring override from $A000 register (bit 0: 0=vertical, 1=horizontal)
     private var mirroringOverride: Mapper.MirroringMode? = null
+
+    // The CPU data-bus value, set by Memory just before each `cpuRead`
+    // call. Subclasses that want open-bus reads (HES NTD-8 / Mapper 113)
+    // can read this from their `cpuRead`. The default Mapper property
+    // is 0, so mappers that don't override stay 0-on-open-bus.
+    override var dataBus: Byte = 0
 
     override fun notifyA12Edge(rising: Boolean) {
         if (!rising) return
@@ -62,7 +77,7 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
         if (address in 0x6000..0x7FFF) {
             return if (prgRamEnabled) prgRam[address - 0x6000] else 0
         }
-        if (address < 0x8000) return 0
+        if (address < 0x8000) return 0  // $4020-$5FFF is open bus on standard MMC3
 
         return when (address and 0xE000) {
             0x8000 -> {
@@ -89,66 +104,107 @@ class Mapper4(private val gamePak: GamePak) : Mapper {
 
     override fun cpuWrite(address: Int, value: Byte) {
         if (address in 0x6000..0x7FFF) {
-            if (prgRamEnabled && !prgRamWriteProtect) {
-                prgRam[address - 0x6000] = value
-                batteryDirty = true
-            }
+            handlePrgRamWrite(address, value)
             return
         }
         if (address < 0x8000) return
 
-        val addrLow = address and 0xE000
-        val valueInt = value.toUnsignedInt()
-
-        when (addrLow) {
-            0x8000 -> {
-                // Bank select (even address) or Bank data (odd address)
-                if ((address and 0x01) == 0) {
-                    // Even address: Bank select register
-                    bankSelect = valueInt and 0x07
-                    // Bit 7 = CHR A12 inversion, bit 6 = PRG bank mode (MMC3 spec)
-                    prgMode = (valueInt and 0x40) != 0
-                    chrPrgInvert = (valueInt and 0x80) != 0
-                } else {
-                    // Odd address: Bank data
-                    setBank(bankSelect, valueInt)
-                }
-            }
-            0xA000 -> {
-                if ((address and 0x01) == 0) {
-                    // Even address: Mirroring control
-                    // Bit 0: 0=vertical, 1=horizontal
-                    mirroringOverride = if ((valueInt and 0x01) != 0) {
-                        Mapper.MirroringMode.HORIZONTAL
-                    } else {
-                        Mapper.MirroringMode.VERTICAL
-                    }
-                } else {
-                    // Odd address: PRG RAM protect ($A001)
-                    // Bit 7: PRG RAM chip enable (0: disable, 1: enable)
-                    // Bit 6: PRG RAM write protect (0: allow, 1: deny)
-                    prgRamEnabled = (valueInt and 0x80) != 0
-                    prgRamWriteProtect = (valueInt and 0x40) != 0
-                }
-            }
-            0xC000 -> {
-                // IRQ latch (even) or IRQ reload (odd)
-                if ((address and 0x01) == 0) {
-                    scanlineCounter.writeLatch(valueInt)
-                } else {
-                    // Reload flag is set; actual counter reload happens at next A12 rising edge
-                    scanlineCounter.triggerReload()
-                }
-            }
-            0xE000 -> {
-                // IRQ disable (even) or enable (odd)
-                if ((address and 0x01) == 0) {
-                    scanlineCounter.setEnabled(false)
-                } else {
-                    scanlineCounter.setEnabled(true)
-                }
-            }
+        // `address and 0xE001` preserves bit 0 (bank-select vs bank-data) and
+        // bits 13-15 (the $8/$A/$C/$E block), dropping the middle address bits.
+        // Equivalent to the original `address and 0xE000` + low-bit test, but
+        // a single expression lets each handler map to one branch.
+        val v = value.toUnsignedInt()
+        when (address and 0xE001) {
+            0x8000 -> handleBankSelectWrite(v)
+            0x8001 -> handleBankDataWrite(v)
+            0xA000 -> handleMirroringWrite(v)
+            0xA001 -> handlePrgRamProtectWrite(v)
+            0xC000 -> handleIrqLatchWrite(v)
+            0xC001 -> handleIrqReloadWrite(v)
+            0xE000 -> handleIrqDisableWrite()
+            0xE001 -> handleIrqEnableWrite()
         }
+    }
+
+    /**
+     * $6000-$7FFF PRG-RAM write. Default behaviour respects the $A001
+     * enable + write-protect bits. Stripped-down derivatives without PRG-RAM
+     * at all (e.g. Mapper 64 / Tengen RAMBO-1) override this to discard
+     * the write — they typically also override [cpuRead] to return 0.
+     */
+    protected open fun handlePrgRamWrite(address: Int, value: Byte) {
+        if (prgRamEnabled && !prgRamWriteProtect) {
+            prgRam[address - 0x6000] = value
+            batteryDirty = true
+        }
+    }
+
+    /**
+     * $8000 bank-select write. Bits 0-2 pick R0-R7; bit 6 is the PRG mode
+     * (when set, R6 and the second-to-last bank are swapped) and bit 7 is
+     * CHR A12 inversion. Subclasses with hardwired modes (Mapper 206) can
+     * call `super` with `value and 0x3F` so the mode bits never latch —
+     * Mapper 64 (Tengen RAMBO-1) is a faithful clone and uses the modes
+     * unchanged, so it does NOT override this.
+     */
+    protected open fun handleBankSelectWrite(value: Int) {
+        bankSelect = value and 0x07
+        prgMode = (value and 0x40) != 0
+        chrPrgInvert = (value and 0x80) != 0
+    }
+
+    /** $8001 bank-data write. Forwards to [setBank] with the current select. */
+    protected open fun handleBankDataWrite(value: Int) {
+        setBank(bankSelect, value)
+    }
+
+    /** $A000 mirroring write. Bit 0: 0=vertical, 1=horizontal. */
+    protected open fun handleMirroringWrite(value: Int) {
+        mirroringOverride = if ((value and 0x01) != 0) {
+            Mapper.MirroringMode.HORIZONTAL
+        } else {
+            Mapper.MirroringMode.VERTICAL
+        }
+    }
+
+    /** $A001 PRG-RAM protect. Bit 7 = enable, bit 6 = write-protect. */
+    protected open fun handlePrgRamProtectWrite(value: Int) {
+        prgRamEnabled = (value and 0x80) != 0
+        prgRamWriteProtect = (value and 0x40) != 0
+    }
+
+    /** $C000 IRQ latch. */
+    protected open fun handleIrqLatchWrite(value: Int) {
+        scanlineCounter.writeLatch(value)
+    }
+
+    /** $C001 IRQ reload. Reload happens on next clock tick (A12 edge or
+     *  CPU cycle, depending on mode). The `value` parameter carries the
+     *  full write byte — Tengen RAMBO-1 uses bit 0 to select CPU-cycle
+     *  mode vs the default A12 mode (see Mapper64). */
+    protected open fun handleIrqReloadWrite(value: Int) {
+        scanlineCounter.triggerReload()
+    }
+
+    /** $E000 IRQ disable. */
+    protected open fun handleIrqDisableWrite() {
+        scanlineCounter.setEnabled(false)
+    }
+
+    /** $E001 IRQ enable. */
+    protected open fun handleIrqEnableWrite() {
+        scanlineCounter.setEnabled(true)
+    }
+
+    /**
+     * Force PRG mode and CHR A12 inversion back to mode 0. Subclasses with
+     * hardwired modes use this from their `loadState` so a save state
+     * produced by a mode-aware sibling (e.g. a real MMC3 image) can't
+     * desync the banking after load.
+     */
+    protected fun resetBankingModes() {
+        prgMode = false
+        chrPrgInvert = false
     }
 
     private fun setBank(bankIndex: Int, value: Int) {
