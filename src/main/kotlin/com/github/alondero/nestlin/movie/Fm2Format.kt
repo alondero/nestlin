@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.movie
 
 import com.github.alondero.nestlin.Controller.Button
+import com.github.alondero.nestlin.toUnsignedInt
 import java.security.MessageDigest
 import java.util.Base64
 
@@ -23,6 +24,15 @@ import java.util.Base64
  */
 object Fm2Format {
 
+    // iNES file-layout constants. FCEUX `romChecksum` (verified from FCEUX src/ines.cpp:iNESLoad)
+    // excludes the 16-byte header, then optionally excludes a 512-byte trainer block at the start
+    // of the body when header byte 6 bit 2 is set. PRG and CHR sizes are multiples of 16 KB and
+    // 8 KB respectively. These four numbers are the structural input to that algorithm.
+    private const val INES_HEADER_SIZE = 16
+    private const val TRAINER_SIZE = 512
+    private const val PRG_BANK_BYTES = 16384
+    private const val CHR_BANK_BYTES = 8192
+
     /** FM2 pad columns in written order (leftmost first), paired with the Nestlin button each maps to. */
     private val FM2_LAYOUT: List<Pair<Char, Button>> = listOf(
         'R' to Button.RIGHT,
@@ -36,17 +46,34 @@ object Fm2Format {
     )
 
     /**
-     * Compute the FM2 `romChecksum`: `base64:` followed by Base64 of the raw 16-byte MD5 of the ROM
-     * *image data* (the iNES file with its 16-byte header stripped — FCEUX hashes PRG+CHR, not the
-     * header). [romImage] is the byte array returned by `Path.load()`.
+     * Compute the FM2 `romChecksum`: `base64:` followed by Base64 of the raw 16-byte MD5.
      *
-     * Caveat: a ROM carrying a 512-byte trainer would need that skipped too; not handled yet (none
-     * of the in-repo test ROMs have one). Left as a follow-up for exact FCEUX parity.
+     * The hash input is the iNES image with (a) the 16-byte header excluded, and (b) the optional
+     * 512-byte trainer block excluded when header byte 6 bit 2 is set. The result is two
+     * `md5_update` calls: PRG first, then CHR (skipped if the ROM has zero CHR banks, e.g.
+     * CHR-RAM mappers). PRG-RAM is never included.
+     *
+     * This matches FCEUX byte-for-byte (FCEUX `src/ines.cpp:iNESLoad`, `src/utils/xstring.cpp:
+     * BytesToString`); a Nestlin `.fm2` will load in real FCEUX and an FCEUX-recorded `.fm2`
+     * will replay in Nestlin. [romImage] is the byte array returned by `Path.load()`.
      */
     fun romChecksum(romImage: ByteArray): String {
-        val body = if (romImage.size > 16) romImage.copyOfRange(16, romImage.size) else romImage
-        val md5 = MessageDigest.getInstance("MD5").digest(body)
-        return "base64:" + Base64.getEncoder().encodeToString(md5)
+        require(romImage.size >= INES_HEADER_SIZE) {
+            "iNES header requires at least $INES_HEADER_SIZE bytes (got ${romImage.size})"
+        }
+        val prgBanks = romImage[4].toUnsignedInt()
+        val chrBanks = romImage[5].toUnsignedInt()
+        val hasTrainer = romImage[6].toUnsignedInt() and 0x04 != 0
+        val trainerSkip = if (hasTrainer) TRAINER_SIZE else 0
+        val prgStart = INES_HEADER_SIZE + trainerSkip
+        val prgSize = prgBanks * PRG_BANK_BYTES
+        val chrStart = prgStart + prgSize
+        val chrSize = chrBanks * CHR_BANK_BYTES
+
+        val md5 = MessageDigest.getInstance("MD5")
+        if (prgSize > 0) md5.update(romImage, prgStart, prgSize)
+        if (chrSize > 0) md5.update(romImage, chrStart, chrSize)
+        return "base64:" + Base64.getEncoder().encodeToString(md5.digest())
     }
 
     /** Serialise [movie] to FM2 text. Lines are `\n`-terminated; `.gitattributes` normalises to CRLF. */
