@@ -8,7 +8,6 @@ import java.io.DataOutput
 const val RESOLUTION_WIDTH = 256
 const val RESOLUTION_HEIGHT = 240
 
-const val IDLE_SCANLINE = 0
 const val POST_RENDER_SCANLINE = 240
 
 class Ppu(var memory: Memory) {
@@ -180,18 +179,6 @@ class Ppu(var memory: Memory) {
         }
 
         //  Every cycle a bit is fetched from the 4 backgroundNametables shift registers in order to create a pixel on screen
-
-
-//        with(spriteNametables) {
-//            decrementCounters()
-//            getActiveSprites().forEach {
-//                // If the counter is zero, the sprite becomes "active", and the respective pair of shift registers for the sprite is shifted once every cycle.
-//                // This output accompanies the data in the sprite's latch, to form a pixel.
-//                it.shiftRegisters()
-//                // The current pixel for each "active" sprite is checked (from highest to lowest priority), and the first non-transparent pixel moves on to a multiplexer,
-//                // where it joins the BG pixel
-//            }
-//        }
 
 
         cycle++
@@ -847,7 +834,7 @@ data class SpriteData(
 /**
  * Sprite with fetched tile data, ready to render on current scanline.
  */
-data class ActiveSprite(
+class ActiveSprite(
     val data: SpriteData,
     val tileDataLow: Byte,    // Pattern table low byte (bit 0 plane)
     val tileDataHigh: Byte,   // Pattern table high byte (bit 1 plane)
