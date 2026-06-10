@@ -31,6 +31,9 @@ class Cpu(var memory: Memory)
     // TODO: Development-only feature - Remove undocumented opcode logging once emulator stability is proven
     // This allows us to identify missing opcodes without crashing, useful for game compatibility debugging
     private val undocumentedOpcodes = mutableSetOf<Int>()
+    // Buffered log lines; flushed in one write at shutdown. Avoids per-cycle
+    // disk I/O on the hot tick() path. See issue #29.
+    private val undocumentedLogBuffer = mutableListOf<String>()
     private val UNDOCUMENTED_LOG_FILE = "undocumented_opcodes.txt"
 
     fun reset() {
@@ -137,18 +140,20 @@ class Cpu(var memory: Memory)
 
     private fun logUndocumentedOpcode(opcodeVal: Int, pc: Short) {
         if (undocumentedOpcodes.add(opcodeVal)) {
-            // First time seeing this opcode, log it
+            // First time seeing this opcode; buffer the entry for a single bulk
+            // write at shutdown. Avoids per-cycle disk I/O on the hot tick() path.
+            // See issue #29.
             val logEntry = "PC: ${"%04X".format(pc.toUnsignedInt())} - Undocumented opcode: 0x${"%02X".format(opcodeVal)} (treating as NOP)\n"
-            File(UNDOCUMENTED_LOG_FILE).appendText(logEntry)
+            undocumentedLogBuffer.add(logEntry)
         }
     }
 
-    fun dumpUndocumentedOpcodes() {
-        if (undocumentedOpcodes.isNotEmpty()) {
-            val summary = "Found ${undocumentedOpcodes.size} unique undocumented opcodes: " +
-                    undocumentedOpcodes.sorted().joinToString(", ") { "0x${"%02X".format(it)}" }
-            File(UNDOCUMENTED_LOG_FILE).appendText("\n$summary\n")
-        }
+    fun dumpUndocumentedOpcodes(file: File = File(UNDOCUMENTED_LOG_FILE)) {
+        if (undocumentedOpcodes.isEmpty()) return
+        val perOpcodeText = undocumentedLogBuffer.joinToString("")
+        val summary = "\nFound ${undocumentedOpcodes.size} unique undocumented opcodes: " +
+                undocumentedOpcodes.sorted().joinToString(", ") { "0x${"%02X".format(it)}" }
+        file.writeText(perOpcodeText + summary + "\n")
     }
 
     private fun checkAndHandleNmi(): Boolean {
