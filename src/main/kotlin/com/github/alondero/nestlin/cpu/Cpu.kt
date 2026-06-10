@@ -10,7 +10,6 @@ import java.io.File
 class Cpu(var memory: Memory)
 {
     var currentGame: GamePak? = null
-    var interrupt: Interrupt? = null
     var workCyclesLeft = 0
     // The 6502 services an NMI with ~1 instruction of latency: when the NMI line is
     // asserted (PPU vblank) the CPU finishes its current instruction (and often issues
@@ -247,7 +246,9 @@ class Cpu(var memory: Memory)
         out.writeBoolean(pageBoundaryFlag)
         out.writeBoolean(idle)
         out.writeBoolean(nmiArmed)
-        out.writeInt(interrupt?.ordinal ?: -1)
+        // Reserved: the old `Interrupt` enum (IRQ_BRK/NMI/RESET) was removed in issue #24.
+        // The 4-byte slot stays in the format so save files made by older builds still load.
+        out.writeInt(0)
     }
 
     fun loadState(input: DataInput) {
@@ -262,8 +263,8 @@ class Cpu(var memory: Memory)
         pageBoundaryFlag = input.readBoolean()
         idle = input.readBoolean()
         nmiArmed = input.readBoolean()
-        val interruptOrdinal = input.readInt()
-        interrupt = if (interruptOrdinal < 0) null else Interrupt.values()[interruptOrdinal]
+        // Reserved slot — see saveState.
+        input.readInt()
     }
 
     fun push(value: Byte) { memory[0x100 + ((registers.stackPointer--).toUnsignedInt())] = value }
@@ -276,13 +277,7 @@ class Cpu(var memory: Memory)
     private fun readyForNextInstruction() = workCyclesLeft <= 0
 }
 
-enum class Interrupt {
-    IRQ_BRK,
-    NMI,
-    RESET
-}
-
-data class Registers(
+class Registers(
         var stackPointer: Byte = 0,
         var accumulator: Byte = 0,
         var indexX: Byte = 0,
@@ -306,7 +301,7 @@ data class Registers(
 
 }
 
-data class ProcessorStatus(
+class ProcessorStatus(
         var carry: Boolean = false,
         var zero: Boolean = true,
         var interruptDisable: Boolean = true,
