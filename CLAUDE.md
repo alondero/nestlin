@@ -34,6 +34,32 @@ java -jar build/libs/nestlin-all.jar replay rom.nes bug.fm2 \
 
 **Requirements:** JDK 21 (Gradle toolchain pinned in `build.gradle.kts`), Kotlin 1.9.22, JavaFX 21.0.1.
 
+## Step 0 of any mapper task — `tools/rom_info.py`
+
+Before writing a single line of mapper code, run the header decoder against your target ROM. Five known-broken conventions are encoded as warnings:
+
+```bash
+# What mapper is this, really?
+python tools/rom_info.py info path/to/rom.nes
+
+# Walk the dev library, filtered to a single mapper number
+python tools/rom_info.py scan S:\\Media\\Nintendo\\NES\\Games --mapper 33
+
+# NO-INTRO Namco 108 dumps are mislabelled as mapper 4; this emits a sibling COPY
+# with the byte6/byte7 patch applied (never touches the source).
+python tools/rom_info.py patch-namco108 path/to/gauntlet.nes
+
+# Read NMI/RESET/IRQ from the fixed last bank
+python tools/rom_info.py vectors path/to/rom.nes
+
+# CPU addr <-> file offset math + hexdump (for disassembly / reading NMI handlers)
+python tools/rom_info.py addr path/to/rom.nes --cpu-addr 0xEA40 --bank last
+```
+
+`info` warns about NO-INTRO header mislabels (Namco 108 / DxROM is the canonical one; the patch recipe lives in the tool's `--help` and the test suite). Library path defaults to `S:\Media\Nintendo NES\Games` (override with `ROMS_PATH` or `--library`).
+
+Run `python tools/test_rom_info.py` to exercise the decoder; the test suite cross-checks the byte equations against `Header.kt` and the in-repo `nestest.nes`.
+
 ## File Layout
 
 ```
