@@ -24,7 +24,12 @@ data class EmulatorStateSnapshot(
     // (Mesen2 captures don't decompose the mapper that way). Tests that want
     // to assert Nestlin's bank state without going through Mesen2 read this
     // directly.
-    val mapper: com.github.alondero.nestlin.gamepak.MapperStateSnapshot? = null
+    val mapper: com.github.alondero.nestlin.gamepak.MapperStateSnapshot? = null,
+    // Interrupts dispatched during the LAST FULL FRAME before this capture
+    // (frame N-1 -> N delta on Nestlin; per-endFrame event counts on Mesen2).
+    // -1 = unknown / not captured, so older snapshots and tests are unaffected.
+    val nmiCountLastFrame: Int = -1,
+    val irqCountLastFrame: Int = -1
 ) {
     fun toJson(): String = gson.toJson(this)
 

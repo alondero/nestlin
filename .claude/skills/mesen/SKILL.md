@@ -11,16 +11,16 @@ Mesen is a cycle-accurate NES/Famicom emulator. Two distinct binaries ship on th
 
 | Capability | Mesen v1 (`tools/Mesen/Mesen.exe`) | Mesen v2 (`tools/Mesen2/Mesen.exe`) |
 |---|---|---|
-| Headless (`--testrunner`) | yes — true headless | no — requires display |
-| `emu.getState()` | yes | yes |
+| Headless (`--testRunner`) | yes — true headless | **yes** (verified 2026-06-08 on v2.1.1, incl. `emu.read` and memory callbacks) |
+| `emu.getState()` | yes | yes — returns a **FLAT dotted-key table** (`s["cpu.pc"]`), not nested |
 | `emu.takeScreenshot()` | yes | yes |
-| `emu.read()` | no — deadlocks in headless | yes — in GUI mode |
-| `emu.addMemoryCallback()` | limited | yes — full |
+| `emu.read()` | no — deadlocks in headless | yes — GUI **and** `--testRunner` |
+| `emu.addMemoryCallback()` | limited | yes — via **`emu.callbackType`** (see below) |
 | `emu.execute(count, type)` | yes | yes |
-| `emu.stop()` | yes | no — hangs; use `os.exit()` |
+| `emu.stop(code)` | yes | **yes** — exits cleanly with the code (earlier "use os.exit()" advice obsolete) |
 | Mapper introspection via `nesMapperRam` memType | partial | yes |
 
-**Rule of thumb:** for byte-level inspection of mapper behavior, use **v2 in GUI mode** with `--doNotSaveSettings`. For pure regression screenshots in CI, v1 headless is fine.
+**Rule of thumb:** use **v2 `--testRunner --doNotSaveSettings`** for everything scripted — it is headless-capable on this machine. Before writing fresh Lua, check `tools/mesen-trace/` — write-watch, interrupt-counter, ppuctrl-transitions, and chr-dump are already there, verified against the installed binary.
 
 ## Absolute paths (no relative path discipline survives worktrees)
 
@@ -54,7 +54,7 @@ Mesen.exe --testrunner <script.lua> <rom>
 
 | Call | Use |
 |---|---|
-| `emu.getState()` | Returns nested table: `state.cpu.{pc,a,x,y,sp,status,cycleCount,nmiFlag,irqFlag}`, `state.ppu.{cycle,scanline,frameCount,control,mask,status,state.{videoRamAddr,...}}`, `state.apu.{square1,square2,triangle,noise,dmc,frameCounter}`, `state.cart.{selectedChrPages[0..7],selectedPrgPages[0..3],chrRomSize,prgRomSize,prgPageCount,chrPageCount,chrPageSize,prgPageSize}`. |
+| `emu.getState()` | **v2.1.1 reality:** a FLAT table with dotted string keys — `s["cpu.pc"]`, `s["ppu.scanline"]`, `s["ppu.frameCount"]`, `s["cpu.cycleCount"]`, etc. (`state.cpu.pc` nested access throws nil-index.) **Inside event/memory callbacks** the table is PARTIAL: no `ppu.*`, no `cart.*` keys — an unguarded access silently aborts the rest of the callback. Count frames yourself via an `endFrame` callback instead of reading `ppu.frameCount` there. |
 | `emu.setState(state)` | Writes CPU/PPU back (NOT APU or cart). Useful for forcing a known state to repro. |
 | `emu.takeScreenshot()` | Returns raw PNG bytes — `io.open(path, "wb"); f:write(data); f:close()`. |
 | `emu.getRomInfo()` | Mapper number, PRG/CHR sizes, mirroring — surface what the ROM declares. |
@@ -66,7 +66,7 @@ Mesen.exe --testrunner <script.lua> <rom>
 | `emu.read(addr, memType, signed=false)` | One byte from any memory space. **v2 GUI only.** |
 | `emu.readWord(addr, memType, signed=false)` | Two bytes. |
 | `emu.write(addr, value, memType)` | Inject a value. Writes to `prgRom`/`chrRom` are reversible via `emu.revertPrgChrChanges()`. |
-| `emu.addMemoryCallback(fn, type, startAddr [, endAddr])` | Fire on every CPU read/write/exec or PPU read/write in a range. **This is how you watch mapper-register writes** — register for `cpuWrite` over `$8000..$FFFF` and log `address, value, state.cpu.cycleCount`. Returning a number from the callback rewrites the operation's value. |
+| `emu.addMemoryCallback(fn, type, startAddr [, endAddr])` | Fire on every access in a range. **v2.1.1: `type` comes from `emu.callbackType`, whose ONLY keys are `exec`, `read`, `write`** — `emu.memCallbackType` is nil and there is no `cpuWrite`/`ppuRead` variant. Watch mapper-register writes with `emu.addMemoryCallback(fn, emu.callbackType.write, 0x8000, 0xFFFF)`; the callback receives `(address, value)`. Do NOT call `emu.getState()` inside it for ppu/cart fields (they're absent there). Returning a number from the callback rewrites the operation's value. |
 | `emu.removeMemoryCallback(ref, type, ...)` | Unregister. |
 | `emu.getPrgRomOffset(cpuAddr)` | Maps a CPU address to a byte offset in the PRG ROM file — invaluable for reasoning about bank switching. |
 | `emu.getChrRomOffset(ppuAddr)` | Maps a PPU address to CHR ROM file offset. |
@@ -81,14 +81,13 @@ Mesen.exe --testrunner <script.lua> <rom>
 | `emu.resume()` | Continue after `breakExecution()`. |
 | `emu.reset()` | Soft reset. |
 | `emu.rewind(seconds)` | Only valid from `startFrame` callback. |
-| `emu.stop(exitCode)` | v1 only; in v2 use `os.exit()`. |
+| `emu.stop(exitCode)` | Works on BOTH v1 and v2.1.1 — exits `--testRunner` with the given code. (Old "v1 only, use os.exit()" advice was wrong for the installed v2.) |
 
 ### Event hooks
 
-`emu.addEventCallback(fn, eventType)` where eventType is:
-`reset, nmi, irq, startFrame, endFrame, codeBreak, stateLoaded, stateSaved, inputPolled, spriteZeroHit, scriptEnded`.
+`emu.addEventCallback(fn, eventType)` — v2.1.1 keys (dumped at runtime): `codeBreak, endFrame, inputPolled, irq, nmi, reset, scriptEnded, startFrame, stateLoaded, stateSaved`.
 
-Register callbacks **before** `emu.resume()`. The callback receives no args; query state via `emu.getState()` inside it.
+`emu.eventType.irq` **fires for mapper IRQs** and is reliable for counting fires per frame — increment a global, attribute to a frame via your own `endFrame` counter. This is the instrument that proved Mesen fires the RAMBO-1 IRQ once/frame vs Nestlin's twice. The callback receives no args; do NOT rely on `emu.getState()` ppu/cart fields inside it (absent — see above).
 
 ### Drawing overlays (debugging visualisation)
 
@@ -116,42 +115,30 @@ local oam = pick("nesSpriteRam", "spriteRam", "oam")
 
 ## Mapper-inspection recipe
 
-For obscure mappers, the question is usually "which $8000-region writes is the ROM making, and when?" — this is the canonical Lua to dump that, runnable via `Mesen2OamDumpRunner`-style harness:
+For obscure mappers, the question is usually "which $8000-region writes is the ROM making, and when?" — **do not write this from scratch: use `tools/mesen-trace/write-watch.lua`** (edit its CONFIG block). The companions cover the other recurring questions: `interrupt-counter.lua` (NMI/IRQ fires per frame — the instrument that cracked the Gimmick hang and the Klax double-IRQ), `ppuctrl-transitions.lua` (did rendering/NMI ever get enabled?), `chr-dump.lua` (which CHR bank is mapped at frame N?). All verified against the installed v2.1.1; see `tools/mesen-trace/README.md`.
+
+Key shape they all share (this is what a correct v2.1.1 trace looks like):
 
 ```lua
-local writes = {}
-local memTypes = {}
-for k, v in pairs(emu.memType) do memTypes[k] = v end
-
-local function onMapperWrite(address, value)
-    local s = emu.getState()
-    table.insert(writes, string.format(
-        "f=%d sl=%d cyc=%d cpu=%d addr=${'$'}%04X val=${'$'}%02X",
-        s.ppu.frameCount, s.ppu.scanline, s.ppu.cycle, s.cpu.cycleCount,
-        address, value))
-end
-
--- Watch the cartridge address space
-emu.addMemoryCallback(onMapperWrite, emu.memCallbackType.cpuWrite, 0x8000, 0xFFFF)
-
-local targetFrame = 600
+-- frame attribution: own counter, NOT getState() inside the callback
 local frame = 0
-function onEnd()
-    frame = frame + 1
-    if frame >= targetFrame then
-        local base = emu.getScriptDataFolder()
-        local last = string.sub(base, -1)
-        if last ~= "\\" and last ~= "/" then base = base .. "\\" end
-        local f = io.open(base .. "mapper-writes.txt", "w")
-        for _, line in ipairs(writes) do f:write(line .. "\n") end
-        f:close()
-        os.exit()
-    end
+local f = assert(io.open(emu.getScriptDataFolder() .. "/out.txt", "w"))
+
+local function onWrite(address, value)
+    f:write(string.format("frame=%d addr=%04X val=%02X\n", frame, address, value))
+    f:flush()  -- crash mid-run still leaves usable data
 end
-emu.addEventCallback(onEnd, emu.eventType.endFrame)
+
+local function onEndFrame()
+    frame = frame + 1
+    if frame >= 600 then f:close(); emu.stop(0) end
+end
+
+emu.addMemoryCallback(onWrite, emu.callbackType.write, 0x8000, 0xFFFF)
+emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
 ```
 
-For PPU-side mapper triggers (MMC3 A12 IRQ), swap `cpuWrite` for `ppuRead` over `$0000..$1FFF` and log every read — then post-process to find rising A12 edges (low→high in address bit 12).
+For PPU-side mapper triggers (MMC3 A12 IRQ), use `emu.callbackType.read` over `$0000..$1FFF` and post-process for rising A12 edges (low→high in address bit 12).
 
 For PRG ROM offset tracking (which physical bank is mapped at the moment of the write), include `emu.getPrgRomOffset(address)` in the log line.
 

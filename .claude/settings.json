@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/hooks/worktree-guard.ps1"
+          }
+        ]
+      }
+    ]
+  },
   "enabledPlugins": {
     "jdtls-lsp@claude-plugins-official": true,
     "context7@claude-plugins-official": true,

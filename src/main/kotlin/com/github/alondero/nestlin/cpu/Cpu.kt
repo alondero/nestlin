@@ -20,6 +20,13 @@ class Cpu(var memory: Memory)
     // the latch, suppressing the NMI for that frame. Camerica/Codemasters titles (Big
     // Nose, Micro Machines) hang without it. See BigNoseHangTest.
     var nmiArmed = false
+    // Diagnostic counters: incremented exactly once per *dispatched* interrupt (the
+    // point the vector is taken, not when armed/pending). Deliberately NOT part of
+    // save-state serialisation — these are debugging telemetry, not emulation state.
+    // The compare/DivergenceLocalizer harness reads per-frame deltas of these to
+    // compare NMI/IRQ-per-frame against Mesen2's event counts.
+    var nmiCount = 0
+    var irqCount = 0
     var pageBoundaryFlag = false
     var registers = Registers()
     var processorStatus = ProcessorStatus()
@@ -42,6 +49,8 @@ class Cpu(var memory: Memory)
         registers.reset()
         workCyclesLeft = 0
         nmiArmed = false
+        nmiCount = 0
+        irqCount = 0
         currentGame?.let {
             memory.readCartridge(it)
             registers.initialise(memory)
@@ -200,6 +209,8 @@ class Cpu(var memory: Memory)
         // NMI takes 7 cycles
         workCyclesLeft = 7
 
+        nmiCount++
+
         return true
     }
 
@@ -234,6 +245,8 @@ class Cpu(var memory: Memory)
 
         // Acknowledge IRQ from mapper (APU IRQ is cleared elsewhere by the APU)
         memory.mapper?.acknowledgeIrq()
+
+        irqCount++
 
         return true
     }
