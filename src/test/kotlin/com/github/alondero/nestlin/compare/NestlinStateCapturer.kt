@@ -27,12 +27,25 @@ object NestlinStateCapturer {
 
         var captured: EmulatorStateSnapshot? = null
         var frameCount = 0
+        // Interrupt-counter baselines at frame N-1, so the snapshot can report how
+        // many NMIs/IRQs were dispatched during the LAST FULL FRAME (N-1 -> N).
+        // For frameNumber == 1 the baseline is power-on (0), i.e. "since boot".
+        var nmiBaseline = 0
+        var irqBaseline = 0
 
         nestlin.addFrameListener(object : FrameListener {
             override fun frameUpdated(frame: com.github.alondero.nestlin.ppu.Frame) {
                 frameCount++
+                if (frameCount == frameNumber - 1) {
+                    nmiBaseline = nestlin.cpu.nmiCount
+                    irqBaseline = nestlin.cpu.irqCount
+                }
                 if (frameCount == frameNumber) {
-                    captured = captureCurrentState(nestlin, romPath.fileName.toString(), frameNumber)
+                    captured = captureCurrentState(
+                        nestlin, romPath.fileName.toString(), frameNumber,
+                        nmiLastFrame = nestlin.cpu.nmiCount - nmiBaseline,
+                        irqLastFrame = nestlin.cpu.irqCount - irqBaseline
+                    )
                     nestlin.stop()
                 }
             }
@@ -44,7 +57,13 @@ object NestlinStateCapturer {
         return captured ?: throw IllegalStateException("Failed to capture state at frame $frameNumber")
     }
 
-    private fun captureCurrentState(nestlin: Nestlin, romName: String, frameNumber: Int): EmulatorStateSnapshot {
+    private fun captureCurrentState(
+        nestlin: Nestlin,
+        romName: String,
+        frameNumber: Int,
+        nmiLastFrame: Int = -1,
+        irqLastFrame: Int = -1
+    ): EmulatorStateSnapshot {
         val cpu = nestlin.cpu
         val ppu = nestlin.ppu
         val memory = nestlin.memory
@@ -101,7 +120,9 @@ object NestlinStateCapturer {
             paletteRam = paletteRam,
             timestamp = System.currentTimeMillis(),
             chr = chr,
-            mapper = memory.mapper?.snapshot()
+            mapper = memory.mapper?.snapshot(),
+            nmiCountLastFrame = nmiLastFrame,
+            irqCountLastFrame = irqLastFrame
         )
     }
 

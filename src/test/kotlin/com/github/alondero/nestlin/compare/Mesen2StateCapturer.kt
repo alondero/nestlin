@@ -79,6 +79,20 @@ object Mesen2StateCapturer {
 local targetFrame = $targetFrame
 local frame = 0
 
+-- Interrupt counters, reset at every endFrame, so at capture time they hold the
+-- number of NMI/IRQ dispatches during the FINAL FULL FRAME. emu.eventType.irq
+-- fires for mapper IRQs too (verified on v2.1.1) and is reliable for counting.
+local nmiThisFrame = 0
+local irqThisFrame = 0
+
+local function onNmi()
+    nmiThisFrame = nmiThisFrame + 1
+end
+
+local function onIrq()
+    irqThisFrame = irqThisFrame + 1
+end
+
 local function writeState()
     local s = emu.getState()
 
@@ -135,6 +149,8 @@ local function writeState()
         "\"control\":" .. control .. "," ..
         "\"mask\":" .. mask .. "," ..
         "\"ppuStatus\":" .. ppuStatus .. "," ..
+        "\"nmiCountLastFrame\":" .. nmiThisFrame .. "," ..
+        "\"irqCountLastFrame\":" .. irqThisFrame .. "," ..
         "\"cpuRam\":" .. dumpMem(emu.memType.nesInternalRam, 2048) .. "," ..
         "\"oam\":" .. dumpMem(emu.memType.nesSpriteRam, 256) .. "," ..
         "\"chr\":" .. dumpMem(emu.memType.nesPpuMemory, 8192) .. "," ..
@@ -149,6 +165,8 @@ end
 function onEndFrame()
     frame = frame + 1
     if frame == targetFrame then
+        -- nmiThisFrame/irqThisFrame still hold the counts since the PREVIOUS
+        -- endFrame, i.e. the dispatches during the last full frame.
         local ok, err = pcall(writeState)
         if not ok then
             print("state capture error: " .. tostring(err))
@@ -157,8 +175,13 @@ function onEndFrame()
             emu.stop(0)
         end
     end
+    -- Reset per-frame interrupt counters for the next frame window.
+    nmiThisFrame = 0
+    irqThisFrame = 0
 end
 
+emu.addEventCallback(onNmi, emu.eventType.nmi)
+emu.addEventCallback(onIrq, emu.eventType.irq)
 emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
 """.trimIndent()
         return luaScript
@@ -185,8 +208,15 @@ emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
             oam = parseIntArray(json, "oam", 256),
             paletteRam = parseIntArray(json, "paletteRam", 32),
             timestamp = System.currentTimeMillis(),
-            chr = parseIntArray(json, "chr", 8192)
+            chr = parseIntArray(json, "chr", 8192),
+            nmiCountLastFrame = parseIntOrDefault(json, "nmiCountLastFrame", -1),
+            irqCountLastFrame = parseIntOrDefault(json, "irqCountLastFrame", -1)
         )
+    }
+
+    private fun parseIntOrDefault(json: String, key: String, default: Int): Int {
+        val match = Regex("\"$key\":(-?\\d+)").find(json) ?: return default
+        return match.groupValues[1].toIntOrNull() ?: default
     }
 
     private data class Mesen2CartState(

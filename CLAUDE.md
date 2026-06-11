@@ -14,6 +14,20 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 # Run the Mesen2-comparison suite (needs Mesen2 on disk — see CLAUDE.local.md)
 ./gradlew testMesenComparison
 
+# Diagnose "game renders wrong / doesn't boot": side-by-side Nestlin-vs-Mesen2 state
+# at frame N (PPUCTRL/MASK, NMI+IRQ per frame, banks, OAM/palette/CHR/RAM diffs)
+# plus automated LIKELY-CAUSE classification. Run this BEFORE forming a hypothesis.
+./gradlew diverge -Prom=X:/src/nestlin/testroms/kirby.nes -Pframe=120
+
+# Print test-environment diagnostics (MESEN2_PATH resolution, ROM availability,
+# strict-mode flag) — run when a comparison test reports SKIPPED unexpectedly
+./gradlew verifyTestEnv
+
+# Run ONE test class/method and print only its output (no Gradle noise, cache defeated,
+# failure messages + system-out extracted from the result XML). Use for diagnostic loops.
+tools/run-diag.ps1 -TestClass GoldenLogTest            # or tools/run-diag.sh from bash
+tools/run-diag.ps1 -TestClass Mapper10RegressionTest -Mesen
+
 # Run the emulator UI
 ./gradlew run --args="path/to/rom.nes"
 
@@ -115,7 +129,13 @@ testroms/                    # nestest.nes is the only ROM in git
 
 ## Testing Strategy (one-paragraph version)
 
-Read `docs/TESTING_STRATEGY.md` before adding tests. The pyramid, top to bottom:
+Read `docs/TESTING_STRATEGY.md` before adding tests. Test-fixture rules:
+
+- **Never hand-roll a 16-byte iNES header** — use `testutil.TestRomBuilder` (`testRom { mapper = 33; prgKb = 128; ... }`). `HeaderConstructionLintTest` fails the build for new raw `ByteArray(16)` headers (grandfathered files are baselined; the list only shrinks).
+- **New mapper regression tests subclass `compare.MapperRegressionTestBase`** (~25 lines: bank-moves-during-boot guard + render-output compare vs Mesen2) and annotate `@RequiresMesen2` (loud skip naming the resolved path; set `NESTLIN_REQUIRE_MESEN2` to turn skips into failures, e.g. on a runner that must have Mesen2).
+- **New mapper work follows the `new-mapper` skill checklist** (oracle ordering: nesdev wiki → Mesen2 source → issue spec is intent only; game-usage trace test; IRQ fire-count assertions for scanline mappers).
+
+The pyramid, top to bottom:
 
 1. **Structured state diff** against Mesen2 — `Mesen2StateCapturer` → JSON of CPU/PPU/RAM/OAM/palette; byte-compare with `StateComparator`. This is the workhorse. `Mapper10RegressionTest` is the worked example.
 2. **Hook-based behaviour assertions** — `emu.addMemoryCallback` for cycle-sensitive bugs (MMC3 A12, NMI counts, `$2002` polling).
@@ -128,6 +148,8 @@ Read `docs/TESTING_STRATEGY.md` before adding tests. The pyramid, top to bottom:
 - `docs/TESTING_STRATEGY.md` — the test pyramid and how to add a regression test. Actively maintained.
 - `README.md` — build/test/run entry points and the full tooling list.
 - `tools/dump_analyzer.py` — parse 64KB CPU memory dumps (`.dmp`) from debug sessions and query them by region, register, or address. Useful for post-mortem debugging.
+- `tools/mesen-trace/` — checked-in, v2.1.1-verified Mesen2 Lua instruments (mapper write-watch, NMI/IRQ-per-frame counter, PPUCTRL transition log, CHR dump). Use these instead of writing fresh Lua; see its README for the invocation and the installed binary's API quirks.
+- `tools/run-diag.ps1` — single-test diagnostic runner (see Build/Test/Run above).
 
 `docs/` also contains older design notes (`PPU_RENDERING_PLAN.md`, `DONKEY_KONG_RENDERING_PLAN.md`) that describe specific milestones. They're kept for context but not actively maintained — reference them from commit messages or PR descriptions when relevant, not from this file.
 

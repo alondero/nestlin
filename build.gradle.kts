@@ -157,9 +157,69 @@ tasks.register<Test>("testMesenComparison") {
     if (donDokoDonRom != null) {
         environment("NESTLIN_DON_DOKO_DON_ROM", donDokoDonRom)
     }
+    // Strict mode for @RequiresMesen2: when set, a missing Mesen2 hard-fails the
+    // comparison tests instead of skipping them (guards against a broken
+    // MESEN2_PATH silently false-greening the suite).
+    val requireMesen2 = System.getenv("NESTLIN_REQUIRE_MESEN2")
+    if (requireMesen2 != null) {
+        environment("NESTLIN_REQUIRE_MESEN2", requireMesen2)
+    }
     // Show stdout/stderr from tests (e.g. the diff% println) so we can see results.
     testLogging {
         events("passed", "failed", "skipped", "standard_out", "standard_error")
         showStandardStreams = true
+    }
+}
+
+// Divergence localizer: capture Nestlin + Mesen2 at a frame, print a side-by-side
+// table of render-output state and "LIKELY CAUSE" classifications.
+// Usage: ./gradlew diverge -Prom=X:/src/nestlin/testroms/kirby.nes -Pframe=120 [-Pout=DIR]
+tasks.register<JavaExec>("diverge") {
+    group = "verification"
+    description = "Runs the DivergenceLocalizer against a ROM (use -Prom=, optional -Pframe=, -Pout=)"
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.compare.DivergeMainKt")
+
+    val rom = project.findProperty("rom") as String?
+    val frame = project.findProperty("frame") as String?
+    val out = project.findProperty("out") as String?
+    doFirst {
+        if (rom == null) {
+            throw GradleException("Missing -Prom=<path-to-rom>. Usage: ./gradlew diverge -Prom=rom.nes [-Pframe=120] [-Pout=DIR]")
+        }
+    }
+    args = buildList {
+        if (rom != null) add(rom)
+        if (frame != null) { add("--frame"); add(frame) }
+        if (out != null) { add("--out"); add(out) }
+    }
+    // Forward MESEN2_PATH like testMesenComparison does (the Gradle daemon may not
+    // inherit shell env vars cleanly between invocations).
+    val mesen2Path = System.getenv("MESEN2_PATH")
+    if (mesen2Path != null) {
+        environment("MESEN2_PATH", mesen2Path)
+    }
+}
+
+// Sanity-check the local test environment (Mesen2, ROMs, strict mode) before
+// chasing phantom SKIPPED/green results.
+tasks.register("verifyTestEnv") {
+    group = "verification"
+    description = "Prints the resolved Mesen2 path, test ROM availability, and related env vars"
+    doLast {
+        val mesen2Env = System.getenv("MESEN2_PATH")
+        val mesen2Prop = System.getProperty("mesen2.path")
+        val resolved = mesen2Env ?: mesen2Prop ?: "tools/Mesen2/Mesen.exe"
+        val resolvedFile = file(resolved)
+        println("MESEN2_PATH env:            ${mesen2Env ?: "(not set)"}")
+        println("mesen2.path property:       ${mesen2Prop ?: "(not set)"}")
+        println("Resolved Mesen2 path:       ${resolvedFile.absolutePath}")
+        println("Mesen2 exists:              ${resolvedFile.exists()}")
+        println("testroms/nestest.nes:       ${file("testroms/nestest.nes").exists()}")
+        println("Parent testroms dir:        ${file("X:/src/nestlin/testroms").exists()} (X:/src/nestlin/testroms)")
+        println("NESTLIN_REQUIRE_MESEN2 set: ${!System.getenv("NESTLIN_REQUIRE_MESEN2").isNullOrBlank()}")
+        println()
+        println("Reminder: the Gradle daemon may hold STALE env vars from a previous shell.")
+        println("If a value above looks wrong or a test SKIPs unexpectedly: ./gradlew --stop, then re-run.")
     }
 }
