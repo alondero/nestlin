@@ -169,7 +169,7 @@ The CPU has a single gold-standard regression: **`GoldenLogTest`** runs `nestest
 | `src/test/kotlin/.../compare/` | Mesen2 oracle tests (state diff, not pixels). |
 | `docs/` | Strategy + historical design notes. |
 | `testroms/` | `nestest.nes` (the only ROM in git). |
-| `tools/` | Local-only emulators (not in git; see `CLAUDE.local.md`). |
+| `tools/` | Local-only emulators (not in git; see `CLAUDE.local.md`) + `rom_info.py` / `dump_analyzer.py` Python utilities. |
 
 ---
 
@@ -177,6 +177,7 @@ The CPU has a single gold-standard regression: **`GoldenLogTest`** runs `nestest
 
 - **[`MAPPER_SUPPORT.md`](MAPPER_SUPPORT.md)** — which mappers are working, what games are known to play, and what each one's quirks are.
 - **[`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md)** — the test pyramid and how to add a new regression test the right way.
+- **[`tools/rom_info.py`](tools/rom_info.py)** — decode a ROM header, scan a library, patch a NO-INTRO Namco 108 mislabel, read vectors, do CPU-addr ↔ file-offset math. **Step 0 of any new-mapper task** — before writing a single line of Kotlin, run `python tools/rom_info.py info <rom.nes>` to confirm the mapper / submapper / region you're about to target.
 - **[`tools/dump_analyzer.py`](tools/dump_analyzer.py)** — parse 64KB CPU memory dumps (`.dmp`) from debug sessions and query them by region, register, or address. Useful for post-mortem debugging.
 
 ---
