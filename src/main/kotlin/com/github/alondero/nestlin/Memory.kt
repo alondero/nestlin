@@ -50,6 +50,13 @@ class Memory : DmaPort {
         val m = data.createMapper()
         mapper = m
 
+        // Drop any prior cart's mapper-side audio channels (Issue #50) before
+        // wiring this cart's. Without the clear, swapping a Mapper-24 ROM out
+        // for a Mapper-0 ROM would leave the previous VRC6 voices ticking
+        // against the silent APU.
+        apu?.clearExpansionChannels()
+        m.expansionAudioChannels().forEach { apu?.registerExpansionChannel(it) }
+
         // Wire CHR banking delegates to the mapper. PPU CHR reads also
         // update the system data-bus, since the PPU drives the shared
         // 6502 bus on its cycles. Without this, a CPU open-bus read at
