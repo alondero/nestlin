@@ -17,11 +17,31 @@ class Apu(private val dmaPort: DmaPort) {
     val noise = NoiseChannel()
     val dmc = DmcChannel(dmaPort)
 
+    /**
+     * Mapper-contributed audio (Issue #50). VRC6 registers three channels here;
+     * future N163 / VRC7 / Sunsoft 5B mappers register their own. Kept private
+     * + mutated only via [registerExpansionChannel] / [clearExpansionChannels]
+     * so the audio thread sees a list that only grows or is replaced
+     * wholesale, never partially mutated.
+     */
+    private val expansionChannels = mutableListOf<ExpansionAudioChannel>()
+
     private var cycleAccumulator = 0.0
     private var cpuCycleCounter = 0
     private var frameIrq = false
 
     private val SAMPLE_RATE = 44100.0
+
+    /**
+     * Per-expansion-channel gain in the final mix. The 2A03 pulse+tnd path
+     * produces a [0, 0.5]-ish sum (then × 0.9 in [mixAndBuffer]); each
+     * expansion channel reports `[0, 1]`. 0.15 puts a single fullscale
+     * expansion channel at roughly one-pulse-worth of headroom, which is
+     * about where real VRC6 cartridges sit relative to the 2A03 on hardware.
+     * Three fullscale VRC6 channels = 0.45 added, leaving a few dB before
+     * the soft clip at 32767.
+     */
+    private val EXPANSION_GAIN = 0.15
 
     /**
      * Active timing region. Setting it cascades to the frame counter and the
@@ -76,6 +96,13 @@ class Apu(private val dmaPort: DmaPort) {
         triangle.clockTimer()
         dmc.clockTimer()
 
+        // Mapper-contributed channels see one CPU cycle per Apu.tick — they
+        // own their own internal divider state (VRC6 saw divides by 2, N163
+        // round-robins voices, etc.) so the APU stays oblivious.
+        if (expansionChannels.isNotEmpty()) {
+            for (i in expansionChannels.indices) expansionChannels[i].tick(1)
+        }
+
         // Mix audio at 44.1 kHz sampling rate
         cycleAccumulator += SAMPLE_RATE / cpuFreq
         if (cycleAccumulator >= 1.0) {
@@ -128,7 +155,20 @@ class Apu(private val dmaPort: DmaPort) {
 
         // Combine both components and normalize to 16-bit range
         // The output is approximately in range [0, 1.0] so scale to 16-bit signed max
-        val mixed = (pulseScaled + tndScaled) * 0.9  // 0.9 scale factor prevents clipping
+        var mixed = (pulseScaled + tndScaled) * 0.9  // 0.9 scale factor prevents clipping
+
+        // Linear sum of mapper-contributed channels. The 2A03 mix above is
+        // non-linear (the two NESdev formulas approximate the real DAC); the
+        // expansion contribution is added linearly because the real cartridge
+        // bus mixed expansion audio onto the same wire after the 2A03 had
+        // already DACed. For VRC6 specifically, NESdev: "The DAC of the VRC6,
+        // unlike the 2A03, appears to be linear."
+        if (expansionChannels.isNotEmpty()) {
+            var expSum = 0.0
+            for (i in expansionChannels.indices) expSum += expansionChannels[i].currentSample()
+            mixed += expSum * EXPANSION_GAIN
+        }
+
         val sample = (mixed * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
 
         audioBuffer.write(sample)
@@ -242,6 +282,33 @@ class Apu(private val dmaPort: DmaPort) {
     }
 
     fun isIrqPending(): Boolean = frameIrq || dmc.irqPending
+
+    /**
+     * Hook a mapper's [ExpansionAudioChannel] into the mix (Issue #50). Called
+     * by mapper constructors that ship their own audio (VRC6, future N163,
+     * VRC7, Sunsoft 5B). The same channel may not be registered twice;
+     * cartridge swaps go through [clearExpansionChannels] first.
+     */
+    fun registerExpansionChannel(channel: ExpansionAudioChannel) {
+        if (!expansionChannels.contains(channel)) {
+            expansionChannels.add(channel)
+        }
+    }
+
+    /**
+     * Drop every mapper-side channel. Called on cartridge unload / power-cycle
+     * so a Mapper-0 game loaded after a Mapper-24 one doesn't drag the prior
+     * VRC6 oscillators along.
+     */
+    fun clearExpansionChannels() {
+        expansionChannels.clear()
+    }
+
+    /**
+     * For tests + debugging. Defensive copy because the audio thread keeps a
+     * live reference to the internal list.
+     */
+    fun expansionChannelCount(): Int = expansionChannels.size
 
     private fun clockQuarterFrame() {
         pulse1.clockEnvelope()

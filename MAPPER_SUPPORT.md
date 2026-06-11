@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 64, 66, 69, 153, 206.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 66, 69, 153, 206.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -224,6 +224,98 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 33, 34, 64, 66,
 - **Verification:**
   - `Mapper33Test` covers dispatch from the iNES header, default PRG state (penultimate-at-`$C000`, last-at-`$E000`), `prgBank0`/`prgBank1` selection via the low 6 bits (and high bits being ignored), single-bank wrap, the `addr & 0xA003` register aliasing, the 2KB pair decode at `$8002`/`$8003` (with LSB preserved, distinguishing it from MMC3 R0/R1), the four 1KB registers at `$A000`..`$A003`, mirroring header-driven initial state and bit-6-driven override, mirroring independence from the PRG field, mirror-write isolation (`$8001`/`$8002`/`$8003`/`$Axxx` writes don't change mirroring), CHR-RAM fallback, save/load round-trip, and `snapshot()` reporting of all eight CHR banks plus the mirroring flag.
   - `Mapper33RegressionTest` (Mesen-comparison group) — boots *Don Doko Don (Japan)* on the real ROM. Asserts (1) the TC0190 PRG bank actually pages during boot (proves `$8000`/`$8001` are wired, the cheap "did the mapper do anything" guard from the Star Soldier recipe), and (2) Nestlin's CHR pattern-table is **byte-identical** to Mesen2's across all eight 1KB windows at frame 60. The full OAM/palette/PPUCTRL comparison is reported alongside for human inspection but not asserted, because Don Doko Don's NMI handler rewrites OAM between Mesen2's pre-NMI capture (scanline 240) and Nestlin's post-NMI capture (scanline 261) — the same documented cross-emulator offset as `BigNoseHangTest` / `MicroMachines...`, and not a TC0190 bug. The decisive evidence is the **byte-identical CHR section** in the diff report at `build/reports/state-diffs/don-doko-don-frame-60/diff-report.txt`.
+
+---
+
+## Mapper 24 (Konami VRC6a)
+**Status:** Working (Added 2026-06-11, issue #58)
+
+- **Games:** *Akumajou Densetsu (Japan)* (Castlevania III: Dracula's Curse, the JP release).
+  This is the canonical VRC6a boot oracle.
+- **Chip:** Konami VRC6a. Same silicon as VRC6b / Mapper 26, but with a
+  different A0/A1 address-pin wiring to the chip's sub-register-select
+  input. On VRC6a the CPU's A0 → sub-bit 0 and A1 → sub-bit 1 directly
+  (so `$x000, $x001, $x002, $x003` present the canonical layout).
+- **PRG banking:**
+  - `$8000-$BFFF` — 16K switchable (4-bit select)
+  - `$C000-$DFFF` — 8K switchable (5-bit select)
+  - `$E000-$FFFF` — 8K fixed-last
+- **CHR banking:** `$D000-$D003` and `$E000-$E003` select 8× 1KB CHR banks
+  (PPU mode 0 — the only mode Castlevania III, Esper Dream 2 and Madara
+  use; modes 1-3 are recognised but logged to stderr rather than rendered).
+- **Mirroring:** `$B003` bits 2-3 select vertical/horizontal/1-screen-lower/
+  1-screen-upper. With `$B003` never written, the chip defaults to
+  vertical (MM=0).
+- **WRAM:** `$B003` bit 7 enables the 8KB PRG-RAM window at `$6000-$7FFF`.
+  When disabled, reads return the open-bus value (`memory.dataBus`).
+- **IRQ:** VRC-shaped 8-bit increment-to-wrap counter at `$F000-$F002`
+  with the standard M (cycle/scanline) / E (enable) / A (after-ack) bits.
+  Scanline prescaler is the 341/-3 trick shared with VRC4.
+- **Expansion audio (the headline feature of #58):** Three voices — two
+  VRC6 pulse channels (4-bit volume, 16-step duty) and one VRC6 sawtooth
+  (8-bit accumulator, 6-add-then-reset cycle). All three are registered
+  with the APU's expansion-audio mixer (issue #50) at cartridge load.
+- **Implementation:** Shared abstract base `Vrc6` in `gamepak/Vrc6.kt`
+  with `Mapper24` overriding only the sub-register decode
+  (`address and 0x03` for VRC6a) and the `mapperId` (24). The audio
+  channels are split into `Vrc6Pulse` / `Vrc6Saw` / `Vrc6FrequencyControl`
+  in `gamepak/Vrc6Audio.kt`, all implementing `ExpansionAudioChannel`.
+- **Verification:**
+  - `Vrc6Test` covers dispatch from the iNES header (mapper 24 → Mapper24,
+    mapper 26 → Mapper26), default PRG state (bank 0 at `$8000`/`$A000`
+    /`$C000`, last 8KB at `$E000`), 16K PRG banking via `$8000` writes
+    (4-bit field, modulo-wrap), 8K PRG banking via `$C000` writes
+    (5-bit field), all 8 1KB CHR windows defaulting to bank 0, the
+    `$D000-$D003` and `$E000-$E003` register decode, mirroring
+    selection via `$B003` bits 2-3, the open-bus read at `$6000-$7FFF`
+    when WRAM is disabled, the read-write page when WRAM is enabled,
+    IRQ firing on counter wrap from 0xFF→latch, IRQ silence when E=0,
+    IRQ acknowledge at `$F002` re-loading from the A bit, `snapshot()`
+    reporting all banks, save/load round-trip, and VRC6b's address-pin
+    swap.
+  - `Vrc6AudioTest` covers the three voices directly: VRC6 pulse's
+    16-step duty generator (M bit, D threshold, step counter wrap),
+    VRC6 saw's accumulator-and-reset cycle (rate, peak output ≥30/31),
+    VRC6 frequency control at `$9003` (halt, 16× shift, 256× shift,
+    256× overriding 16×, halt winning over shift), save/load
+    round-trip for all three, and a Goertzel-spectrum test of the
+    VRC6 saw producing a fundamental at the expected divider frequency
+    through the APU mixer.
+  - `Mapper24RegressionTest` (Mesen-comparison group) — boots
+    *Akumajou Densetsu (Japan)* on the real ROM. Asserts (1) the VRC6
+    `prg16` bank register actually pages during boot, and (2) Nestlin's
+    CHR pattern-table is byte-identical to Mesen2's across all eight
+    1KB windows at frame 60. Same NMI/OAM-offset rationale as Don Doko
+    Don (CHR-only is the proof; full snapshot + diff is reported for
+    inspection).
+
+---
+
+## Mapper 26 (Konami VRC6b)
+**Status:** Working (Added 2026-06-11, issue #58)
+
+- **Games:** *Esper Dream 2 - Aratanaru Tatakai (Japan)* and
+  *Mouryou Senki Madara (Japan)*. The canonical VRC6b boot oracle is
+  Esper Dream 2 (an Akumajou-Densetsu-sized 384KB cartridge).
+- **Chip:** Konami VRC6b. Same silicon as VRC6a / Mapper 24, but with
+  A1 → sub-bit 0 and A0 → sub-bit 1 (i.e. the low two address bits are
+  swapped before reaching the chip). To the CPU this appears as
+  registers at `$x000, $x002, $x001, $x003` instead of `$x000, $x001,
+  $x002, $x003`. The PRG/CHR/IRQ/audio behaviour is otherwise identical
+  to VRC6a.
+- **Implementation:** `Mapper26` extends the shared `Vrc6` base and
+  overrides only `decodeSubRegister` (the A0/A1 swap) and `mapperId`
+  (= 26). All other code paths, including the three audio channels,
+  are shared with VRC6a.
+- **Verification:**
+  - `Vrc6Test.vrc6b sub-register decode swaps bits 0 and 1` proves the
+    A0/A1 swap is honoured: a write to `$D001` lands in CHR register
+    R2 (the `$0800` 1KB window), not R1 (`$0400`); a write to `$D002`
+    lands in R1, not R2.
+  - `Mapper26RegressionTest` (Mesen-comparison group) — boots
+    *Esper Dream 2* on the real ROM. Same pattern as Mapper 24:
+    bank-moves-during-boot guard + byte-identical CHR compare vs Mesen2
+    at frame 60.
 
 ---
 

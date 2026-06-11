@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.SaveState
+import com.github.alondero.nestlin.apu.ExpansionAudioChannel
 import java.io.DataInput
 import java.io.DataOutput
 
@@ -38,6 +39,15 @@ interface Mapper {
     // CPU cycles rather than PPU A12 edges (e.g. Sunsoft FME-7 / mapper 69) use
     // this; A12-clocked mappers (MMC3) leave it as a no-op.
     fun tickCpuCycle() {}
+
+    /**
+     * Audio channels the mapper contributes to the [com.github.alondero.nestlin.Apu]
+     * mixer (Issue #50 + #58). Memory iterates this list once at cartridge load
+     * and calls [com.github.alondero.nestlin.Apu.registerExpansionChannel] for
+     * each entry; the APU clears the list on the previous cart's unload. Default
+     * is empty — every existing mapper inherits "no extra audio" for free.
+     */
+    fun expansionAudioChannels(): List<ExpansionAudioChannel> = emptyList()
 
     // State snapshot for debugging
     fun snapshot(): MapperStateSnapshot? = null
