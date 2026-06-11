@@ -58,5 +58,8 @@ settings.gradle* text eol=crlf
 *.sh          text eol=lf
 *.bat         text eol=crlf
 
+# PowerShell (sync-master.ps1 etc.)
+*.ps1         text eol=crlf
+
 # GitHub Actions
 .github/**    text eol=crlf
