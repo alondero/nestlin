@@ -80,6 +80,7 @@ val mesenTests = listOf(
     "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest",
     "com.github.alondero.nestlin.compare.Mapper10RegressionTest",
     "com.github.alondero.nestlin.compare.Mapper33RegressionTest",
+    "com.github.alondero.nestlin.compare.Mapper113RegressionTest",
     "com.github.alondero.nestlin.compare.GxRomStateComparisonTest",
     "com.github.alondero.nestlin.compare.MicroMachinesMapper71SmokeTest",
     "com.github.alondero.nestlin.compare.MicroMachinesMapper71StateComparisonTest",
@@ -157,6 +158,11 @@ tasks.register<Test>("testMesenComparison") {
     if (donDokoDonRom != null) {
         environment("NESTLIN_DON_DOKO_DON_ROM", donDokoDonRom)
     }
+    // Forward the optional Mind Blower Pak ROM override (Mapper 113 regression test).
+    val mindBlowerPakRom = System.getenv("NESTLIN_MIND_BLOWER_PAK_ROM")
+    if (mindBlowerPakRom != null) {
+        environment("NESTLIN_MIND_BLOWER_PAK_ROM", mindBlowerPakRom)
+    }
     // Strict mode for @RequiresMesen2: when set, a missing Mesen2 hard-fails the
     // comparison tests instead of skipping them (guards against a broken
     // MESEN2_PATH silently false-greening the suite).
@@ -198,6 +204,11 @@ tasks.register<JavaExec>("diverge") {
     val mesen2Path = System.getenv("MESEN2_PATH")
     if (mesen2Path != null) {
         environment("MESEN2_PATH", mesen2Path)
+    }
+    // Forward the optional Mind Blower Pak ROM override (Mapper 113 divergence).
+    val mindBlowerPakRom = System.getenv("NESTLIN_MIND_BLOWER_PAK_ROM")
+    if (mindBlowerPakRom != null) {
+        environment("NESTLIN_MIND_BLOWER_PAK_ROM", mindBlowerPakRom)
     }
 }
 
