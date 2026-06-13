@@ -17,6 +17,7 @@ import kotlin.streams.toList
  * pin down the *moment* of divergence. Each step takes ~1 sec, so the test
  * is slow but the trajectory is the diagnostic.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class MicroMachinesPcDivergenceTest {
 
     @Test

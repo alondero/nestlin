@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Paths
 
+@org.junit.jupiter.api.Tag("mesen")
 class Mesen2StateCapturerSmokeTest {
     @Test
     fun capturesNestestStateViaTestRunner() {

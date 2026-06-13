@@ -5,6 +5,7 @@ import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ui.FrameListener
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Tag
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -35,6 +36,12 @@ import java.nio.file.Paths
  * snapshots, the StateComparator diff, and the DivergenceLocalizer table are still
  * written to disk for inspection.
  */
+// Lane: this base carries @Tag("mesen"); JUnit 5 inherits class-level tags to subclasses, so every
+// MapperRegressionTestBase subclass is automatically in the Mesen2 comparison lane (excluded from
+// `./gradlew test`, included by `./gradlew testMesenComparison`) with no per-class wiring and no
+// build-script list to keep in sync. Annotate the render-output test method with @RequiresMesen2 so
+// it skips loudly (naming the resolved path) when Mesen2 is absent.
+@Tag("mesen")
 abstract class MapperRegressionTestBase {
 
     /**

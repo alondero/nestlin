@@ -28,6 +28,7 @@ import kotlin.streams.toList
  *
  * After the fix the game progresses past the wait and re-enables rendering.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class BigNoseHangTest {
 
     @Test

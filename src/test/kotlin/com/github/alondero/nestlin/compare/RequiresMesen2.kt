@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.compare
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.extension.ConditionEvaluationResult
 import org.junit.jupiter.api.extension.ExecutionCondition
 import org.junit.jupiter.api.extension.ExtendWith
@@ -17,9 +18,17 @@ import org.junit.jupiter.api.extension.ExtensionContext
  * machines/CI lanes where Mesen2 is supposed to exist, so a broken MESEN2_PATH
  * cannot false-green the comparison suite. Forwarded by the testMesenComparison
  * Gradle task.
+ *
+ * Lane assignment is automatic: this annotation is meta-tagged [@Tag][Tag]`("mesen")`,
+ * so every test that requires Mesen2 is excluded from `./gradlew test` and included by
+ * `./gradlew testMesenComparison` *with no build-script edit*. This is what retired the
+ * hand-maintained `mesenTests` list that silently went stale (Mapper24/26/64 were never
+ * added to it). A test that needs Mesen2 should carry THIS annotation rather than a bare
+ * `assumeTrue(mesen2Available)`, so it lands in the right lane and skips loudly when absent.
  */
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.RUNTIME)
+@Tag("mesen")
 @ExtendWith(RequiresMesen2Condition::class)
 annotation class RequiresMesen2
 

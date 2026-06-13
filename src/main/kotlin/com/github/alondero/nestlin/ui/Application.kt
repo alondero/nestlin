@@ -54,6 +54,12 @@ fun main(args: Array<String>) {
     if (args.isNotEmpty() && args[0] == "replay") {
         kotlin.system.exitProcess(com.github.alondero.nestlin.cli.ReplayCli.main(args.drop(1)))
     }
+    // Headless `bootcheck` subcommand: boot a ROM N frames with no display and no reference
+    // emulator, print a PASS|WARN|FAIL verdict (loaded / rendered / non-blank / banks-moved).
+    // The oracle-free "did this mapper actually boot a real game?" gate for delegated work.
+    if (args.isNotEmpty() && args[0] == "bootcheck") {
+        kotlin.system.exitProcess(com.github.alondero.nestlin.cli.BootCheckCli.main(args.drop(1)))
+    }
     Application.launch(NestlinApplication::class.java, *args)
 }
 

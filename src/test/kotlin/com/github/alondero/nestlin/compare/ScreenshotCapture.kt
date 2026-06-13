@@ -17,6 +17,7 @@ import java.nio.file.Paths
  *   export NESTLIN_SCREENSHOT_ROMS="/path/to/rom1.nes,/path/to/rom2.nes"
  *   ./gradlew test --tests "ScreenshotCapture" --no-daemon
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class ScreenshotCapture {
 
     companion object {

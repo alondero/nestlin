@@ -33,6 +33,7 @@ import kotlin.streams.toList
  *
  * Skips loudly if the ROM is not on this machine, like the other smoke tests.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class MicroMachinesMapper71SmokeTest {
 
     @Test

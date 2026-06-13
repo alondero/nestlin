@@ -8,6 +8,7 @@ import com.natpryce.hamkrest.greaterThanOrEqualTo
 import org.junit.jupiter.api.Test
 import java.nio.file.Paths
 
+@org.junit.jupiter.api.Tag("externalRom")
 class Mapper1IntegrationTest {
 
     @Test

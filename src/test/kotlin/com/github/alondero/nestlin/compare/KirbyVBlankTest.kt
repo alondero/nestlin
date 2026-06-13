@@ -11,6 +11,7 @@ import java.nio.file.Paths
  * Detailed VBlank timing debug test.
  * Watches PPU state at exact cycle when VBlank should be set.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class KirbyVBlankTest {
 
     @Test

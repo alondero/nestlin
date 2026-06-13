@@ -10,6 +10,7 @@ import java.nio.file.Path
  * Test Mapper 4 games using official NES ROMs.
  * Tests: Kirby's Adventure, Simpsons Bart vs World, Super Mario Bros 3, Yoshi's Cookie
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class Mapper4GamesTest {
 
     data class GameInfo(val name: String, val path: String, val expectedMinPixels: Int)

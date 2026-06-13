@@ -10,6 +10,7 @@ import java.nio.file.Paths
 /**
  * Test to understand timing between VBlank set and $2002 reads.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class VBlankTimingTest2 {
 
     @Test

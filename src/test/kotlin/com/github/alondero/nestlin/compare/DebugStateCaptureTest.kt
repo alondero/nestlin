@@ -6,6 +6,7 @@ import java.nio.file.Paths
 /**
  * Simple test to capture Nestlin state at various frames and inspect for debugging.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class DebugStateCaptureTest {
 
     @Test

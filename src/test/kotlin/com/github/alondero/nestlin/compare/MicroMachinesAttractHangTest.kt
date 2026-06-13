@@ -18,6 +18,7 @@ import kotlin.streams.toList
  * "hangs when starting a race". A stall shows up as the instruction count plateauing
  * (CPU parked in a spin loop that never breaks) across many frames.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class MicroMachinesAttractHangTest {
 
     @Test

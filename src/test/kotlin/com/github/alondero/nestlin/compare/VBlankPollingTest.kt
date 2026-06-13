@@ -12,6 +12,7 @@ import java.nio.file.Paths
  * Uses the debug logging added to PpuAddressedMemory to track
  * every $2002 read and correlate with the instruction trace.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class VBlankPollingTest {
 
     @Test

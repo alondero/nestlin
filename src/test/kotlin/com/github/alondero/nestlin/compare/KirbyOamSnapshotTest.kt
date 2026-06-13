@@ -17,6 +17,7 @@ import javax.imageio.ImageIO
  *
  * Output: build/kirby-oam-snapshots.txt
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class KirbyOamSnapshotTest {
 
     @Test

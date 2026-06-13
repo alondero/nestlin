@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
  *
  * Skipped if Mesen2 is not installed.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class MicroMachinesDivergenceSweepTest {
 
     @Test

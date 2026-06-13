@@ -29,6 +29,7 @@ import java.nio.file.Paths
  *
  * ROMs come from the NO-INTRO library and skip loudly when absent.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class MicroMachinesMapper71StateComparisonTest {
 
     @Test

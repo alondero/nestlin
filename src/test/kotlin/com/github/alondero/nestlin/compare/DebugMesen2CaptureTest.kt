@@ -7,6 +7,7 @@ import java.nio.file.Paths
 /**
  * Test to verify Mesen2 state capture works.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class DebugMesen2CaptureTest {
 
     @Test
