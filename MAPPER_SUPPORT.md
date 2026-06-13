@@ -243,6 +243,99 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
 
 ---
 
+## Mapper 19 (Namco 163 / N163)
+**Status:** Working (Added 2026-06-12, issue #59)
+
+- **Games:** *Kaijuu Monogatari (Japan)* (the Atlus-published translated
+  English title reads as "Megami Tensei II" in the menu) is the canonical
+  N163 boot oracle on Adam's machine. Other N163 titles (e.g.
+  *Yume Penguin Monogatari*, *Star Wars (Namco)*, *Mappy-Land*'s Japanese
+  variant) load the same mapper.
+- **Chip:** Namco 163. MMC3-class banking (8KB PRG, 1KB CHR) plus an
+  8-channel wavetable synth on the same die. The 3 audio register
+  shapes — `$F800` address port, `$4800-$4FFF` data port, and
+  `$E000` bit 6 sound-enable — live on the audio class, not the mapper;
+  the mapper's CPU-read/write decode dispatches into it.
+- **PRG banking:** `$E000` bits 0-5 select bank 0 at `$8000` (8KB units,
+  modulo PRG size), `$E800` bits 0-5 select bank 1 at `$A000`, and
+  `$F000` bits 0-5 select bank 2 at `$C000`. The last 8KB bank is fixed
+  at `$E000` and holds the reset/NMI/IRQ vectors. With 16 banks, the
+  register value is masked to 4 bits in practice; the snapshot reports
+  the raw register byte (other mappers' convention) which can read up
+  to 0x3F when the game writes 8KB-page addresses into a smaller chip.
+- **CHR banking:** `$8000-$9FFF` and `$A000-$BFFF` decode 8 standard
+  1KB CHR banks. `$C000-$DFFF` extends with 4 more 1KB banks (the
+  NES 2.0 "extra CHR" range); a high bit (0x100) on the index
+  flips that window to **nametable** mode (used by the 4-screen
+  mirroring trick). `$E800` bits 0-1 select between "CHR" and
+  "nametable" mode for the upper half, with `$E800` bit 0 toggling
+  the low half the same way — same trick the Nesdev wiki describes
+  for the "lowChrNtMode" / "highChrNtMode" flags.
+- **PRG-RAM:** 4 × 2KB pages at `$6000-$7FFF`, with a per-page
+  write-protect mask (`$F800` bits 0-3) and a global write-enable
+  (bit 6 of `$F800`).
+- **IRQ:** 16-bit counter at `$5000`/`$5800`; bit 15 of the counter
+  enables, low 15 bits count down to `0x7FFF` (the spec's "0x7FFF on
+  enable" trap). Both CPU-write addresses are the ack — a write to
+  `$5000` OR `$5800` clears the pending IRQ (no separate enable
+  address; the counter-15 bit IS the enable).
+- **Expansion audio (the headline feature of #59):** Eight wavetable
+  voices, all sharing one mixed output. The chip's 128-byte internal
+  RAM serves two purposes: `$00-$3F` is wavetable sample data
+  (4-bit packed: low nibble = even position, high nibble = odd),
+  `$40-$7F` is 8 channel register sets, 8 bytes each
+  (frequency, phase, frequency/2+length, phase/2, wave address,
+  volume). Bits 4-6 of byte `$7F` (channel 8's volume byte) set the
+  **active channel count** — value 0 means "only channel 8",
+  value 7 means "all 8 channels". The chip round-robins through the
+  active channels (7, 6, 5, …) with one update per 15 CPU cycles,
+  reading the 4-bit sample at `(phase >> 16) + waveAddress`, biasing
+  to ±7, multiplying by the 4-bit volume, and storing in a per-channel
+  output latch. `currentSample()` sums the active channels' latches,
+  divides by `count + 1`, and normalizes by /120 to fit a [-1, +1]
+  range. The APU mixer's `EXPANSION_GAIN=0.15` then puts a fullscale
+  N163 channel at roughly the same level as a VRC6 voice.
+  Registered with the expansion-audio mixer (issue #50) at
+  cartridge load via `expansionAudioChannels() = listOf(audio)`.
+- **Implementation:** `Mapper19` in `gamepak/Mapper19.kt` and
+  `Namco163Audio` in `gamepak/Namco163Audio.kt`. The mapper is a
+  thin dispatcher; the audio class owns the 128-byte RAM, the 15-cycle
+  update cadence, and the round-robin `currentChannel` index.
+  `saveStateVersion = 2` (bumped from default 1) since the audio
+  state is non-trivial.
+- **Verification:**
+  - `Mapper19Test` covers dispatch from the iNES header
+  (mapper 19 → Mapper19), default PRG state (banks 0/0/`count-1` at
+  `$8000`/`$A000`/`$C000`, last bank at `$E000`), 8KB PRG banking
+  with modulo wrap, all 12 1KB CHR windows defaulting to bank 0,
+  the `$C000-$DFFF` extra CHR extension with the 0x100 nametable
+  bit, `$E800` low/high nametable-mode flags, CHR-RAM fallback for
+  0KB-CHR dumps, the 4× 2KB PRG-RAM window with per-page
+  write-protect, IRQ counter load / enable / fire / ack, save/load
+  round-trip with version-byte rejection, and `snapshot()` reporting
+  of all banks + the IRQ counter / pending flag.
+  - `Namco163AudioTest` covers the audio engine directly: data port
+  cursor + auto-increment, 128-byte address wrap, sound-enable
+  bit 6 of `$E000`, the wave-length formula (`256 - (reg & 0xFC)`),
+  the 15-cycle update cadence, the round-robin sequence (7 → 6 →
+  5 → … → wrap), the channel-7 volume / active-count byte aliasing
+  (the only shared byte in the whole 128-byte map), the
+  4-bit bipolar sample (`rawNibble - 8`, then × volume), the
+  `currentSample` mix formula (`sum / (n+1) / 120`), and
+  save/load round-trip.
+  - `Mapper19RegressionTest` (Mesen-comparison group) — boots
+  *Kaijuu Monogatari* on the real ROM. Asserts (1) the N163 PRG
+  bank register actually pages during the first 60 frames (proves
+  the `$E000`/`$E800`/`$F000` decode is wired, same cheap guard as
+  the other mapper tests), and (2) Nestlin's render output
+  (OAM, palette, PPUCTRL, PPUMASK) is byte-identical to Mesen2's
+  at frame 60. The full snapshot + diff goes to
+  `build/reports/state-diffs/kaijuu-monogatari-frame-60/`. The ROM
+  is resolved from the canonical NO-INTRO path on Adam's machine,
+  override with `NESTLIN_KAIJUU_MONOGATARI_ROM`.
+
+---
+
 ## Mapper 24 (Konami VRC6a)
 **Status:** Working (Added 2026-06-11, issue #58)
 

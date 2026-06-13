@@ -141,6 +141,7 @@ class GamePak(data: ByteArray, displayName: String = "") {
         10 -> Mapper10(this)
         11 -> Mapper11(this)
         16 -> Mapper16(this, header.submapper)
+        19 -> Mapper19(this)
         21 -> Mapper21(this)
         23 -> Mapper23(this)
         24 -> Mapper24(this)
