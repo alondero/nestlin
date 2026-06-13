@@ -38,7 +38,34 @@ class GamePak(data: ByteArray, displayName: String = "") {
      * marker in the ROM name, then default to NTSC. A user-facing override (see
      * `EmulatorConfig.regionOverride`) is applied later, in [com.github.alondero.nestlin.Nestlin].
      */
-    val region: Region = header.detectedRegion ?: regionFromName(name) ?: Region.NTSC
+    val region: Region = header.detectedRegion
+        ?: forceNtscMappers(header.mapper)
+        ?: regionFromName(name)
+        ?: Region.NTSC
+
+    /**
+     * Some mappers are *only* found on NTSC pirate / clone hardware even when
+     * the NO-INTRO filename implies a PAL region. The HES NTD-8 / PT-554A
+     * (mapper 113) is the canonical example: HES Australia sold their
+     * multicarts into a PAL TV market, but the silicon itself is NTSC — so
+     * the `(australia)` filename is a *where-sold* marker, not a *timing*
+     * one. Forcing NTSC matches the real cartridge's frame rate, palette,
+     * and CPU:PPU ratio.
+     *
+     * This is a hardware-accuracy override, NOT a boot fix: both HES games
+     * boot fine under either region once the mapper register decode is
+     * correct (see Mapper113.cpuWrite and issue #163 — the garbled title
+     * screen there was a decode bug, never a PAL-vs-NTSC timing issue).
+     * See [RegionDetectionTest.\`mapper 113 is NTSC even when filename has
+     * australia marker\`] for the regression.
+     *
+     * Only mappers that are *provably* NTSC-only silicon get an override
+     * here — not all "Australia" games.
+     */
+    private fun forceNtscMappers(mapper: Int): Region? = when (mapper) {
+        113 -> Region.NTSC
+        else -> null
+    }
 
     init {
         // Use toUnsignedInt() because Header.programRomSize / chrRomSize are
@@ -125,6 +152,7 @@ class GamePak(data: ByteArray, displayName: String = "") {
         66 -> Mapper66(this)
         69 -> Mapper69(this)
         71 -> Mapper71(this)
+        113 -> Mapper113(this)
         153 -> Mapper153(this)
         206 -> Mapper206(this)
         else -> throw UnsupportedOperationException("Mapper ${header.mapper} not implemented")

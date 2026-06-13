@@ -74,6 +74,32 @@ class RegionDetectionTest {
         assertEquals(Region.PAL, GamePak(rom(byte9 = 0x01), "Some Game (USA)").region)
     }
 
+    /**
+     * HES Australia multicarts (Mapper 113) are NTSC pirate carts sold in
+     * Australia. The "Australia" filename marker is a *where-sold* tag, not
+     * a *timing* tag — HES shipped NTSC silicon even into PAL regions, so
+     * forcing NTSC matches the real cartridge's frame rate, palette, and
+     * CPU:PPU ratio. (This is a hardware-accuracy override; the games boot
+     * correctly under either region once the mapper decode is right — the
+     * garbled-title bug in issue #163 was a register-decode bug, not a
+     * PAL-vs-NTSC timing one.)
+     *
+     * The iNES header for these dumps is silent on region (byte 9 = 0), so
+     * we override the filename-based fallback: when the mapper is 113, the
+     * timing must be NTSC.
+     */
+    @Test
+    fun `mapper 113 is NTSC even when filename has australia marker`() {
+        assertEquals(
+            Region.NTSC,
+            GamePak(rom(mapper = 113), "Mind Blower Pak (Australia) (Unl).nes").region
+        )
+        assertEquals(
+            Region.NTSC,
+            GamePak(rom(mapper = 113), "Total Funpak (Australia) (Unl).nes").region
+        )
+    }
+
     @Test
     fun `regionFromName ignores names without a region marker`() {
         assertNull(GamePak.regionFromName("nestest"))
