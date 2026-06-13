@@ -45,8 +45,9 @@ class Mapper113BootDiagnosticTest {
         val oam = ppu.objectAttributeMemory
 
         val startInstr = nestlin.cpu.getInstructionCount()
-        val resetVector = (nestlin.memory[0xFFFC].toUnsignedInt() shl 8) or
-            nestlin.memory[0xFFFD].toUnsignedInt()
+        // 6502 vectors are little-endian: low byte at $FFFC, high byte at $FFFD.
+        val resetVector = (nestlin.memory[0xFFFD].toUnsignedInt() shl 8) or
+            nestlin.memory[0xFFFC].toUnsignedInt()
         println("[DEBUG-mb-boot] ROM: $rom")
         println("[DEBUG-mb-boot] region: ${nestlin.currentRegion()}")
         println("[DEBUG-mb-boot] reset vector: $${resetVector.toString(16).padStart(4, '0')}")

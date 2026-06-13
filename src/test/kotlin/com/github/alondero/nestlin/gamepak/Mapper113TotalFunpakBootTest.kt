@@ -92,16 +92,24 @@ class Mapper113TotalFunpakBootTest {
         if (oamNonZero.isEmpty()) {
             throw AssertionFailedError("No sprites written to OAM by frame $maxFrames")
         }
-        // The PC should not be stuck in a 2-instruction loop. If the game
-        // is alive, the frame-end PC will change as NMI fires, code
-        // runs, and the CPU advances. A tight trampoline loop would have
-        // PC staying within a 4-byte window across all 240 frames; a
-        // healthy boot sees hundreds of distinct PC values.
-        if (distinctPcs.size < 10) {
+        // The boot must reach the game's RAM-resident menu shell. Both HES
+        // Australia multicarts copy their bank-switching menu loop into RAM
+        // ($0400+) during init and run it there (so it survives PRG bank
+        // switches), then idle in it waiting for SELECT/START. A correctly
+        // booted game therefore executes from RAM ($0000-$07FF) at some
+        // frame boundary; a game stuck in the power-on ROM trampoline never
+        // leaves $8000-$FFFF. (Don't count *distinct* frame-end PCs — a
+        // correctly idling menu sits in a tiny PC window, so a "few distinct
+        // PCs" heuristic false-flags a healthy boot. Issue #163: the wrong
+        // register decode made the game wander through many ROM PCs without
+        // ever reaching the RAM shell, which a distinct-count check passed.)
+        val reachedRamCode = distinctPcs.any { it < 0x0800 }
+        if (!reachedRamCode) {
             throw AssertionFailedError(
-                "PC only visited ${distinctPcs.size} distinct address(es) " +
-                    "in $maxFrames frames — the game looks stuck in a tight " +
-                    "loop. Sample PCs: ${distinctPcs.take(8)}"
+                "PC never reached the RAM-resident menu shell ($0000-$07FF) " +
+                    "in $maxFrames frames — the game looks stuck in the power-on " +
+                    "ROM trampoline. Sample PCs (hex): " +
+                    distinctPcs.take(8).joinToString(", ") { "$%04X".format(it) }
             )
         }
     }

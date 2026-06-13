@@ -12,22 +12,29 @@ import java.io.DataOutput
  *
  * **Register decode** — *the only Nestlin mapper with its banking
  * register outside the normal PRG space*. The chip-select gate is
- * `(addr & 0xE100) == 0x4100`: A8 must be set, A9-A12 must be clear, and
- * A13-A15 must be clear; the low 8 bits are aliased. That gives 16
- * distinct 256-byte pages — `$4100-$41FF`, `$4300-$43FF`, ..., up to
- * `$5F00-$5FFF` — and every address in any of those pages latches the
+ * `(addr & 0xE100) == 0x4100`, i.e. of the four masked bits A8/A13/A14/A15
+ * only A14 and A8 are set (A13 and A15 clear). A14 set + A13/A15 clear pins
+ * the window to `$4000-$5FFF`; A8 set picks the odd 256-byte pages within
+ * it. A9-A12 and the low 8 bits (A0-A7) are *don't-care* — they alias. That
+ * gives 16 distinct 256-byte pages — `$4100-$41FF`, `$4300-$43FF`, ..., up
+ * to `$5F00-$5FFF` — and every address in any of those pages latches the
  * same control register.
  *
  * **Bit layout of the register byte:**
  * ```
- *   bit  7  6  5  4 | 3  2  1  0
- *       M  P  P  P | C  C  C  C
+ *   bit  7  6  5  4  3 | 2  1  0
+ *       M  C  P  P  P | C  C  C
  * ```
  * - Bit 7 (`M`): mirroring — 1 = vertical, 0 = horizontal.
- * - Bits 4-6 (`PPP`): 32 KB PRG bank select (8 banks → 256 KB max PRG).
- * - Bit 3 (`C`): high bit of CHR bank.
+ * - Bits 3-5 (`PPP`): 32 KB PRG bank select (8 banks → 256 KB max PRG).
+ * - Bit 6 (`C`): high bit of the CHR bank (bit 3 of the CHR index).
  * - Bits 0-2 (`CCC`): low 3 bits of CHR bank.
  * Net: 8 PRG banks × 16 CHR banks (128 KB max CHR).
+ *
+ * The PRG field is bits **3-5** and the CHR high bit is bit **6** — getting
+ * this wrong (e.g. PRG = bits 4-6) sends the first boot write (`$59` -> PRG
+ * bank 3, the last bank, where Mind Blower Pak's init code lives) to the
+ * wrong bank, and the whole boot diverges. This was issue #163.
  *
  * **PRG geometry:** 32 KB window at `$8000-$FFFF`, fully banked. There
  * is no fixed last bank (the chip latches the whole window from one
@@ -53,27 +60,24 @@ class Mapper113(private val gamePak: GamePak) : Mapper {
 
     // Power-on default: the LAST PRG bank is mapped, not bank 0.
     //
-    // Why: Mind Blower Pak's bank-0 reset vector is $9FE0, a
-    // self-replicating trampoline that copies 11 bytes to $0400 then
-    // JMPs ($FFFC). The trampoline's purpose is to navigate between PRG
-    // banks: bank 0 writes 0x59 (PRG=2), bank 2 writes 0x1D (PRG=1),
-    // and bank 1's trampoline writes 0x1D again — looping forever
-    // because JMP ($FFFC) re-reads bank 1's reset vector. The only
-    // escape is the real init code in the LAST bank (bank 3, at
-    // $B44E), which expects the CPU to start with the last bank mapped
-    // and immediately runs `LDA #$59; STA $4120; SEI; ...; wait vblank;
-    // clear RAM; set up registers; enable PPU`.
+    // Why: Mind Blower Pak's real init code lives in the LAST 32 KB bank
+    // (bank 3 of a 128 KB ROM); its reset vector is $B400 and the init
+    // routine at $B44E runs `LDA #$59; STA $4120; SEI; ...; wait vblank;
+    // clear RAM; copy the main loop into RAM; enable PPU`. With the
+    // canonical register decode (PRG = bits 3-5), the value $59 selects
+    // PRG bank 3 — i.e. it KEEPS the last bank mapped — so the init code
+    // continues running uninterrupted. The chip must therefore power on
+    // with the last bank already mapped; a bank-0 default would start in
+    // a different bank's code and never reach the init routine.
     //
-    // Confirmed against Mesen2 v2.1.1: a frame-1 trace of Mind Blower
-    // Pak shows the CPU executing in bank 3 at $B476 with zero
-    // mapper-register writes (so the bank hasn't been switched from
-    // its power-on value). A bank-0 default would loop forever in the
-    // bank-1 trampoline.
+    // (Historical note: an earlier decode bug — issue #163 — read PRG
+    // from bits 4-6 instead of 3-5, so $59 selected effective bank 1
+    // instead of 3 and the boot diverged immediately. The power-on bank
+    // was never the problem; the register decode was. See cpuWrite.)
     //
-    // The same power-on state matches Total Funpak (also Mapper 113,
-    // 4 PRG banks): bank 3's reset vector is $8010, also in the last
-    // bank, and the other banks' reset vectors point at real init
-    // code, not trampolines. The "fixed last bank" pattern is what
+    // The same "last bank holds init" pattern matches Total Funpak (also
+    // Mapper 113): its last bank's reset vector points at real init code,
+    // not a cross-bank trampoline. The "fixed last bank" power-on is what
     // every HES Australia multicart relies on for boot.
     private var prgBank = prgBankCount - 1
     private var chrBank = 0
@@ -119,8 +123,10 @@ class Mapper113(private val gamePak: GamePak) : Mapper {
         // $6100 sets A13, $6100-ish; $4000 clears A8; $6000+ sets A13).
         if ((address and 0xE100) != 0x4100) return
         val v = value.toUnsignedInt()
-        prgBank = (v ushr 4) and 0x07
-        chrBank = v and 0x0F
+        // NESdev iNES Mapper 113 / Mesen `Mapper113::WriteRegister`:
+        //   PRG = bits 3-5, CHR = (bit 6 << 3) | bits 0-2, mirroring = bit 7.
+        prgBank = (v ushr 3) and 0x07
+        chrBank = ((v ushr 3) and 0x08) or (v and 0x07)
         verticalMirroring = (v and 0x80) != 0
     }
 

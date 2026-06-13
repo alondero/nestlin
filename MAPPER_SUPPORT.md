@@ -696,6 +696,48 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   - MMC5 extended RAM (`$5C00-$5FFF`) is not persisted. Only the `$6000-$7FFF` PRG-RAM window is.
   - FDS (Famicom Disk System) saves use the `.fds` disk-image format and are out of scope.
 
+## Mapper 113 (HES NTD-8 / PT-554A)
+**Status:** Working
+
+- **Games:** *Mind Blower Pak* and *Total Funpak* — the two HES Australia (1992) unlicensed
+  multicarts. Unrelated to the NINA-003/006 family (Mapper 3) despite a superficially similar
+  register, and unrelated to MMC-anything.
+- **What it is:** a single 8-bit control register, banking the **entire** 32 KB PRG window at
+  `$8000-$FFFF` and the 8 KB CHR window at `$0000-$1FFF`. No fixed bank, no PRG-RAM, no IRQ.
+- **Register decode — the *only* Nestlin mapper whose banking register lives outside PRG space.**
+  The chip-select gate is `(addr & 0xE100) == 0x4100`: A8 set, A9-A12 clear, A13-A15 clear — so
+  the register aliases across `$4100-$41FF`, `$4300-$43FF`, … `$5F00-$5FFF` (16 pages), low 8 bits
+  ignored. Bit layout (NESdev iNES Mapper 113, matching Mesen `Mapper113::WriteRegister`):
+  ```
+  bit 7 6 5 4 3 2 1 0
+      M C P P P C C C
+  ```
+  `prgBank = (v >> 3) & 0x07` (bits 3-5), `chrBank = ((v >> 3) & 0x08) | (v & 0x07)` (bit 6 is the
+  CHR high bit, bits 0-2 the low bits), `vertical = (v & 0x80) != 0`. Both fields wrap modulo the
+  ROM's bank count.
+- **Power-on:** the **last** 32 KB PRG bank is mapped (not bank 0). Mind Blower Pak's init code
+  lives in the last bank; its first register write is `$59`, which under the correct decode selects
+  PRG bank 3 — i.e. *keeps* the last bank mapped — and the boot continues into the RAM main loop.
+- **Open-bus (`$0000-$7FFF`) reads:** the chip has nothing to drive there, so `cpuRead` returns the
+  residual 6502 data-bus byte (`Mapper.dataBus`, fed by `Memory`) rather than 0. Without it, Mind
+  Blower Pak's reset trampoline decodes a `BRK` and never boots.
+- **Region:** `(australia)` in the NO-INTRO filename is a *where-sold* marker, not a timing one —
+  HES shipped NTSC silicon. `GamePak.forceNtscMappers(113) = Region.NTSC` overrides the filename's
+  PAL guess to match the real cartridge's frame rate / palette / CPU:PPU ratio. It's a
+  hardware-accuracy override, not a boot fix — both games boot under either region once the decode
+  is correct (the #163 garbled title was the decode bug below, not a timing issue).
+- **CHR:** 8 KB banked from CHR ROM; a 0 KB-CHR dump gets 8 KB of writable CHR RAM (same fallback
+  as Mappers 2/3/7/11/33/34/71).
+- **Verification:** `Mapper113Test` covers the full PRG/CHR bank range, the bit decode (asserted
+  through a spec-encoding `reg(prg, chr, vertical)` helper so the tests can't drift into the
+  implementation's own formula), 16-page register aliasing, open-bus reads, CHR-RAM fallback, and
+  save/load. `Mapper113RegressionTest` (`@RequiresMesen2`) byte-compares CHR vs Mesen2 at frame 60.
+  `Mapper113TotalFunpakBootTest` checks the second HES game's power-on state. **Issue #163** was a
+  decode bug here — PRG read from bits 4-6 instead of 3-5 — which sent Mind Blower Pak's first boot
+  write to the wrong bank; the 31 original unit tests passed only because they hand-rolled the same
+  wrong formula. Lesson: assert mapper decode against the *spec value*, not a magic byte derived
+  from the implementation.
+
 ## Adding New Mappers
 
 1. Implement in `gamepak/` directory

@@ -77,12 +77,12 @@ class RegionDetectionTest {
     /**
      * HES Australia multicarts (Mapper 113) are NTSC pirate carts sold in
      * Australia. The "Australia" filename marker is a *where-sold* tag, not
-     * a *timing* tag — HES shipped NTSC boards even to PAL regions. The
-     * HES NTD-8's boot sequence (a self-replicating trampoline at $FFE0 in
-     * bank 1) only completes correctly under NTSC timing; under PAL the
-     * CPU has too many cycles per frame, the trampoline chain runs into a
-     * different write, and the game boots into the wrong bank (PRG=2, CHR=15
-     * instead of the Mesen2-verified PRG=1, CHR=13).
+     * a *timing* tag — HES shipped NTSC silicon even into PAL regions, so
+     * forcing NTSC matches the real cartridge's frame rate, palette, and
+     * CPU:PPU ratio. (This is a hardware-accuracy override; the games boot
+     * correctly under either region once the mapper decode is right — the
+     * garbled-title bug in issue #163 was a register-decode bug, not a
+     * PAL-vs-NTSC timing one.)
      *
      * The iNES header for these dumps is silent on region (byte 9 = 0), so
      * we override the filename-based fallback: when the mapper is 113, the

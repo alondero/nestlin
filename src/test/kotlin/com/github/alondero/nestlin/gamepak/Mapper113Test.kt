@@ -88,6 +88,29 @@ class Mapper113Test {
         return pak.createMapper() as Mapper113
     }
 
+    /**
+     * Encode a register byte from intent, using the canonical Mapper 113
+     * layout (NESdev / Mesen `Mapper113::WriteRegister`):
+     * ```
+     *   bit 7 6 5 4 3 2 1 0
+     *       M C P P P C C C
+     * ```
+     * PRG = bits 3-5, CHR = (bit 6 << 3) | bits 0-2, mirroring = bit 7.
+     *
+     * Tests assert through this helper rather than hand-rolled magic bytes
+     * so they encode the *spec*, not the implementation — the wrong-decode
+     * (`PRG = bits 4-6`) that shipped in issue #163 passed 31 hand-rolled
+     * tests precisely because those tests were written against the buggy
+     * formula.
+     */
+    private fun reg(prg: Int = 0, chr: Int = 0, vertical: Boolean = false): Byte {
+        val v = (if (vertical) 0x80 else 0x00) or
+            ((prg and 0x07) shl 3) or
+            ((chr and 0x08) shl 3) or   // CHR high bit (value 8) -> register bit 6
+            (chr and 0x07)
+        return v.toSignedByte()
+    }
+
     // ---- Dispatch ----
 
     @Test
@@ -154,29 +177,28 @@ class Mapper113Test {
     }
 
     @Test
-    fun `4100 write sets PRG bank via bits 4-6`() {
+    fun `4100 write sets PRG bank via bits 3-5`() {
         val m = newMapper113(prgBanks32k = 8)
-        // 0x10 = bit 4 set -> PRG bank 1.
-        m.cpuWrite(0x4100, 0x10.toSignedByte())
+        m.cpuWrite(0x4100, reg(prg = 1))
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
         assertThat(m.cpuRead(0xFFFF).toUnsignedInt(), equalTo(1 xor 0xFF))
     }
 
     @Test
     fun `all 8 PRG banks are reachable`() {
-        // 8 PRG banks, 3-bit field — no wrap for any value 0..7.
+        // 8 PRG banks, 3-bit field (bits 3-5) — no wrap for any value 0..7.
         val m = newMapper113(prgBanks32k = 8)
         for (bank in 0..7) {
-            m.cpuWrite(0x4100, (bank shl 4).toSignedByte())
+            m.cpuWrite(0x4100, reg(prg = bank))
             assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(bank))
         }
     }
 
     @Test
-    fun `PRG bank field ignores bits 0-3 and bit 7`() {
-        // The PRG field is bits 4-6 only. Bits 0-3 hold the CHR field and
-        // bit 7 holds the mirroring bit. 0xFF = all bits set, but the PRG
-        // decode picks (0xFF >> 4) & 0x07 = 7.
+    fun `PRG bank field is bits 3-5 only`() {
+        // The PRG field is bits 3-5. Bits 0-2 + bit 6 hold the CHR field and
+        // bit 7 holds the mirroring bit. 0xFF = all bits set, so the PRG
+        // decode picks (0xFF >> 3) & 0x07 = 7.
         val m = newMapper113(prgBanks32k = 8)
         m.cpuWrite(0x4100, 0xFF.toSignedByte())
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(7))
@@ -188,17 +210,17 @@ class Mapper113Test {
         // last 16 KB bank fixed at $C000). After switching to bank 5, the
         // byte at $C000 must be the start of bank 5, NOT a fixed last bank.
         val m = newMapper113(prgBanks32k = 8)
-        m.cpuWrite(0x4100, (5 shl 4).toSignedByte())
+        m.cpuWrite(0x4100, reg(prg = 5))
         assertThat(m.cpuRead(0xC000).toUnsignedInt(), equalTo(5))
         assertThat(m.cpuRead(0xFFFF).toUnsignedInt(), equalTo(5 xor 0xFF))
     }
 
     @Test
     fun `PRG bank number larger than prgBankCount wraps modulo`() {
-        // 4 PRG banks: any value V%4 is the effective bank. 0x70 -> bank 7,
+        // 4 PRG banks: any value V%4 is the effective bank. Selecting PRG 7,
         // 7 % 4 = 3.
         val m = newMapper113(prgBanks32k = 4)
-        m.cpuWrite(0x4100, 0x70.toSignedByte())
+        m.cpuWrite(0x4100, reg(prg = 7))
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(3))
     }
 
@@ -250,7 +272,7 @@ class Mapper113Test {
         // data (the bank window starts at $8000). If a future refactor
         // ever widens the window, this test fails loud.
         val m = newMapper113(prgBanks32k = 8)
-        m.cpuWrite(0x4100, (5 shl 4).toSignedByte())  // PRG bank 5
+        m.cpuWrite(0x4100, reg(prg = 5))  // PRG bank 5
         m.dataBus = 0x42.toSignedByte()
         assertThat(m.cpuRead(0x0001).toUnsignedInt(), equalTo(0x42))
         assertThat(m.cpuRead(0x7FFF).toUnsignedInt(), equalTo(0x42))
@@ -269,10 +291,9 @@ class Mapper113Test {
     }
 
     @Test
-    fun `4100 write sets CHR bank via bits 0-3`() {
+    fun `4100 write sets CHR bank via bit 6 + bits 0-2`() {
         val m = newMapper113(chrBanks8k = 16)
-        // 0x05 = CHR bank 5, PRG bank 0.
-        m.cpuWrite(0x4100, 0x05.toSignedByte())
+        m.cpuWrite(0x4100, reg(chr = 5))  // CHR bank 5, PRG bank 0
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(5))
         assertThat(m.ppuRead(0x1FFF).toUnsignedInt(), equalTo(5 xor 0xFF))
     }
@@ -281,31 +302,33 @@ class Mapper113Test {
     fun `all 16 CHR banks are reachable`() {
         val m = newMapper113(chrBanks8k = 16)
         for (bank in 0..15) {
-            m.cpuWrite(0x4100, bank.toSignedByte())
+            m.cpuWrite(0x4100, reg(chr = bank))
             assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(bank))
         }
     }
 
     @Test
-    fun `CHR bank 15 (bit 3 set + low 3 bits set) is reachable`() {
-        // Bit 3 is the high bit of the CHR field. 0x0F = bank 15.
+    fun `CHR bank 15 (high bit + low 3 bits set) is reachable`() {
+        // The CHR high bit (bit 3 of the index) lives in register bit 6.
+        // reg(chr = 15) sets bit 6 and bits 0-2.
         val m = newMapper113(chrBanks8k = 16)
-        m.cpuWrite(0x4100, 0x0F.toSignedByte())
+        m.cpuWrite(0x4100, reg(chr = 15))
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(15))
     }
 
     @Test
-    fun `CHR bank 8 (bit 3 set) is reachable`() {
+    fun `CHR bank 8 (high bit only) is reachable`() {
+        // CHR bank 8 = high bit set, low bits clear = register bit 6 only.
         val m = newMapper113(chrBanks8k = 16)
-        m.cpuWrite(0x4100, 0x08.toSignedByte())
+        m.cpuWrite(0x4100, reg(chr = 8))
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(8))
     }
 
     @Test
     fun `CHR bank number larger than chrBankCount wraps modulo`() {
-        // 8 CHR banks; 0x0F = bank 15, 15 % 8 = 7.
+        // 8 CHR banks; selecting CHR 15, 15 % 8 = 7.
         val m = newMapper113(chrBanks8k = 8)
-        m.cpuWrite(0x4100, 0x0F.toSignedByte())
+        m.cpuWrite(0x4100, reg(chr = 15))
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(7))
     }
 
@@ -371,7 +394,7 @@ class Mapper113Test {
         // 0x4B00, 0x4D00, 0x4F00, 0x5100, 0x5300, 0x5500, 0x5700,
         // 0x5900, 0x5B00, 0x5D00, 0x5F00 — 16 total.
         for (page in 0x4100..0x5F00 step 0x0200) {
-            m.cpuWrite(page, 0xE5.toSignedByte())   // PRG 6, CHR 5, vert
+            m.cpuWrite(page, reg(prg = 6, chr = 5, vertical = true))
             assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(6))
             assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(5))
         }
@@ -380,20 +403,20 @@ class Mapper113Test {
     @Test
     fun `low 8 bits of the address are aliased`() {
         // Within a single page (e.g. $4100), any low address bits should
-        // decode to the same register. $4100, $4142, $41FF, $4100 again
-        // all write the same single byte.
+        // decode to the same register. $4142, $41FF all write the same
+        // single byte.
         val m = newMapper113()
-        m.cpuWrite(0x4142, 0xE5.toSignedByte())
+        m.cpuWrite(0x4142, reg(prg = 6, chr = 5, vertical = true))
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(6))
-        m.cpuWrite(0x41FF, 0x05.toSignedByte())
+        m.cpuWrite(0x41FF, reg(prg = 0))
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(0))
     }
 
     @Test
     fun `multiple writes overwrite the register`() {
         val m = newMapper113()
-        m.cpuWrite(0x4100, 0x10.toSignedByte())  // PRG 1
-        m.cpuWrite(0x4100, 0x30.toSignedByte())  // PRG 3
+        m.cpuWrite(0x4100, reg(prg = 1))
+        m.cpuWrite(0x4100, reg(prg = 3))
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(3))
     }
 
@@ -414,7 +437,7 @@ class Mapper113Test {
             stampChr8kBanks(chr)
         }
         val original = pak.createMapper() as Mapper113
-        original.cpuWrite(0x4100, 0xE5.toSignedByte())  // PRG 6, CHR 5, vert
+        original.cpuWrite(0x4100, reg(prg = 6, chr = 5, vertical = true))
         val bytes = ByteArrayOutputStream().use { baos ->
             DataOutputStream(baos).use { original.saveState(it) }
             baos.toByteArray()
@@ -452,7 +475,7 @@ class Mapper113Test {
     @Test
     fun `snapshot reflects all current state`() {
         val m = newMapper113(prgBanks32k = 8, chrBanks8k = 16, mirroring = Header.Mirroring.HORIZONTAL)
-        m.cpuWrite(0x4100, 0xE5.toSignedByte())   // PRG 6, CHR 5, vert
+        m.cpuWrite(0x4100, reg(prg = 6, chr = 5, vertical = true))
         val snap = m.snapshot()
         assertThat(snap.mapperId, equalTo(113))
         assertThat(snap.banks["prgBank"], equalTo(6))

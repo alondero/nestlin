@@ -29,7 +29,15 @@ import java.nio.file.Paths
  * with `NESTLIN_MIND_BLOWER_PAK_ROM`; otherwise we fall back to the
  * canonical path on Adam's machine. Skipped (not failed) when neither
  * the ROM nor Mesen2 is present, since CI runners won't have either.
+ *
+ * `@RequiresMesen2` puts both subtests in the `mesen` lane (excluded from
+ * `./gradlew test`, included by `./gradlew testMesenComparison`) — the
+ * `MapperCoverageLintTest` enforces that every `Mapper*RegressionTest`
+ * carries this. Both subtests need the Mind Blower Pak ROM, which is not
+ * in git, so the in-body `assumeTrue(Files.exists(rom))` still guards the
+ * ROM independently of the Mesen2 gate.
  */
+@RequiresMesen2
 class Mapper113RegressionTest {
 
     private val frameNumber = 60
