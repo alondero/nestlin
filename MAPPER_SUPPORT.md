@@ -71,6 +71,22 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   - IRQ counter reload: Fixed per NESdev spec - reload occurs when counter==0 OR reload flag is set
   - A12 edge detection: Wired from PPU pattern table access to mapper via a12EdgeListener
 
+## Mapper 5 (MMC5 / ExROM)
+**Status:** STUB — not yet playable
+
+- **Games (target):** Castlevania III: Dracula's Curse (the canonical MMC5 title), Just Breed,
+  Laser Invasion, Uncharted Waters, Metal Slader Glory.
+- **What works:** the cartridge loads and dispatches to `Mapper5`, and battery-backed PRG-RAM at
+  `$6000-$7FFF` persists (mapper 5 is in the `.sav` coverage list).
+- **What is missing (why Castlevania III is not playable):** the bank-select decode needs a
+  rewrite, plus MMC5's fill mode, the `$5205/$5206` multiplier output, ExRAM (`$5C00-$5FFF`)
+  nametable/attribute modes, and the scanline IRQ. There is **no expansion audio** (MMC5's two
+  pulse channels + PCM).
+- **Verification:** unit-level register coverage only; no end-to-end boot/render test yet — it would
+  fail until the items above land. Use `./gradlew bootcheck -Prom=<castlevania3.nes>` to track
+  progress (expect FAIL/garbage until the bank decode + scanline IRQ are implemented).
+- See the "Known limits" note in `CLAUDE.md` for the same summary.
+
 ## Mapper 9 (MMC2 / PxROM)
 **Status:** Working (Added 2026-05-20)
 
@@ -347,6 +363,10 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   PRG-RAM-vs-PRG toggle (with the write-mask behaviour), CHR banking,
   mirroring, the full 16-bit IRQ, battery-backed RAM, and save/load
   round-trip.
+
+---
+
+## Mapper 11 (Color Dreams / NINA-007)
 **Status:** Working (Fixed 2026-04-17)
 
 - **Games:** Bible Adventures, Action 52, Crystalis (some versions)
@@ -356,6 +376,26 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   2. PRG banking was fixed to bank 0 only; now properly switches 32KB PRG banks via bits 0-1
 - **Format (per NESdev wiki):** `CCCC LLPP` where CCCC = 8KB CHR bank (bits 4-7), LL = unused/lockout, PP = 32KB PRG bank (bits 0-1)
 - **Verified:** Bible Adventures now shows gameplay content (was all-black before fix)
+
+---
+
+## Mapper 34 (BNROM / NINA-001)
+**Status:** Working
+
+- **Games:** Deadly Towers (BNROM), Impossible Mission II / Darkseed-class NINA-001 titles.
+- **What it is:** two unrelated boards sharing one iNES number. Both bank the **entire** 32 KB
+  PRG window at `$8000-$FFFF` (no fixed bank, unlike UNROM/Mapper 2) and switch 8 KB CHR.
+- **Register decode (writes to `$8000-$FFFF`):** a single byte — `prgBank = value & 0x07`
+  (32 KB PRG bank, modulo PRG-bank count), `chrBank = (value >> 3) & 0x03` (8 KB CHR bank,
+  modulo CHR size). The NINA-001 sub-board uses separate `$7FFD/$7FFE/$7FFF` registers on real
+  hardware; this implementation models the BNROM-style combined `$8000` write.
+- **CHR:** 8 KB banked from CHR ROM; a 0 KB-CHR dump gets 8 KB of writable CHR RAM (same fallback
+  as Mappers 2/3/7/11/33/71).
+- **Mirroring:** fixed from the iNES header. No PRG-RAM, no IRQ.
+- **Verification:** `Mapper34Test` covers PRG/CHR bank select, the bit split, CHR-RAM fallback,
+  header mirroring, and save/load round-trip. End-to-end Mesen2 boot comparison is a follow-up
+  (Deadly Towers is the natural oracle) — run `./gradlew bootcheck -Prom=<deadly-towers.nes>`
+  for the oracle-free smoke in the meantime.
 
 ## Mapper 64 (Tengen RAMBO-1)
 **Status:** Working (Added 2026-06-07, issue #132)

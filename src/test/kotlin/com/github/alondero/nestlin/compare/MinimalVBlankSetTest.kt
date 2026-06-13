@@ -14,6 +14,7 @@ import com.natpryce.hamkrest.equalTo
  * More complex VBlank timing tests require cycle-accurate PPU state tracking
  * which is difficult to test in isolation.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class MinimalVBlankSetTest {
 
     @Test

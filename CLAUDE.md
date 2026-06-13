@@ -19,6 +19,16 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 # plus automated LIKELY-CAUSE classification. Run this BEFORE forming a hypothesis.
 ./gradlew diverge -Prom=X:/src/nestlin/testroms/kirby.nes -Pframe=120
 
+# Oracle-free boot smoke (no Mesen2 / no ROM library needed): boot a ROM headless N frames and
+# print BOOTCHECK VERDICT: PASS|WARN|FAIL from loaded/rendered/non-blank/banks-moved/NMI+IRQ.
+# The mandatory self-check for any new/changed mapper — the Mesen2 gates skip when the oracle is
+# absent, so a green `test` proves nothing about a real game. (A Stop hook blocks ending a session
+# that edited gamepak/Mapper*.kt without a PASS/WARN here. MapperCoverageLintTest fails the build
+# if a mapper lacks a GamePak arm / MAPPER_SUPPORT section, or if a Mapper*RegressionTest isn't in
+# the tag-driven 'mesen' lane. Test lanes are @Tag-based now, not hand-listed: @Tag("mesen") +
+# @Tag("externalRom") are excluded from `test`; testMesenComparison runs @Tag("mesen").)
+./gradlew bootcheck -Prom=X:/src/nestlin/testroms/kirby.nes -Pframes=120
+
 # Print test-environment diagnostics (MESEN2_PATH resolution, ROM availability,
 # strict-mode flag) — run when a comparison test reports SKIPPED unexpectedly
 ./gradlew verifyTestEnv

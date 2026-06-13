@@ -10,6 +10,7 @@ import java.nio.file.Paths
 /**
  * Targeted test to find exactly where VBlank gets set vs when NMI fires.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class VBlankTimingTest {
 
     @Test

@@ -23,6 +23,7 @@ import kotlin.streams.toList
  * those change across boot. Also saves PNG screenshots at a handful of
  * frames so we can look for the "band" visual artifact the user reported.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class MicroMachinesExtendedCaptureTest {
 
     @Test

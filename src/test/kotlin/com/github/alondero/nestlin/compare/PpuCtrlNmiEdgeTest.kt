@@ -15,6 +15,7 @@ import com.natpryce.hamkrest.equalTo
  * immediate NMI. Without bit-7 edge re-trigger, first NMI is delayed by up to
  * a frame, and downstream init code times out / corrupts state.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class PpuCtrlNmiEdgeTest {
 
     @Test

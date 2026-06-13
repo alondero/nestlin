@@ -27,6 +27,7 @@ import java.nio.file.Paths
  * Adam's machine. Skipped (not failed) when the ROM or Mesen2 is missing,
  * since CI runners won't have either.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class Mapper64KlaxRegressionTest {
 
     private fun klaxRom(): Path {

@@ -14,6 +14,7 @@ import javax.imageio.ImageIO
 /**
  * Headless test for mapper 4 verification.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class Mapper4Verification {
 
     @Test

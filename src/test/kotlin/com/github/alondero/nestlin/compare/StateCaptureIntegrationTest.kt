@@ -2,16 +2,19 @@ package com.github.alondero.nestlin.compare
 
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
 import java.nio.file.Paths
 
 /**
  * Simple test to verify both Nestlin state capture and Mesen2 state capture work.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class StateCaptureIntegrationTest {
 
     @Test
     fun captureNestlinStateAtFrame60() {
         val romPath = Paths.get("testroms/tetris.nes")
+        assumeTrue(Files.exists(romPath), "ROM not found: $romPath")
         val state = NestlinStateCapturer.captureState(romPath, 60)
 
         println("=== Nestlin State at frame 60 for tetris.nes ===")
@@ -25,6 +28,7 @@ class StateCaptureIntegrationTest {
         assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
 
         val romPath = Paths.get("testroms/tetris.nes")
+        assumeTrue(Files.exists(romPath), "ROM not found: $romPath")
         val state = Mesen2StateCapturer.captureState(romPath, 60)
 
         println("=== Mesen2 State at frame 60 for tetris.nes ===")
@@ -38,6 +42,7 @@ class StateCaptureIntegrationTest {
         assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
 
         val romPath = Paths.get("testroms/tetris.nes")
+        assumeTrue(Files.exists(romPath), "ROM not found: $romPath")
 
         val nestlinState = NestlinStateCapturer.captureState(romPath, 60)
         val mesen2State = Mesen2StateCapturer.captureState(romPath, 60)

@@ -23,6 +23,7 @@ import java.nio.file.Paths
  * on Adam's machine. Skipped (not failed) when neither the ROM nor Mesen2
  * is present, since CI runners won't have either.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class Mapper33RegressionTest {
 
     private val frameNumber = 60

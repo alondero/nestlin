@@ -10,6 +10,7 @@ import java.nio.file.Paths
  * Captures Nestlin state at specific frames for Kirby (Mapper 4).
  * Writes detailed output to build/debug-state/ for analysis.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class NestlinMapper4CaptureTest {
 
     @Test

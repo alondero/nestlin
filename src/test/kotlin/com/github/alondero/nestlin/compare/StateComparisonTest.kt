@@ -16,6 +16,7 @@ import java.nio.file.Paths
  * discovered by `@MethodSource("data")`. The test name template moves from
  * `@Parameterized.Parameters(name = ...)` to `@ParameterizedTest(name = ...)`.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class StateComparisonTest {
 
     companion object {

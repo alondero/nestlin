@@ -6,6 +6,7 @@ import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Paths
 
+@org.junit.jupiter.api.Tag("mesen")
 class ScreenshotComparisonTest {
 
     companion object {

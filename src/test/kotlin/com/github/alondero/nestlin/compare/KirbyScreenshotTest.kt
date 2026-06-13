@@ -14,6 +14,7 @@ import javax.imageio.ImageIO
  * Capture screenshot of Kirby's Adventure at various frames.
  * This lets us see what's actually being rendered over time.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class KirbyScreenshotTest {
 
     @Test

@@ -13,6 +13,7 @@ import com.natpryce.hamkrest.equalTo
  * Collapsed test from KirbyPpuCtrlTrackingTest and KirbyPpuCtrlWriteTrackerTest.
  * Asserts that PPUCTRL reaches $A8 (NMI enabled) by frame 10 of Kirby boot.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class KirbyPpuCtrlTrackingTest {
 
     @Test

@@ -71,10 +71,29 @@ in order; do not skip steps because the mapper "looks simple".
    mid-frame double-fire (the RAMBO-1 v6 trap: "CHR matched byte-for-byte" while the
    IRQ fired twice per frame).
 
-## Step 4 — Boot verification against the real game
+## Step 4 — Boot verification against the real game (MANDATORY — the suite is not enough)
 
-- Run the game; if it doesn't boot, run `./gradlew diverge -Prom=<rom> -Pframe=60`
-  FIRST — the DivergenceLocalizer's classification table maps the divergence shape to
-  the likely subsystem before you form a hypothesis. Do not start from a guess.
-- Update `MAPPER_SUPPORT.md` (games tested, quirks) and close out with the regression
-  suite green: `./gradlew test` and `./gradlew testMesenComparison`.
+A green `./gradlew test` does **not** prove a real game boots: the Mesen2 byte-compare and the
+real-game boot tests `assumeTrue(romExists)` / `@RequiresMesen2`, so they *skip* (green) on a
+worktree without the ROM library or Mesen2. Skipping the steps below is exactly how a mapper ships
+"green" but renders garbage. Do them, in order:
+
+1. **Oracle-free smoke first — `./gradlew bootcheck -Prom=<rom> [-Pframes=120]`.** No Mesen2 or
+   ROM library needed. Prints `BOOTCHECK VERDICT: PASS|WARN|FAIL` from loaded/rendered/non-blank/
+   banks-moved/NMI+IRQ signals. A **FAIL** ("did not boot to a picture") or a blank-screen **WARN**
+   is a real bug — fix it before going further. A weak model claiming success without a PASS/WARN
+   here is the failure mode this gate exists to stop. (A `Stop` hook, `mapper-verify-guard.ps1`,
+   blocks ending the session when a `gamepak/Mapper*.kt` is dirty and no bootcheck PASS/WARN or
+   Mesen2 MATCH appears in the transcript — so cite the verdict.)
+2. **If bootcheck is not PASS, localise before guessing — `./gradlew diverge -Prom=<rom> -Pframe=60`.**
+   The DivergenceLocalizer's classification table maps the divergence shape to the likely subsystem.
+   Do not start from a guess.
+3. **Write the Mesen2 regression test — it self-wires.** Subclass `MapperRegressionTestBase` (it
+   carries `@Tag("mesen")`, which JUnit inherits) and annotate the render-output method
+   `@RequiresMesen2`. That is the *entire* wiring: `./gradlew testMesenComparison` discovers it by
+   tag and `./gradlew test` excludes it — there is **no list in `build.gradle.kts` to update** (the
+   old list is exactly what silently dropped 24/26/64). `MapperCoverageLintTest` fails the build if a
+   `Mapper*RegressionTest` is somehow not in the mesen lane, or if `MapperN.kt` lacks a `GamePak`
+   dispatch arm or a `## Mapper N` section in `MAPPER_SUPPORT.md`.
+4. **Update `MAPPER_SUPPORT.md`** (games tested, quirks) and close out with the regression suite
+   green: `./gradlew test` (includes the lint) and `./gradlew testMesenComparison`.

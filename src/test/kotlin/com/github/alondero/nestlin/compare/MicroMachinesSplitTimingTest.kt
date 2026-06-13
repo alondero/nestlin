@@ -17,6 +17,7 @@ import kotlin.streams.toList
  * compare against Mesen2's ground truth (forced-blank at scanline 107, re-enable at
  * scanline 115). Reveals how far Nestlin's cycle-counted split drifts from hardware.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class MicroMachinesSplitTimingTest {
 
     @Test

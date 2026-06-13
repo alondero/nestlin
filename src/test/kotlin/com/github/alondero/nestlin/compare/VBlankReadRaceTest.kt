@@ -16,6 +16,7 @@ import com.natpryce.hamkrest.equalTo
  * This is the race condition: game's poll happens to align with VBlank set,
  * and without suppression logic, both would conflict.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class VBlankReadRaceTest {
 
     @Test

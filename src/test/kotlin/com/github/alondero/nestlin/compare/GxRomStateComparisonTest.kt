@@ -43,6 +43,7 @@ import java.nio.file.Paths
  * name template moves from `@Parameterized.Parameters(name = ...)` to
  * `@ParameterizedTest(name = ...)`.
  */
+@org.junit.jupiter.api.Tag("mesen")
 class GxRomStateComparisonTest {
 
     companion object {

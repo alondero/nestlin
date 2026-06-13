@@ -67,73 +67,35 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
     }
 }
 
-// Exclude Mesen-dependent tests from the standard test pipeline.
-// These tests require Mesen2 to be installed and configured, so they should
-// only be run explicitly via: ./gradlew testMesenComparison
-val mesenTests = listOf(
-    "com.github.alondero.nestlin.compare.ScreenshotComparisonTest",
-    "com.github.alondero.nestlin.compare.StateComparisonTest",
-    "com.github.alondero.nestlin.compare.StateCaptureIntegrationTest",
-    "com.github.alondero.nestlin.compare.Mesen2StateCapturerSmokeTest",
-    "com.github.alondero.nestlin.compare.DebugMesen2CaptureTest",
-    "com.github.alondero.nestlin.compare.DebugStateCaptureTest",
-    "com.github.alondero.nestlin.compare.NestlinMapper4CaptureTest",
-    "com.github.alondero.nestlin.compare.Mapper10RegressionTest",
-    "com.github.alondero.nestlin.compare.Mapper33RegressionTest",
-    "com.github.alondero.nestlin.compare.GxRomStateComparisonTest",
-    "com.github.alondero.nestlin.compare.MicroMachinesMapper71SmokeTest",
-    "com.github.alondero.nestlin.compare.MicroMachinesMapper71StateComparisonTest",
-    "com.github.alondero.nestlin.compare.MicroMachinesExtendedCaptureTest",
-    "com.github.alondero.nestlin.compare.MicroMachinesDivergenceSweepTest",
-    "com.github.alondero.nestlin.compare.MicroMachinesPcDivergenceTest",
-    "com.github.alondero.nestlin.compare.MicroMachinesSplitTimingTest",
-    "com.github.alondero.nestlin.compare.MicroMachinesAttractHangTest",
-    "com.github.alondero.nestlin.compare.BigNoseHangTest"
-)
-
-// Also exclude debug/investigation tests that can hang or have pre-existing issues
-// Also exclude tests that depend on ROMs not in the repository
-val auxiliaryTests = listOf(
-    // Debug/investigation tests with external ROM dependencies
-    "com.github.alondero.nestlin.gamepak.Mapper4Verification",
-    "com.github.alondero.nestlin.gamepak.Mapper4GamesTest",
-    // Integration tests requiring external ROMs
-    "com.github.alondero.nestlin.Mapper1IntegrationTest",
-    // Compare tests that depend on external ROMs (kirby.nes, etc.)
-    "com.github.alondero.nestlin.compare.KirbyInstructionTraceTest",
-    "com.github.alondero.nestlin.compare.KirbyMesenVsNestlinOamTest",
-    "com.github.alondero.nestlin.compare.KirbyOamSnapshotTest",
-    "com.github.alondero.nestlin.compare.KirbyPpuCtrlTrackingTest",
-    "com.github.alondero.nestlin.compare.KirbyScreenshotTest",
-    "com.github.alondero.nestlin.compare.KirbyVBlankTest",
-    "com.github.alondero.nestlin.compare.MinimalVBlankSetTest",
-    "com.github.alondero.nestlin.compare.PpuCtrlNmiEdgeTest",
-    "com.github.alondero.nestlin.compare.ScreenshotCapture",
-    "com.github.alondero.nestlin.compare.VBlankPollingTest",
-    "com.github.alondero.nestlin.compare.VBlankReadRaceTest",
-    "com.github.alondero.nestlin.compare.VBlankTimingTest",
-    "com.github.alondero.nestlin.compare.VBlankTimingTest2"
-)
+// Test lanes are TAG-DRIVEN, not hand-listed. There is deliberately no list of test classes here:
+// the previous one silently went stale (it omitted the Mapper 24/26/64 regression tests for weeks,
+// so testMesenComparison quietly never ran them). Instead each test declares its own lane:
+//
+//   @Tag("mesen")        - needs the Mesen2 reference emulator. @RequiresMesen2 implies this tag
+//                          (it is meta-tagged), and MapperRegressionTestBase carries it so every
+//                          mapper regression test inherits it for free.
+//   @Tag("externalRom")  - needs a ROM not in git (kirby.nes etc.) or is a debug/investigation
+//                          test that can hang; excluded from the fast suite, no dedicated task.
+//
+// ./gradlew test               -> everything EXCEPT those two tags (fast, hermetic, ROM-free)
+// ./gradlew testMesenComparison -> only @Tag("mesen")
+// MapperCoverageLintTest fails the build if a compare/Mapper*RegressionTest is not in the mesen
+// lane, so "forgot to wire it up" is a red build, not a silent skip.
 
 tasks.test {
-    // Exclude Mesen-dependent tests from standard test run
-    mesenTests.forEach { testClass ->
-        exclude("**/${testClass.replace('.', '/')}.class")
+    // Fast suite: no Mesen2, no external ROMs. Tags do the exclusion - no class list to maintain.
+    useJUnitPlatform {
+        excludeTags("mesen", "externalRom")
     }
-    auxiliaryTests.forEach { testClass ->
-        exclude("**/${testClass.replace('.', '/')}.class")
-    }
-    useJUnitPlatform()
 }
 
 // Separate task to run Mesen comparison tests only when explicitly invoked
 tasks.register<Test>("testMesenComparison") {
     group = "verification"
     description = "Runs Mesen comparison tests that require Mesen2 to be installed"
-    mesenTests.forEach { testClass ->
-        include("**/${testClass.replace('.', '/')}.class")
+    useJUnitPlatform {
+        includeTags("mesen")
     }
-    useJUnitPlatform()
     // Forward MESEN2_PATH to the test JVM so the runner can locate Mesen2.
     // The Gradle daemon may not inherit shell env vars cleanly between invocations,
     // so we read it explicitly and pass it through.
@@ -199,6 +161,32 @@ tasks.register<JavaExec>("diverge") {
     if (mesen2Path != null) {
         environment("MESEN2_PATH", mesen2Path)
     }
+}
+
+// Oracle-free boot smoke: boot a ROM headless for N frames and print a PASS|WARN|FAIL verdict
+// (loaded / rendered / non-blank / banks-moved / NMI+IRQ counts). Needs NO Mesen2 and NO ROM
+// library — point it at any .nes. This is the self-check a delegated mapper task must run and
+// cite before claiming success (the strong Mesen2 gates skip when the oracle/ROM is absent).
+// Usage: ./gradlew bootcheck -Prom=X:/src/nestlin/testroms/kirby.nes [-Pframes=120]
+tasks.register<JavaExec>("bootcheck") {
+    group = "verification"
+    description = "Headless oracle-free boot verdict for a ROM (use -Prom=, optional -Pframes=)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.cli.BootCheckKt")
+
+    val rom = project.findProperty("rom") as String?
+    val frames = project.findProperty("frames") as String?
+    doFirst {
+        if (rom == null) {
+            throw GradleException("Missing -Prom=<path-to-rom>. Usage: ./gradlew bootcheck -Prom=rom.nes [-Pframes=120]")
+        }
+    }
+    args = buildList {
+        if (rom != null) add(rom)
+        if (frames != null) { add("--frames"); add(frames) }
+    }
+    // A FAIL verdict exits non-zero; surface it as a build failure so CI / the agent notices.
+    isIgnoreExitValue = false
 }
 
 // Sanity-check the local test environment (Mesen2, ROMs, strict mode) before

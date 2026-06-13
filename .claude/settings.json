@@ -10,6 +10,16 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/hooks/mapper-verify-guard.ps1"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

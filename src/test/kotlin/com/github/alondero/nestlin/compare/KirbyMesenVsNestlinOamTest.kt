@@ -11,6 +11,7 @@ import java.nio.file.Paths
  *
  * Requires Mesen2 + GUI + I/O permissions enabled.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class KirbyMesenVsNestlinOamTest {
 
     @Test

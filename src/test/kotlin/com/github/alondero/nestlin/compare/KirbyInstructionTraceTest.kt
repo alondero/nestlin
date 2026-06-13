@@ -16,6 +16,7 @@ import com.natpryce.hamkrest.contains
  *
  * This test validates that Kirby's boot sequence completes and NMIs start firing.
  */
+@org.junit.jupiter.api.Tag("externalRom")
 class KirbyInstructionTraceTest {
 
     @Test
