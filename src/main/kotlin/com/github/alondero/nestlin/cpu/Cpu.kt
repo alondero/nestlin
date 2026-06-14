@@ -10,7 +10,19 @@ import java.io.File
 class Cpu(var memory: Memory)
 {
     var currentGame: GamePak? = null
-    var workCyclesLeft = 0
+    // --- Private backing state ---------------------------------------------------
+    // The fields below are intentionally private (issue #23): the only way to read or
+    // mutate them is through the public properties further down, which give us a
+    // single, documentable access point. The properties are the *controlled surface*
+    // for opcode implementations, the trace Logger, and the test harness. Adding
+    // validation, logging, or swapping the backing storage is now a one-place change
+    // rather than a sweep across Opcodes.kt and every test that pokes at the CPU.
+    // The Registers/ProcessorStatus references are still returned by their getters —
+    // callers can still mutate the individual register / flag fields — but they can
+    // no longer replace the *reference* itself. (Truly sealing the inner state would
+    // require read-only views on Registers/ProcessorStatus, which is a larger,
+    // separate refactor.)
+    private var _workCyclesLeft = 0
     // The 6502 services an NMI with ~1 instruction of latency: when the NMI line is
     // asserted (PPU vblank) the CPU finishes its current instruction (and often issues
     // one more fetch) before vectoring. We model that by arming the NMI on the first
@@ -19,20 +31,62 @@ class Cpu(var memory: Memory)
     // real hardware — the in-flight poll reads the just-set flag, and that read clears
     // the latch, suppressing the NMI for that frame. Camerica/Codemasters titles (Big
     // Nose, Micro Machines) hang without it. See BigNoseHangTest.
-    var nmiArmed = false
+    private var _nmiArmed = false
     // Diagnostic counters: incremented exactly once per *dispatched* interrupt (the
     // point the vector is taken, not when armed/pending). Deliberately NOT part of
     // save-state serialisation — these are debugging telemetry, not emulation state.
     // The compare/DivergenceLocalizer harness reads per-frame deltas of these to
     // compare NMI/IRQ-per-frame against Mesen2's event counts.
-    var nmiCount = 0
-    var irqCount = 0
-    var pageBoundaryFlag = false
-    var registers = Registers()
-    var processorStatus = ProcessorStatus()
-    var idle = false
+    private var _nmiCount = 0
+    private var _irqCount = 0
+    private var _pageBoundaryFlag = false
+    private val _registers = Registers()
+    private val _processorStatus = ProcessorStatus()
+    private var _idle = false
     private var logger: Logger? = null
     private val opcodes = Opcodes()
+
+    // --- Controlled-access properties (issue #23) --------------------------------
+    // Backing fields are private; these properties are the entire public surface for
+    // opcode-state read/write. Adding invariant checks, trace logging, or swapping
+    // the storage (e.g. to packed bits) is a one-line change here.
+    var workCyclesLeft: Int
+        get() = _workCyclesLeft
+        set(value) { _workCyclesLeft = value }
+
+    var nmiArmed: Boolean
+        get() = _nmiArmed
+        set(value) { _nmiArmed = value }
+
+    var pageBoundaryFlag: Boolean
+        get() = _pageBoundaryFlag
+        set(value) { _pageBoundaryFlag = value }
+
+    var idle: Boolean
+        get() = _idle
+        set(value) { _idle = value }
+
+    /** The live [Registers] instance. Mutation goes through the field setters on the returned object. */
+    val registers: Registers
+        get() = _registers
+
+    /** The live [ProcessorStatus] instance. Flag writes go through the field setters on the returned object. */
+    val processorStatus: ProcessorStatus
+        get() = _processorStatus
+
+    /** Diagnostic: total NMIs dispatched since [reset]. See field doc above. */
+    val nmiCount: Int
+        get() = _nmiCount
+
+    /** Diagnostic: total IRQs dispatched since [reset]. See field doc above. */
+    val irqCount: Int
+        get() = _irqCount
+
+    /** Internal mutator for the NMI diagnostic counter. Not exposed via a public setter. */
+    internal fun incrementNmiCount() { _nmiCount++ }
+
+    /** Internal mutator for the IRQ diagnostic counter. Not exposed via a public setter. */
+    internal fun incrementIrqCount() { _irqCount++ }
 
     fun getCurrentPc(): Short = registers.programCounter
     // TODO: Development-only feature - Remove undocumented opcode logging once emulator stability is proven
@@ -45,16 +99,16 @@ class Cpu(var memory: Memory)
 
     fun reset() {
         memory.clear()
-        processorStatus.reset()
-        registers.reset()
-        workCyclesLeft = 0
-        nmiArmed = false
-        nmiCount = 0
-        irqCount = 0
+        _processorStatus.reset()
+        _registers.reset()
+        _workCyclesLeft = 0
+        _nmiArmed = false
+        _nmiCount = 0
+        _irqCount = 0
         currentGame?.let {
             memory.readCartridge(it)
-            registers.initialise(memory)
-            if (it.isTestRom()) registers.activateAutomationMode()
+            _registers.initialise(memory)
+            if (it.isTestRom()) _registers.activateAutomationMode()
         }
     }
 
@@ -172,44 +226,44 @@ class Cpu(var memory: Memory)
             // No (longer any) pending NMI. If it was armed, the latch was cleared within
             // the 1-instruction latency window — e.g. the program read $2002 (a vblank
             // poll). That correctly suppresses the NMI for this frame.
-            nmiArmed = false
+            _nmiArmed = false
             return false
         }
-        if (!nmiArmed && !idle) {
+        if (!_nmiArmed && !_idle) {
             // First boundary at which the NMI is pending: arm it and let one more
             // instruction execute before vectoring (the 6502's NMI latency). When the
             // CPU is parked in a spin loop (idle) there is no in-flight instruction to
             // finish, so skip the latency and service immediately — that is what breaks
             // the spin, and there is no $2002 poll to race against while parked.
-            nmiArmed = true
+            _nmiArmed = true
             return false
         }
         // Latency elapsed — service the NMI now.
-        nmiArmed = false
+        _nmiArmed = false
         // Clear the NMI flag (edge-triggered, not level-triggered)
         memory.ppuAddressedMemory.nmiOccurred = false
 
         // Push PC (high byte first, then low byte)
-        val pc = registers.programCounter.toUnsignedInt()
+        val pc = _registers.programCounter.toUnsignedInt()
         push((pc shr 8).toSignedByte())
         push((pc and 0xFF).toSignedByte())
 
         // Push processor status (with B flag clear for interrupts)
-        val statusByte = processorStatus.asByte().toUnsignedInt()
+        val statusByte = _processorStatus.asByte().toUnsignedInt()
         // Clear bit 4 (B flag) for interrupt context
         val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
         push(statusForInterrupt)
 
         // Set interrupt disable flag
-        processorStatus.interruptDisable = true
+        _processorStatus.interruptDisable = true
 
         // Load PC from NMI vector at $FFFA-$FFFB
-        registers.programCounter = memory[0xFFFA, 0xFFFB]
+        _registers.programCounter = memory[0xFFFA, 0xFFFB]
 
         // NMI takes 7 cycles
-        workCyclesLeft = 7
+        _workCyclesLeft = 7
 
-        nmiCount++
+        incrementNmiCount()
 
         return true
     }
@@ -220,67 +274,67 @@ class Cpu(var memory: Memory)
         // not slip in ahead of it — otherwise the armed boundary would vector to the IRQ
         // handler first, inverting hardware priority. The IRQ stays pending and is taken
         // after the NMI.
-        if (nmiArmed) return false
-        if (processorStatus.interruptDisable) return false
+        if (_nmiArmed) return false
+        if (_processorStatus.interruptDisable) return false
         if (memory.apu?.isIrqPending() != true && memory.mapper?.isIrqPending() != true) return false
 
         // Push PC (high byte first, then low byte)
-        val pc = registers.programCounter.toUnsignedInt()
+        val pc = _registers.programCounter.toUnsignedInt()
         push((pc shr 8).toSignedByte())
         push((pc and 0xFF).toSignedByte())
 
         // Push processor status (with B flag clear for interrupts)
-        val statusByte = processorStatus.asByte().toUnsignedInt()
+        val statusByte = _processorStatus.asByte().toUnsignedInt()
         val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
         push(statusForInterrupt)
 
         // Set interrupt disable flag
-        processorStatus.interruptDisable = true
+        _processorStatus.interruptDisable = true
 
         // Load PC from IRQ/BRK vector at $FFFE-$FFFF
-        registers.programCounter = memory[0xFFFE, 0xFFFF]
+        _registers.programCounter = memory[0xFFFE, 0xFFFF]
 
         // IRQ takes 7 cycles
-        workCyclesLeft = 7
+        _workCyclesLeft = 7
 
         // Acknowledge IRQ from mapper (APU IRQ is cleared elsewhere by the APU)
         memory.mapper?.acknowledgeIrq()
 
-        irqCount++
+        incrementIrqCount()
 
         return true
     }
 
     fun saveState(out: DataOutput) {
-        out.writeByte(registers.stackPointer.toInt())
-        out.writeByte(registers.accumulator.toInt())
-        out.writeByte(registers.indexX.toInt())
-        out.writeByte(registers.indexY.toInt())
-        out.writeShort(registers.programCounter.toInt())
-        out.writeByte(processorStatus.asByte().toInt())
+        out.writeByte(_registers.stackPointer.toInt())
+        out.writeByte(_registers.accumulator.toInt())
+        out.writeByte(_registers.indexX.toInt())
+        out.writeByte(_registers.indexY.toInt())
+        out.writeShort(_registers.programCounter.toInt())
+        out.writeByte(_processorStatus.asByte().toInt())
         // Workaround: ProcessorStatus.toFlags doesn't preserve breakCommand, so save explicitly.
-        out.writeBoolean(processorStatus.breakCommand)
-        out.writeInt(workCyclesLeft)
-        out.writeBoolean(pageBoundaryFlag)
-        out.writeBoolean(idle)
-        out.writeBoolean(nmiArmed)
+        out.writeBoolean(_processorStatus.breakCommand)
+        out.writeInt(_workCyclesLeft)
+        out.writeBoolean(_pageBoundaryFlag)
+        out.writeBoolean(_idle)
+        out.writeBoolean(_nmiArmed)
         // Reserved: the old `Interrupt` enum (IRQ_BRK/NMI/RESET) was removed in issue #24.
         // The 4-byte slot stays in the format so save files made by older builds still load.
         out.writeInt(0)
     }
 
     fun loadState(input: DataInput) {
-        registers.stackPointer = input.readByte()
-        registers.accumulator = input.readByte()
-        registers.indexX = input.readByte()
-        registers.indexY = input.readByte()
-        registers.programCounter = input.readShort()
-        processorStatus.toFlags(input.readByte())
-        processorStatus.breakCommand = input.readBoolean()
-        workCyclesLeft = input.readInt()
-        pageBoundaryFlag = input.readBoolean()
-        idle = input.readBoolean()
-        nmiArmed = input.readBoolean()
+        _registers.stackPointer = input.readByte()
+        _registers.accumulator = input.readByte()
+        _registers.indexX = input.readByte()
+        _registers.indexY = input.readByte()
+        _registers.programCounter = input.readShort()
+        _processorStatus.toFlags(input.readByte())
+        _processorStatus.breakCommand = input.readBoolean()
+        _workCyclesLeft = input.readInt()
+        _pageBoundaryFlag = input.readBoolean()
+        _idle = input.readBoolean()
+        _nmiArmed = input.readBoolean()
         // Reserved slot — see saveState.
         input.readInt()
     }
