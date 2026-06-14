@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 66, 69, 153, 206.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 65, 66, 69, 153, 206.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -430,6 +430,49 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   - `Mapper64RealGameBootTest` boots *Klax*, *Skull & Crossbones*, and *Road Runner* for 600 frames (rendering enabled throughout, mapper switching banks, not stalled).
   - `Mapper64IrqDisarmTest` guards the split-screen IRQ: arm `latch=0x3F` → fires once → disarm `latch=0xFE` → assert NO fire within 240 scanlines. This is the regression for the "garbage 0s below the split" double-fire.
   - `Mapper64KlaxRegressionTest` (Mesen2 state diff) — at the title-screen frames (60, 240) Klax's CHR and palette are **byte-identical to Mesen2** and the CPU PC matches within the capture-scanline offset. After the IRQ disarm fix, Klax renders its **full title screen** (KLAX logo, START/OPTION/STUFF menu, Aztec borders, copyright) matching Mesen2 — previously the region below the scanline split was garbage. All five RAMBO-1 titles (Klax, Skull & Crossbones, Road Runner, Rolling Thunder, Toobin') render their title/attract screens cleanly. Remaining state-diff deltas (OAM, PPU control/mask) are the documented pre-NMI-vs-post-NMI capture offset, not a render bug.
+
+## Mapper 65 (Irem H3001)
+**Status:** Working (Added 2026-06-14, issue #133)
+
+- **Games:** *R-Type*, *Kickle Cubicle*, *Infiltrator*, *The Adventures of Rad Gravity*, *Metal Storm*, *Spartan X 2* (Famicom), *Spelunker II*. ~8-10 Irem H3001 titles in total. R-Type is named in the issue as the worked example but is absent from the local NO-INTRO library; the only mapper 65 game in the local library is *Spartan X 2 (Japan, translated)* (256 KB), and that's the regression oracle used in `Mapper65RegressionTest`. The other Irem H3001 titles in the library (Rad Gravity, Kickle Cubicle, Infiltrator, Metal Storm) all carry iNES headers labelled mapper 1 or mapper 4, not 65 — so they cannot be used as oracles here.
+- **What it is:** a 32 KB PRG window with 8 KB granularity at `$8000`/`$A000`/`$C000` (the `$E000-$FFFF` slot is fixed to the last bank), 8 × 1 KB CHR pages selected individually at `$B000`-`$B007`, software-controlled mirroring at `$9001` bit 7, and a 16-bit CPU-cycle-clocked down-counter for raster-timed IRQs.
+- **Register decode (mask 0xF000):** every write in `$8000-$FFFF` collapses to its 4 KB page base. Within `$9000` and `$B000` the low 3 bits of the address pick the sub-register.
+- **Register map (selected by `addr & 0xF000`, then sub-bits for `$9xxx` / `$Bxxx`):**
+  - `$8000` — 8 KB PRG bank at `$8000-$9FFF` (whole byte, modulo bank count).
+  - `$A000` — 8 KB PRG bank at `$A000-$BFFF`.
+  - `$C000` — 8 KB PRG bank at `$C000-$DFFF`.
+  - `$E000-$FFFF` — **fixed to the last 8 KB bank**; no register.
+  - `$9001` — bit 7 = 1 → Horizontal, 0 → Vertical. Other bits ignored (only bit 7 matters, per Mesen2). The iNES header drives the initial state until the game writes `$9001` for the first time.
+  - `$9003` — bit 7 enables the IRQ counter. Any write to `$9003` (regardless of value) also acknowledges a pending IRQ. Writing bit 7 = 0 disables.
+  - `$9004` — reloads the counter from the `$9005:$9006` reload value. Any write also acknowledges a pending IRQ. Does *not* enable the counter; that's `$9003`'s job.
+  - `$9005` / `$9006` — high / low byte of the 16-bit reload value.
+  - `$B000`-`$B007` — 8 × 1 KB CHR bank selects (low 3 bits of the address pick the register; bits 3-11 alias).
+  - All other addresses in `$9000`-`$9FFF` and `$D000`-`$FFFF` are silently ignored (no PRG bank-layout register despite what the nesdev wiki prose says — Mesen2 doesn't model one).
+- **PRG geometry (8 KB granularity, 4 pages):**
+  - `$8000-$9FFF`: switchable, selected by `$8000`.
+  - `$A000-$BFFF`: switchable, selected by `$A000`.
+  - `$C000-$DFFF`: switchable, selected by `$C000`.
+  - `$E000-$FFFF`: **fixed to the last 8 KB bank** (no register; same trick as Mapper 33 / Mapper 16 / Mapper 2).
+- **CHR geometry (1 KB granularity, 8 pages):**
+  - `$0000-$03FF`: page 0, via `$B000`.
+  - `$0400-$07FF`: page 1, via `$B001`.
+  - … through …
+  - `$1C00-$1FFF`: page 7, via `$B007`.
+  - The whole-byte value is the 1 KB bank index. `% chrRom.size` keeps oversized writes from indexing past the array.
+- **Power-on state** (per Mesen2 `InitMapper`): pages 0/1/2 = banks 0/1/0xFE (0xFE modulo'd at read time — for a 32-bank ROM it reads bank 30; for a 16-bank ROM it reads bank 0; for a 256-bank ROM it reads bank 0xFE exactly); page 3 = last bank. Mirroring = iNES header's mirroring bit.
+- **Mirroring:** `$9001` bit 7 — 1 = Horizontal, 0 = Vertical. Header is the initial value. There is no 1-screen mode.
+- **IRQ (the differentiator vs TC0190/MMC3):** a 16-bit down-counter at `$9005:$9006`. Decremented once per CPU (M2) cycle when the enable bit (`$9003` bit 7) is set. When the counter reaches zero, the IRQ line is asserted and the enable bit is **cleared automatically** — the chip is **one-shot**, no wrap. Games that want re-arming IRQs must write `$9004` (reload) and `$9003` bit 7 (re-enable) in that order. Both `$9003` and `$9004` writes also acknowledge a pending IRQ. This is the same CPU-cycle-clocked mapper IRQ pattern as Mapper 69 (FME-7) and Mapper 16 (Bandai FCG) — wired through `Mapper.tickCpuCycle()`.
+- **No PRG-RAM, no expansion audio.**
+- **Implementation notes:**
+  - **The GitHub issue spec is wrong on three points**: it claims (a) 4×8 KB switchable PRG slots — only 3 are switchable; `$E000` is fixed. (b) Header-driven mirroring — mirroring is software-controlled at `$9001`. (c) No IRQ — the chip has a 16-bit CPU-cycle-clocked IRQ. The Mesen2 source (`Core/NES/Mappers/Irem/IremH3001.h`) is the oracle (per the new-mapper skill — when the issue disagrees with Mesen2, Mesen2 wins). Implementing to the issue spec would have made `Mapper65RegressionTest` byte-mismatch Mesen2 on the first frame.
+  - The decode mask is `0xF000` (per Mesen2's `IremH3001_WriteMask`); the previous nesdev prose ("$9000 PRG bank layout" register) is silently ignored — those writes do nothing. The wiki prose and Mesen2 disagree; Mesen2 wins.
+  - `prgBankCount` is `coerceAtLeast(1)` so a malformed 0-PRG ROM (truncated dump) can't make the fixed-bank read at `$E000` compute a negative index.
+  - CHR RAM fallback for 0 KB-CHR dumps (same pattern as Mappers 2/3/7/11/33/34/71) so homebrew ROMs don't crash on PPU read.
+  - The IRQ counter is `Int` (32 bits) but the effective range is masked to 16 bits at read time — the chip's value never goes negative; on decrement it stops at 0 and disables.
+- **Verification:**
+  - `Mapper65Test` (24 tests) covers: header dispatch; **power-on PRG state (banks 0/1/0xFE mod 32/last)**; the three PRG registers at `$8000`/`$A000`/`$C000` (whole-byte select); `$E000-$FFFF` fixed to the last bank (no register changes it); PRG-modulo wrap; the **0xF000 decode mask** (aliasing to `$8042`, `$8FFF`, `$A123`, `$ACDE`, `$C001`, `$CFFF`); CHR register writes for all eight 1 KB pages; the **low-3-bits sub-decode** within `$B000`-`$BFFF` (aliasing to `$B105`, `$BA05`, `$BFFF`); CHR-RAM fallback; mirroring header default + `$9001` bit 7 + the 0xF000/0x00FF sub-decode for `$9001`; silent ignore of `$9000`/`$9002`/`$9007..$900F` and `$D000..$FFFF` writes; IRQ enable via `$9003` bit 7; **16-bit reload value from `$9005:$9006`**; counter decrements per `tickCpuCycle`; **fires on zero and auto-disables (one-shot, no wrap)**; acknowledge on `$9003` or `$9004` write; counter idle when `$9003` bit 7 is clear; `$9004` reload does not require a preceding `$9003` enable (the chip latches the reload value, then `$9003` arms it); save/load round-trip of all PRG/CHR/mirroring/IRQ state + CHR-RAM when present; `snapshot()` reports `prgBank0..2`, all 8 CHR banks, mirroring, and the full IRQ state.
+  - `Mapper65RegressionTest` (`@RequiresMesen2`) — boots *Spartan X 2 (Japan, translated)* on the real ROM. Asserts (1) the `$8000` PRG bank register actually pages during boot (the cheap "did the mapper do anything" guard from the Star Soldier recipe), and (2) Nestlin's render-output state (OAM, palette, PPUCTRL, PPUMASK) is byte-identical to the Mesen2 oracle at frame 120.
+
 
 ## Mapper 66 (GxROM)
 **Status:** Working (Added 2026-05-30, register decode fixed 2026-05-31)
