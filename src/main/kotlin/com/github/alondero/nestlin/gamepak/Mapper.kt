@@ -8,6 +8,15 @@ import java.io.DataOutput
 interface Mapper {
     fun cpuRead(address: Int): Byte
     fun cpuWrite(address: Int, value: Byte)
+
+    /**
+     * Side-effect-free CPU read for the Memory Editor (issue #168). The default
+     * delegates to [cpuRead], which is already pure for every mapper currently
+     * implemented (bank lookups + PRG/CHR-RAM reads have no read side effects).
+     * Mappers that grow a read-triggered side effect later (e.g. a read-clocked
+     * IRQ counter) override this to return the backing byte without the effect.
+     */
+    fun cpuPeek(address: Int): Byte = cpuRead(address)
     fun ppuRead(address: Int): Byte
     fun ppuWrite(address: Int, value: Byte)
     fun currentMirroring(): MirroringMode

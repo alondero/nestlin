@@ -185,6 +185,39 @@ class Memory : DmaPort {
         return result
     }
 
+    /**
+     * Side-effect-free read of any CPU bus address (issue #168, Memory Editor).
+     *
+     * Returns the value [get] would return for ordinary backed storage, but
+     * triggers NONE of the read side effects that make [get] unsafe to call from a
+     * debug viewer:
+     *  - PPU `$2002`/`$2007`: no vblank clear, no write-toggle reset, no VRAM increment;
+     *  - APU `$4015`: no IRQ acknowledge;
+     *  - controller `$4016`/`$4017`: no shift-register advance;
+     *  - and crucially [dataBus] is NOT updated, so an open-bus mapper read on the
+     *    real CPU path still sees the last genuine CPU access, not a peek.
+     *
+     * One consequence of not touching [dataBus]: for the few mappers that emulate
+     * open-bus reads (returning their own latched bus value), peek reports that
+     * stale latch rather than re-deriving the bus the way [get] does. Open-bus is
+     * undefined anyway, so a viewer showing the last-driven value is acceptable —
+     * but peek is exact only for genuinely backed addresses.
+     *
+     * Thread safety: callers (the Memory Editor's 10 Hz UI timer) read this
+     * unsynchronised while the emulation thread mutates the same storage. Single
+     * `ByteArray` element reads are atomic per the JVM spec; a cosmetic torn read
+     * across two bytes is acceptable for a human-facing display (see ADR-0001).
+     */
+    fun peek(address: Int): Byte = when (address) {
+        in 0x0000..0x1FFF -> internalRam[address % 0x800]
+        in 0x2000..0x3FFF -> ppuAddressedMemory.peek(address % 8)
+        0x4016 -> controller1.peek()
+        0x4017 -> controller2.peek()
+        in 0x4000..0x401F -> apu?.peekRegisterRead(address - 0x4000) ?: apuAddressedMemory[address - 0x4000]
+        in 0x4020..0xFFFF -> mapper?.cpuPeek(address) ?: 0
+        else -> 0
+    }
+
     operator fun get(address1: Int, address2: Int): Short {
         val addr1 = this[address1].toUnsignedInt()
         val addr2 = this[address2].toUnsignedInt() shl 8

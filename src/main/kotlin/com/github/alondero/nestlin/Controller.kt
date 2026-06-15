@@ -88,6 +88,24 @@ class Controller {
         return (0x40 or data).toByte()
     }
 
+    /**
+     * Side-effect-free read of the value a `$4016`/`$4017` read would currently
+     * return, WITHOUT advancing the shift register (issue #168, Memory Editor).
+     *
+     * The real [read] shifts [shiftRegister] right by one and feeds in a 1 — so
+     * calling it from a debug viewer would desync the game's controller polling.
+     * [peek] computes the same next bit (the A button while strobe is high, else
+     * the shift register's LSB) but leaves all state untouched.
+     */
+    fun peek(): Byte {
+        val data = if (strobe) {
+            buttons and Button.A.mask
+        } else {
+            shiftRegister and 1
+        }
+        return (0x40 or data).toByte()
+    }
+
     fun saveState(out: DataOutput) {
         out.writeInt(buttons)
         out.writeInt(shiftRegister)
