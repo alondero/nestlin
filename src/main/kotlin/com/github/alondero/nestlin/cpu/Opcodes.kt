@@ -168,7 +168,7 @@ class Opcodes {
         map[0x9a] = Opcode {
             it.apply {
                 it.registers.stackPointer = it.registers.indexX
-                it.workCyclesLeft += 2
+                it.workCyclesLeft = 2
             }
         } // TXS - Transfer X to Stack Pointer (doesn't set program counter)
         map[0xa8] = transfer ({it.accumulator}) { r, acc -> r.indexY = acc } //  TAY - Transfer A to Y
@@ -505,41 +505,41 @@ workCyclesLeft = 2
                 //  Relative addressing
                 registers.programCounter = (readByteAtPC() + registers.programCounter).toSignedShort()
 
-                workCyclesLeft++
+                workCyclesLeft = 3
                 if (hasCrossedPageBoundary(previousCounter, registers.programCounter)) pageBoundaryFlag = true
                 if ((previousCounter - 2).toSignedShort() == registers.programCounter) idle = true
             } else {
                 registers.programCounter++ // Increment the program counter
+                workCyclesLeft = 2
             }
-            workCyclesLeft += 2
         }
     }
 
     private fun storeOp(adr: (Cpu) -> Int, value: (Cpu) -> Byte) = Opcode {
         it.apply {
             memory[adr(it)] = value(it)
-            workCyclesLeft += 4
+            workCyclesLeft = 4
         }
     }
 
     private fun setOp(op: (Cpu) -> Unit) = Opcode {
         it.apply {
             op(it)
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
     private fun pushOp(value: (Cpu) -> Byte) = Opcode {
         it.apply {
             push(value(it))
-            workCyclesLeft += 3
+            workCyclesLeft = 3
         }
     }
 
     private fun clearOp(op: (Cpu) -> Unit) = Opcode {
         it.apply {
             op(it)
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -549,7 +549,7 @@ workCyclesLeft = 2
                 processorStatus.resolveZeroAndNegativeFlags(this)
             }
 
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -560,7 +560,7 @@ workCyclesLeft = 2
                 processorStatus.resolveZeroAndNegativeFlags(this)
             }
 
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -575,7 +575,7 @@ workCyclesLeft = 2
                 carry = register.toUnsignedInt() >= memValue.toUnsignedInt()
             }
 
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -585,7 +585,7 @@ workCyclesLeft = 2
                 processorStatus.resolveZeroAndNegativeFlags(this)
                 transfer(registers, this)
             }
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -604,7 +604,7 @@ workCyclesLeft = 2
                     ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
 
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -623,7 +623,7 @@ workCyclesLeft = 2
                     ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
 
-            workCyclesLeft += 6
+            workCyclesLeft = 6
         }
     }
 
@@ -637,7 +637,7 @@ workCyclesLeft = 2
             memory[address] = shiftedResult
             processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
 
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -651,7 +651,7 @@ workCyclesLeft = 2
             memory[address] = shiftedResult
             processorStatus.resolveZeroAndNegativeFlags(shiftedResult)
 
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -666,7 +666,7 @@ workCyclesLeft = 2
             memory[address] = rotatedResult
             processorStatus.resolveZeroAndNegativeFlags(rotatedResult)
 
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -680,7 +680,7 @@ workCyclesLeft = 2
             memory[address] = (rotatedResult and 0xFF).toSignedByte()
             processorStatus.resolveZeroAndNegativeFlags((rotatedResult and 0xFF).toSignedByte())
 
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
@@ -692,7 +692,7 @@ workCyclesLeft = 2
             memory[address] = result
             processorStatus.resolveZeroAndNegativeFlags(result)
 
-            workCyclesLeft += 6
+            workCyclesLeft = 6
         }
     }
 
@@ -704,7 +704,7 @@ workCyclesLeft = 2
                 processorStatus.overflow = (this and 0b01000000) != 0
             }
 
-            workCyclesLeft += 3
+            workCyclesLeft = 3
         }
     }
 
@@ -753,14 +753,14 @@ workCyclesLeft = 2
             registers.accumulator = value
             registers.indexX = value
             processorStatus.resolveZeroAndNegativeFlags(value)
-            workCyclesLeft += 2
+            workCyclesLeft = 2
         }
     }
 
     private fun sax(addrFn: (Cpu) -> Int) = Opcode {
         it.apply {
             memory[addrFn(it)] = (registers.accumulator.toUnsignedInt() and registers.indexX.toUnsignedInt()).toSignedByte()
-            workCyclesLeft += 4
+            workCyclesLeft = 4
         }
     }
 
@@ -768,7 +768,7 @@ workCyclesLeft = 2
         it.apply {
             val value = (registers.accumulator.toUnsignedInt() and registers.indexX.toUnsignedInt() and 0x07).toSignedByte()
             memory[addrFn(it)] = value
-            workCyclesLeft += 4
+            workCyclesLeft = 4
         }
     }
 
@@ -819,7 +819,7 @@ workCyclesLeft = 2
             registers.indexX = value
             registers.stackPointer = value
             processorStatus.resolveZeroAndNegativeFlags(value)
-            workCyclesLeft += 4
+            workCyclesLeft = 4
         }
     }
 
@@ -832,7 +832,7 @@ workCyclesLeft = 2
             processorStatus.carry = comparison >= 0
             processorStatus.zero = comparison == 0
             processorStatus.negative = comparison.toSignedByte().isBitSet(7)
-            workCyclesLeft += 6
+            workCyclesLeft = 6
         }
     }
 
@@ -849,7 +849,7 @@ workCyclesLeft = 2
             processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor result.toUnsignedInt()) and 0x80 == 0x80) &&
                     ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-            workCyclesLeft += 6
+            workCyclesLeft = 6
         }
     }
 
@@ -863,7 +863,7 @@ workCyclesLeft = 2
             processorStatus.carry = newCarry
             registers.accumulator = (registers.accumulator.toUnsignedInt() and rotated.toUnsignedInt()).toSignedByte()
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-            workCyclesLeft += 5
+            workCyclesLeft = 5
         }
     }
 
@@ -883,7 +883,7 @@ workCyclesLeft = 2
             processorStatus.overflow = ((currentAccumulator.toUnsignedInt() xor rotated.toUnsignedInt()) and 0x80 == 0x00) &&
                     ((currentAccumulator.toUnsignedInt() xor registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-            workCyclesLeft += 5
+            workCyclesLeft = 5
         }
     }
 
@@ -896,7 +896,7 @@ workCyclesLeft = 2
             memory[address] = shifted
             registers.accumulator = (registers.accumulator.toUnsignedInt() or shifted.toUnsignedInt()).toSignedByte()
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-            workCyclesLeft += 5
+            workCyclesLeft = 5
         }
     }
 
@@ -909,7 +909,7 @@ workCyclesLeft = 2
             memory[address] = shifted
             registers.accumulator = (registers.accumulator.toUnsignedInt() xor shifted.toUnsignedInt()).toSignedByte()
             processorStatus.resolveZeroAndNegativeFlags(registers.accumulator)
-            workCyclesLeft += 5
+            workCyclesLeft = 5
         }
     }
 
@@ -946,7 +946,7 @@ workCyclesLeft = 2
                 idle = true
             }
 
-            workCyclesLeft += 3
+            workCyclesLeft = 3
         }
     }
 
