@@ -123,6 +123,30 @@ class PpuAddressedMemory {
         objectAttributeMemory.loadState(input)
     }
 
+    /**
+     * Side-effect-free read of a PPU register (issue #168, Memory Editor).
+     *
+     * Mirrors the value [get] would return but triggers NONE of the read side
+     * effects the real PPU has:
+     *  - `$2002` does NOT clear the vblank flag, the NMI latch, or the write toggle;
+     *  - `$2007` returns the read buffer ([data]) WITHOUT incrementing the VRAM
+     *    address (and without the palette fast-path, since that too would read
+     *    through to backing VRAM).
+     *
+     * [register] is the low 3 bits of the CPU address (`$2000-$2007`, mirrored
+     * every 8 bytes through `$3FFF`).
+     */
+    fun peek(register: Int): Byte = when (register and 7) {
+        0 -> controller.register
+        1 -> mask.register
+        2 -> status.register
+        3 -> oamAddress
+        4 -> objectAttributeMemory[oamAddress.toUnsignedInt()]
+        5 -> scroll
+        6 -> address
+        else /*7*/ -> data
+    }
+
     operator fun get(addr: Int): Byte {
         return when (addr) {
             0 -> controller.register

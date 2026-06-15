@@ -82,6 +82,15 @@ class Nestlin {
 
     fun ppuMask(): Int = memory.ppuAddressedMemory.mask.register.toUnsignedInt()
 
+    /**
+     * Side-effect-free read of a CPU bus address for the Memory Editor (issue #168).
+     * Delegates to [Memory.peek]; the same [memory] instance is reused across ROM
+     * loads and resets, so a viewer holding this reference keeps working without
+     * needing to reopen. See [Memory.peek] for the side-effect and thread-safety
+     * contract.
+     */
+    fun peekMemory(address: Int): Byte = memory.peek(address)
+
     fun powerReset() {
         cpu.reset()
         applyRegion()
