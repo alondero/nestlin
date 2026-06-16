@@ -229,6 +229,34 @@ class Apu(private val dmaPort: DmaPort) {
         }
     }
 
+    /**
+     * Side-effect-free read of an APU register (issue #168, Memory Editor).
+     *
+     * `$4015` is the only APU register with a read side effect: [handleStatusRead]
+     * clears the frame-counter IRQ and the DMC IRQ. [peekRegisterRead] computes the
+     * identical status byte but leaves both IRQ flags pending, so a debug viewer
+     * polling `$4015` can never swallow an interrupt the game is waiting on. Every
+     * other register is plain backing storage, read straight from [apuMemory].
+     */
+    fun peekRegisterRead(address: Int): Byte = when (address) {
+        0x15 -> peekStatusRead()
+        else -> apuMemory[address]
+    }
+
+    private fun peekStatusRead(): Byte {
+        var status: Byte = 0
+        if (pulse1.getLengthCounterValue() > 0) status = status.setBit(0)
+        if (pulse2.getLengthCounterValue() > 0) status = status.setBit(1)
+        if (triangle.getLengthCounterValue() > 0) status = status.setBit(2)
+        if (noise.getLengthCounterValue() > 0) status = status.setBit(3)
+        if (dmc.getBytesRemaining() > 0) status = status.setBit(4)
+        if (frameIrq) status = status.setBit(6)
+        if (dmc.irqPending) status = status.setBit(7)
+        // Deliberately NOT clearing frameIrq / dmc IRQ — that is the side effect
+        // peek exists to avoid.
+        return status
+    }
+
     private fun handleStatusWrite(value: Byte) {
         apuMemory.status = value
 

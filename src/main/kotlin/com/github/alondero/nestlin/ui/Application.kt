@@ -181,6 +181,13 @@ class NestlinApplication : FrameListener, Application() {
     // Load Recent submenu
     private val recentRomsMenu = Menu("Load Recent")
 
+    // Debug → Memory Editor (issue #168). The menu item is greyed out until a ROM
+    // is loaded; the window is created lazily on first open and reused thereafter.
+    // The same MemoryEditorWindow keeps refreshing across ROM loads/resets because
+    // it peeks through the long-lived Nestlin.memory instance.
+    private var memoryEditorMenuItem: MenuItem? = null
+    private var memoryEditorWindow: MemoryEditorWindow? = null
+
     // --- Movie record/playback state (issue #123) ---
     //
     // Exactly one of [liveRecorder] / [livePlayer] is non-null when a movie session is
@@ -354,6 +361,19 @@ class NestlinApplication : FrameListener, Application() {
             stopMovieItem.setOnAction { handleStopMovie() }
             movieMenu.items.addAll(startRecordItem, playMovieItem, stopMovieItem)
             menuBar.menus.add(movieMenu)
+
+            // Debug menu (issue #168). A single "Memory Editor" item (Ctrl+M) that
+            // opens the live hex viewer. Disabled until a ROM is loaded — peeking an
+            // empty bus is useless. updateDebugMenu() keeps the disable state in sync
+            // on every ROM change (alongside updateSlotMenu / updateTitle).
+            val debugMenu = javafx.scene.control.Menu("Debug")
+            val memoryEditorItem = MenuItem("Memory Editor")
+            memoryEditorItem.accelerator = javafx.scene.input.KeyCombination.keyCombination("Ctrl+M")
+            memoryEditorItem.setOnAction { handleOpenMemoryEditor() }
+            memoryEditorItem.isDisable = currentRomPath == null
+            memoryEditorMenuItem = memoryEditorItem
+            debugMenu.items.add(memoryEditorItem)
+            menuBar.menus.add(debugMenu)
 
             // Create layout with menu bar and the canvas holder. VBox.setVgrow lets the
             // holder expand to fill remaining vertical space in fullscreen / Fit mode.
@@ -665,6 +685,7 @@ class NestlinApplication : FrameListener, Application() {
                 Platform.runLater {
                     updateTitle()
                     updateSlotMenu()
+                    updateDebugMenu()
                 }
                 startEmulation()
             }
@@ -750,6 +771,7 @@ class NestlinApplication : FrameListener, Application() {
             updateTitle()
             // Refresh the slot menu: new ROM = new CRC = different slot files.
             updateSlotMenu()
+            updateDebugMenu()
             EmulatorConfig.addRecentRom(romPath)
             updateRecentMenu(EmulatorConfig.getRecentRoms())
             startEmulation()
@@ -760,6 +782,33 @@ class NestlinApplication : FrameListener, Application() {
     private fun clearPauseState() {
         nestlin.config.paused = false
         pauseMenuItem?.isSelected = false
+    }
+
+    /**
+     * Open the Memory Editor (issue #168), or focus it if already open. Lazily
+     * creates one [MemoryEditorWindow] and reuses it: the window peeks through the
+     * long-lived [Nestlin.memory], so it keeps refreshing across ROM loads and
+     * resets without needing to be recreated. The showing-property listener nulls
+     * our reference when the user closes the window so the next open builds fresh.
+     */
+    private fun handleOpenMemoryEditor() {
+        if (currentRomPath == null) return
+        val existing = memoryEditorWindow
+        if (existing != null) {
+            existing.show()
+            return
+        }
+        val window = MemoryEditorWindow { addr -> nestlin.peekMemory(addr) }
+        memoryEditorWindow = window
+        window.stage.showingProperty().addListener { _, _, showing ->
+            if (!showing) memoryEditorWindow = null
+        }
+        window.show()
+    }
+
+    /** Grey out the Debug → Memory Editor item when no ROM is loaded. */
+    private fun updateDebugMenu() {
+        memoryEditorMenuItem?.isDisable = currentRomPath == null
     }
 
     private fun setScaleMode(mode: ScaleMode) {
@@ -852,6 +901,7 @@ class NestlinApplication : FrameListener, Application() {
         // the new ROM's CRC. Without this, a user loading ROM B would see
         // ROM A's slot timestamps until they saved into a slot of their own.
         updateSlotMenu()
+        updateDebugMenu()
         startEmulation()
     }
 

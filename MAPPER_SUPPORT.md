@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 66, 69, 153, 206.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 65, 66, 69, 153, 206.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -243,6 +243,99 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
 
 ---
 
+## Mapper 19 (Namco 163 / N163)
+**Status:** Working (Added 2026-06-12, issue #59)
+
+- **Games:** *Kaijuu Monogatari (Japan)* (the Atlus-published translated
+  English title reads as "Megami Tensei II" in the menu) is the canonical
+  N163 boot oracle on Adam's machine. Other N163 titles (e.g.
+  *Yume Penguin Monogatari*, *Star Wars (Namco)*, *Mappy-Land*'s Japanese
+  variant) load the same mapper.
+- **Chip:** Namco 163. MMC3-class banking (8KB PRG, 1KB CHR) plus an
+  8-channel wavetable synth on the same die. The 3 audio register
+  shapes — `$F800` address port, `$4800-$4FFF` data port, and
+  `$E000` bit 6 sound-enable — live on the audio class, not the mapper;
+  the mapper's CPU-read/write decode dispatches into it.
+- **PRG banking:** `$E000` bits 0-5 select bank 0 at `$8000` (8KB units,
+  modulo PRG size), `$E800` bits 0-5 select bank 1 at `$A000`, and
+  `$F000` bits 0-5 select bank 2 at `$C000`. The last 8KB bank is fixed
+  at `$E000` and holds the reset/NMI/IRQ vectors. With 16 banks, the
+  register value is masked to 4 bits in practice; the snapshot reports
+  the raw register byte (other mappers' convention) which can read up
+  to 0x3F when the game writes 8KB-page addresses into a smaller chip.
+- **CHR banking:** `$8000-$9FFF` and `$A000-$BFFF` decode 8 standard
+  1KB CHR banks. `$C000-$DFFF` extends with 4 more 1KB banks (the
+  NES 2.0 "extra CHR" range); a high bit (0x100) on the index
+  flips that window to **nametable** mode (used by the 4-screen
+  mirroring trick). `$E800` bits 0-1 select between "CHR" and
+  "nametable" mode for the upper half, with `$E800` bit 0 toggling
+  the low half the same way — same trick the Nesdev wiki describes
+  for the "lowChrNtMode" / "highChrNtMode" flags.
+- **PRG-RAM:** 4 × 2KB pages at `$6000-$7FFF`, with a per-page
+  write-protect mask (`$F800` bits 0-3) and a global write-enable
+  (bit 6 of `$F800`).
+- **IRQ:** 16-bit counter at `$5000`/`$5800`; bit 15 of the counter
+  enables, low 15 bits count down to `0x7FFF` (the spec's "0x7FFF on
+  enable" trap). Both CPU-write addresses are the ack — a write to
+  `$5000` OR `$5800` clears the pending IRQ (no separate enable
+  address; the counter-15 bit IS the enable).
+- **Expansion audio (the headline feature of #59):** Eight wavetable
+  voices, all sharing one mixed output. The chip's 128-byte internal
+  RAM serves two purposes: `$00-$3F` is wavetable sample data
+  (4-bit packed: low nibble = even position, high nibble = odd),
+  `$40-$7F` is 8 channel register sets, 8 bytes each
+  (frequency, phase, frequency/2+length, phase/2, wave address,
+  volume). Bits 4-6 of byte `$7F` (channel 8's volume byte) set the
+  **active channel count** — value 0 means "only channel 8",
+  value 7 means "all 8 channels". The chip round-robins through the
+  active channels (7, 6, 5, …) with one update per 15 CPU cycles,
+  reading the 4-bit sample at `(phase >> 16) + waveAddress`, biasing
+  to ±7, multiplying by the 4-bit volume, and storing in a per-channel
+  output latch. `currentSample()` sums the active channels' latches,
+  divides by `count + 1`, and normalizes by /120 to fit a [-1, +1]
+  range. The APU mixer's `EXPANSION_GAIN=0.15` then puts a fullscale
+  N163 channel at roughly the same level as a VRC6 voice.
+  Registered with the expansion-audio mixer (issue #50) at
+  cartridge load via `expansionAudioChannels() = listOf(audio)`.
+- **Implementation:** `Mapper19` in `gamepak/Mapper19.kt` and
+  `Namco163Audio` in `gamepak/Namco163Audio.kt`. The mapper is a
+  thin dispatcher; the audio class owns the 128-byte RAM, the 15-cycle
+  update cadence, and the round-robin `currentChannel` index.
+  `saveStateVersion = 2` (bumped from default 1) since the audio
+  state is non-trivial.
+- **Verification:**
+  - `Mapper19Test` covers dispatch from the iNES header
+  (mapper 19 → Mapper19), default PRG state (banks 0/0/`count-1` at
+  `$8000`/`$A000`/`$C000`, last bank at `$E000`), 8KB PRG banking
+  with modulo wrap, all 12 1KB CHR windows defaulting to bank 0,
+  the `$C000-$DFFF` extra CHR extension with the 0x100 nametable
+  bit, `$E800` low/high nametable-mode flags, CHR-RAM fallback for
+  0KB-CHR dumps, the 4× 2KB PRG-RAM window with per-page
+  write-protect, IRQ counter load / enable / fire / ack, save/load
+  round-trip with version-byte rejection, and `snapshot()` reporting
+  of all banks + the IRQ counter / pending flag.
+  - `Namco163AudioTest` covers the audio engine directly: data port
+  cursor + auto-increment, 128-byte address wrap, sound-enable
+  bit 6 of `$E000`, the wave-length formula (`256 - (reg & 0xFC)`),
+  the 15-cycle update cadence, the round-robin sequence (7 → 6 →
+  5 → … → wrap), the channel-7 volume / active-count byte aliasing
+  (the only shared byte in the whole 128-byte map), the
+  4-bit bipolar sample (`rawNibble - 8`, then × volume), the
+  `currentSample` mix formula (`sum / (n+1) / 120`), and
+  save/load round-trip.
+  - `Mapper19RegressionTest` (Mesen-comparison group) — boots
+  *Kaijuu Monogatari* on the real ROM. Asserts (1) the N163 PRG
+  bank register actually pages during the first 60 frames (proves
+  the `$E000`/`$E800`/`$F000` decode is wired, same cheap guard as
+  the other mapper tests), and (2) Nestlin's render output
+  (OAM, palette, PPUCTRL, PPUMASK) is byte-identical to Mesen2's
+  at frame 60. The full snapshot + diff goes to
+  `build/reports/state-diffs/kaijuu-monogatari-frame-60/`. The ROM
+  is resolved from the canonical NO-INTRO path on Adam's machine,
+  override with `NESTLIN_KAIJUU_MONOGATARI_ROM`.
+
+---
+
 ## Mapper 24 (Konami VRC6a)
 **Status:** Working (Added 2026-06-11, issue #58)
 
@@ -430,6 +523,49 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   - `Mapper64RealGameBootTest` boots *Klax*, *Skull & Crossbones*, and *Road Runner* for 600 frames (rendering enabled throughout, mapper switching banks, not stalled).
   - `Mapper64IrqDisarmTest` guards the split-screen IRQ: arm `latch=0x3F` → fires once → disarm `latch=0xFE` → assert NO fire within 240 scanlines. This is the regression for the "garbage 0s below the split" double-fire.
   - `Mapper64KlaxRegressionTest` (Mesen2 state diff) — at the title-screen frames (60, 240) Klax's CHR and palette are **byte-identical to Mesen2** and the CPU PC matches within the capture-scanline offset. After the IRQ disarm fix, Klax renders its **full title screen** (KLAX logo, START/OPTION/STUFF menu, Aztec borders, copyright) matching Mesen2 — previously the region below the scanline split was garbage. All five RAMBO-1 titles (Klax, Skull & Crossbones, Road Runner, Rolling Thunder, Toobin') render their title/attract screens cleanly. Remaining state-diff deltas (OAM, PPU control/mask) are the documented pre-NMI-vs-post-NMI capture offset, not a render bug.
+
+## Mapper 65 (Irem H3001)
+**Status:** Working (Added 2026-06-14, issue #133)
+
+- **Games:** *R-Type*, *Kickle Cubicle*, *Infiltrator*, *The Adventures of Rad Gravity*, *Metal Storm*, *Spartan X 2* (Famicom), *Spelunker II*. ~8-10 Irem H3001 titles in total. R-Type is named in the issue as the worked example but is absent from the local NO-INTRO library; the only mapper 65 game in the local library is *Spartan X 2 (Japan, translated)* (256 KB), and that's the regression oracle used in `Mapper65RegressionTest`. The other Irem H3001 titles in the library (Rad Gravity, Kickle Cubicle, Infiltrator, Metal Storm) all carry iNES headers labelled mapper 1 or mapper 4, not 65 — so they cannot be used as oracles here.
+- **What it is:** a 32 KB PRG window with 8 KB granularity at `$8000`/`$A000`/`$C000` (the `$E000-$FFFF` slot is fixed to the last bank), 8 × 1 KB CHR pages selected individually at `$B000`-`$B007`, software-controlled mirroring at `$9001` bit 7, and a 16-bit CPU-cycle-clocked down-counter for raster-timed IRQs.
+- **Register decode (mask 0xF000):** every write in `$8000-$FFFF` collapses to its 4 KB page base. Within `$9000` and `$B000` the low 3 bits of the address pick the sub-register.
+- **Register map (selected by `addr & 0xF000`, then sub-bits for `$9xxx` / `$Bxxx`):**
+  - `$8000` — 8 KB PRG bank at `$8000-$9FFF` (whole byte, modulo bank count).
+  - `$A000` — 8 KB PRG bank at `$A000-$BFFF`.
+  - `$C000` — 8 KB PRG bank at `$C000-$DFFF`.
+  - `$E000-$FFFF` — **fixed to the last 8 KB bank**; no register.
+  - `$9001` — bit 7 = 1 → Horizontal, 0 → Vertical. Other bits ignored (only bit 7 matters, per Mesen2). The iNES header drives the initial state until the game writes `$9001` for the first time.
+  - `$9003` — bit 7 enables the IRQ counter. Any write to `$9003` (regardless of value) also acknowledges a pending IRQ. Writing bit 7 = 0 disables.
+  - `$9004` — reloads the counter from the `$9005:$9006` reload value. Any write also acknowledges a pending IRQ. Does *not* enable the counter; that's `$9003`'s job.
+  - `$9005` / `$9006` — high / low byte of the 16-bit reload value.
+  - `$B000`-`$B007` — 8 × 1 KB CHR bank selects (low 3 bits of the address pick the register; bits 3-11 alias).
+  - All other addresses in `$9000`-`$9FFF` and `$D000`-`$FFFF` are silently ignored (no PRG bank-layout register despite what the nesdev wiki prose says — Mesen2 doesn't model one).
+- **PRG geometry (8 KB granularity, 4 pages):**
+  - `$8000-$9FFF`: switchable, selected by `$8000`.
+  - `$A000-$BFFF`: switchable, selected by `$A000`.
+  - `$C000-$DFFF`: switchable, selected by `$C000`.
+  - `$E000-$FFFF`: **fixed to the last 8 KB bank** (no register; same trick as Mapper 33 / Mapper 16 / Mapper 2).
+- **CHR geometry (1 KB granularity, 8 pages):**
+  - `$0000-$03FF`: page 0, via `$B000`.
+  - `$0400-$07FF`: page 1, via `$B001`.
+  - … through …
+  - `$1C00-$1FFF`: page 7, via `$B007`.
+  - The whole-byte value is the 1 KB bank index. `% chrRom.size` keeps oversized writes from indexing past the array.
+- **Power-on state** (per Mesen2 `InitMapper`): pages 0/1/2 = banks 0/1/0xFE (0xFE modulo'd at read time — for a 32-bank ROM it reads bank 30; for a 16-bank ROM it reads bank 0; for a 256-bank ROM it reads bank 0xFE exactly); page 3 = last bank. Mirroring = iNES header's mirroring bit.
+- **Mirroring:** `$9001` bit 7 — 1 = Horizontal, 0 = Vertical. Header is the initial value. There is no 1-screen mode.
+- **IRQ (the differentiator vs TC0190/MMC3):** a 16-bit down-counter at `$9005:$9006`. Decremented once per CPU (M2) cycle when the enable bit (`$9003` bit 7) is set. When the counter reaches zero, the IRQ line is asserted and the enable bit is **cleared automatically** — the chip is **one-shot**, no wrap. Games that want re-arming IRQs must write `$9004` (reload) and `$9003` bit 7 (re-enable) in that order. Both `$9003` and `$9004` writes also acknowledge a pending IRQ. This is the same CPU-cycle-clocked mapper IRQ pattern as Mapper 69 (FME-7) and Mapper 16 (Bandai FCG) — wired through `Mapper.tickCpuCycle()`.
+- **No PRG-RAM, no expansion audio.**
+- **Implementation notes:**
+  - **The GitHub issue spec is wrong on three points**: it claims (a) 4×8 KB switchable PRG slots — only 3 are switchable; `$E000` is fixed. (b) Header-driven mirroring — mirroring is software-controlled at `$9001`. (c) No IRQ — the chip has a 16-bit CPU-cycle-clocked IRQ. The Mesen2 source (`Core/NES/Mappers/Irem/IremH3001.h`) is the oracle (per the new-mapper skill — when the issue disagrees with Mesen2, Mesen2 wins). Implementing to the issue spec would have made `Mapper65RegressionTest` byte-mismatch Mesen2 on the first frame.
+  - The decode mask is `0xF000` (per Mesen2's `IremH3001_WriteMask`); the previous nesdev prose ("$9000 PRG bank layout" register) is silently ignored — those writes do nothing. The wiki prose and Mesen2 disagree; Mesen2 wins.
+  - `prgBankCount` is `coerceAtLeast(1)` so a malformed 0-PRG ROM (truncated dump) can't make the fixed-bank read at `$E000` compute a negative index.
+  - CHR RAM fallback for 0 KB-CHR dumps (same pattern as Mappers 2/3/7/11/33/34/71) so homebrew ROMs don't crash on PPU read.
+  - The IRQ counter is `Int` (32 bits) but the effective range is masked to 16 bits at read time — the chip's value never goes negative; on decrement it stops at 0 and disables.
+- **Verification:**
+  - `Mapper65Test` (24 tests) covers: header dispatch; **power-on PRG state (banks 0/1/0xFE mod 32/last)**; the three PRG registers at `$8000`/`$A000`/`$C000` (whole-byte select); `$E000-$FFFF` fixed to the last bank (no register changes it); PRG-modulo wrap; the **0xF000 decode mask** (aliasing to `$8042`, `$8FFF`, `$A123`, `$ACDE`, `$C001`, `$CFFF`); CHR register writes for all eight 1 KB pages; the **low-3-bits sub-decode** within `$B000`-`$BFFF` (aliasing to `$B105`, `$BA05`, `$BFFF`); CHR-RAM fallback; mirroring header default + `$9001` bit 7 + the 0xF000/0x00FF sub-decode for `$9001`; silent ignore of `$9000`/`$9002`/`$9007..$900F` and `$D000..$FFFF` writes; IRQ enable via `$9003` bit 7; **16-bit reload value from `$9005:$9006`**; counter decrements per `tickCpuCycle`; **fires on zero and auto-disables (one-shot, no wrap)**; acknowledge on `$9003` or `$9004` write; counter idle when `$9003` bit 7 is clear; `$9004` reload does not require a preceding `$9003` enable (the chip latches the reload value, then `$9003` arms it); save/load round-trip of all PRG/CHR/mirroring/IRQ state + CHR-RAM when present; `snapshot()` reports `prgBank0..2`, all 8 CHR banks, mirroring, and the full IRQ state.
+  - `Mapper65RegressionTest` (`@RequiresMesen2`) — boots *Spartan X 2 (Japan, translated)* on the real ROM. Asserts (1) the `$8000` PRG bank register actually pages during boot (the cheap "did the mapper do anything" guard from the Star Soldier recipe), and (2) Nestlin's render-output state (OAM, palette, PPUCTRL, PPUMASK) is byte-identical to the Mesen2 oracle at frame 120.
+
 
 ## Mapper 66 (GxROM)
 **Status:** Working (Added 2026-05-30, register decode fixed 2026-05-31)
