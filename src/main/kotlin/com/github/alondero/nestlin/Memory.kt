@@ -218,6 +218,37 @@ class Memory : DmaPort {
         else -> 0
     }
 
+    /**
+     * Write a byte to any CPU bus address from the Memory Editor (issue #170).
+     *
+     * Unlike [peek] (deliberately side-effect-free), poke is a *real* write: it
+     * delegates to [set] so the running game sees the new value on its very next
+     * read, and so genuine side effects fire — including mapper register writes
+     * that trigger bank switches, which power users rely on for experimentation.
+     *
+     * TWO addresses are blacklisted and silently dropped, because a hand-poked
+     * value there is never what the user means and the effect is catastrophic:
+     *  - `$4014` (OAM DMA): a write would halt the CPU for 513 cycles and overwrite
+     *    all 256 bytes of OAM from the page named by [value] — turning a stray
+     *    keystroke into a corrupted sprite table plus a timing desync.
+     *  - `$4016` (controller strobe): a write would reset both controllers' shift
+     *    registers, desyncing the game's input polling mid-frame.
+     *
+     * Note `$4017` is NOT blacklisted — a write there is the APU frame-counter
+     * register, a legitimate (if niche) thing to poke. Only the two registers
+     * whose *write* side effect would wreck the session are dropped; see ADR-0001
+     * and the CONTEXT.md "poke" glossary entry.
+     *
+     * Thread safety mirrors [peek]: callers are the Memory Editor's JavaFX timer /
+     * input handlers, writing unsynchronised while the emulation thread runs. A
+     * single byte store is atomic per the JVM spec, which is sufficient for a
+     * human-driven debug poke (ADR-0001).
+     */
+    fun poke(address: Int, value: Byte) {
+        if (address == 0x4014 || address == 0x4016) return
+        this[address] = value
+    }
+
     operator fun get(address1: Int, address2: Int): Short {
         val addr1 = this[address1].toUnsignedInt()
         val addr2 = this[address2].toUnsignedInt() shl 8

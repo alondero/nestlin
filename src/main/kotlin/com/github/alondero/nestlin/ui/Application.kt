@@ -802,7 +802,10 @@ class NestlinApplication : FrameListener, Application() {
             existing.show()
             return
         }
-        val window = MemoryEditorWindow { addr -> nestlin.peekMemory(addr) }
+        val window = MemoryEditorWindow(
+            peek = { addr -> nestlin.peekMemory(addr) },
+            poke = { addr, value -> nestlin.pokeMemory(addr, value) },
+        )
         memoryEditorWindow = window
         window.stage.showingProperty().addListener { _, _, showing ->
             if (!showing) memoryEditorWindow = null

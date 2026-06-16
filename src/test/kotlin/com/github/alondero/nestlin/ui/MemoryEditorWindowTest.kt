@@ -1,7 +1,9 @@
 package com.github.alondero.nestlin.ui
 
+import com.natpryce.hamkrest.absent
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
+import javafx.scene.input.KeyCode
 import org.junit.jupiter.api.Test
 
 /**
@@ -37,5 +39,28 @@ class MemoryEditorWindowTest {
         MemoryEditorWindow.formatRow(rowIndex = 0xFFF, peek = peek) // last row: $FFF0..$FFFF
 
         assertThat(peeked, equalTo((0xFFF0..0xFFFF).toList()))
+    }
+
+    // ---- hexDigit key mapping (issue #170) ----------------------------------
+
+    @Test
+    fun `hexDigit maps number-row and numpad digits to their value`() {
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.DIGIT0), equalTo(0))
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.DIGIT9), equalTo(9))
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.NUMPAD0), equalTo(0))
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.NUMPAD9), equalTo(9))
+    }
+
+    @Test
+    fun `hexDigit maps A-F to 10-15`() {
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.A), equalTo(0xA))
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.F), equalTo(0xF))
+    }
+
+    @Test
+    fun `hexDigit returns null for non-hex keys`() {
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.G), absent())
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.LEFT), absent())
+        assertThat(MemoryEditorWindow.hexDigit(KeyCode.ENTER), absent())
     }
 }

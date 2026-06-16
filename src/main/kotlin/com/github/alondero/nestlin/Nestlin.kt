@@ -91,6 +91,14 @@ class Nestlin {
      */
     fun peekMemory(address: Int): Byte = memory.peek(address)
 
+    /**
+     * Write a byte to a CPU bus address from the Memory Editor (issue #170).
+     * Delegates to [Memory.poke], which applies full game-visible side effects
+     * (the running game sees the value on its next read) except for the
+     * blacklisted `$4014`/`$4016` I/O registers. See [Memory.poke].
+     */
+    fun pokeMemory(address: Int, value: Byte) = memory.poke(address, value)
+
     fun powerReset() {
         cpu.reset()
         applyRegion()

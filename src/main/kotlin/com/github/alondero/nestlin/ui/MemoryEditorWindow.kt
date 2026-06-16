@@ -10,6 +10,9 @@ import javafx.scene.Node
 import javafx.scene.Scene
 import javafx.scene.control.ListCell
 import javafx.scene.control.ListView
+import javafx.scene.input.KeyCode
+import javafx.scene.input.KeyEvent
+import javafx.scene.input.MouseEvent
 import javafx.scene.layout.HBox
 import javafx.scene.layout.StackPane
 import javafx.scene.text.Font
@@ -48,8 +51,24 @@ import java.util.TreeSet
  * `previousVisibleBytes` is also dropped so the diff restarts from a clean
  * baseline — without that, cells that happened to share the same value across
  * the reset would never flash.
+ *
+ * **Click-to-edit (issue #170).** Clicking a byte cell selects it (drawn with a
+ * border); typing two hex digits overwrites the byte via [poke] (the game sees
+ * it on its next read); arrow keys move the selection. All the editing *rules*
+ * live in the pure [HexEditState] — this window only translates JavaFX mouse /
+ * key events into calls on it and renders its state. A completed edit's natural
+ * change-highlight (the next tick's diff flashes the poked cell green/blue) is
+ * the visual confirmation, so no special post-poke flash is needed.
  */
-class MemoryEditorWindow(private val peek: (Int) -> Byte) {
+class MemoryEditorWindow(
+    private val peek: (Int) -> Byte,
+    private val poke: (Int, Byte) -> Unit,
+) {
+
+    // The pure selection / pending-nibble / navigation state machine (issue #170).
+    // Mutated only on the JavaFX thread (mouse + key handlers); the cell factory
+    // reads it to render the selection border and any partial edit.
+    private val editState = HexEditState()
 
     val stage = Stage()
 
@@ -87,11 +106,18 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
                         // children inside the HBox use the monospaced font —
                         // they don't inherit the cell's font automatically.
                         text = null
-                        graphic = renderRow(item, peek, ::currentDirection, ::currentAge, monoFont)
+                        graphic = renderRow(
+                            item, peek, ::currentDirection, ::currentAge, monoFont,
+                            editState.selectedAddress, editState.pendingNibble, ::onByteClicked,
+                        )
                     }
                 }
             }
         }
+        // Arrow keys would otherwise scroll the ListView's own row selection; we
+        // want them to move the *cell* selection instead. A KEY_PRESSED filter on
+        // the ListView intercepts hex digits and arrows before the skin sees them.
+        addEventFilter(KeyEvent.KEY_PRESSED) { event -> handleKeyPressed(event) }
     }
 
     // 10 Hz repaint (ADR-0001). [onRefreshTick] peeks + diffs the visible range
@@ -308,7 +334,113 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
     private fun currentAge(addr: Int): Int =
         highlightAge[addr] ?: 0
 
+    // ---- Click-to-edit input handling (issue #170) --------------------------
+
+    /**
+     * A byte cell was clicked: select it and repaint so the border appears
+     * immediately (rather than waiting up to 100 ms for the next refresh tick).
+     * Also pull keyboard focus to the ListView so the subsequent hex/arrow keys
+     * are delivered to [handleKeyPressed].
+     */
+    private fun onByteClicked(addr: Int) {
+        editState.select(addr)
+        listView.requestFocus()
+        listView.refresh()
+    }
+
+    /**
+     * Translate a key press into an edit action on [editState]:
+     *  - a hex digit (0-9 / A-F, either case) feeds [HexEditState.typeHexDigit];
+     *    a completed two-nibble byte is applied via [applyPoke];
+     *  - an arrow key moves the selection one cell (consumed so the ListView's
+     *    own row navigation doesn't also fire);
+     *  - Escape clears the selection.
+     *
+     * Anything else is left for the ListView (e.g. Page Up/Down scrolling). The
+     * handler is a no-op when nothing is selected, so the editor still scrolls
+     * normally before the user has clicked a cell.
+     */
+    private fun handleKeyPressed(event: KeyEvent) {
+        val nibble = hexDigit(event.code)
+        when {
+            // Only act on (and consume) a hex digit when a cell is actually
+            // selected — otherwise leave the key for the ListView so we don't
+            // silently swallow keystrokes the editor isn't going to use.
+            nibble != null && editState.selectedAddress != null -> {
+                val pokeRequest = editState.typeHexDigit(nibble)
+                if (pokeRequest != null) applyPoke(pokeRequest)
+                listView.refresh()
+                event.consume()
+            }
+            event.code == KeyCode.LEFT -> moveSelection(dCol = -1, dRow = 0, event)
+            event.code == KeyCode.RIGHT -> moveSelection(dCol = 1, dRow = 0, event)
+            event.code == KeyCode.UP -> moveSelection(dCol = 0, dRow = -1, event)
+            event.code == KeyCode.DOWN -> moveSelection(dCol = 0, dRow = 1, event)
+            event.code == KeyCode.ESCAPE && editState.selectedAddress != null -> {
+                editState.clearSelection()
+                listView.refresh()
+                event.consume()
+            }
+        }
+    }
+
+    /** Move the cell selection, scroll it into view, repaint. Consumes the event. */
+    private fun moveSelection(dCol: Int, dRow: Int, event: KeyEvent) {
+        if (editState.selectedAddress == null) return // let the ListView scroll
+        editState.move(dCol, dRow)
+        // Only scroll when the target row is off-screen — scrolling on every
+        // arrow press (e.g. moving LEFT/RIGHT within a visible row) would jolt
+        // the viewport unnecessarily.
+        editState.selectedAddress?.let {
+            val row = it / 16
+            if (!isRowVisible(row)) listView.scrollTo(row)
+        }
+        listView.refresh()
+        event.consume()
+    }
+
+    /** True if [row] currently has a live (on-screen) ListCell. */
+    private fun isRowVisible(row: Int): Boolean =
+        listView.lookupAll(".list-cell").any { it is ListCell<*> && it.index == row }
+
+    /**
+     * Apply a completed edit through the [poke] callback (which routes to
+     * `Memory.poke` and its I/O blacklist). The poked cell isn't flashed here —
+     * the next refresh tick's diff sees the new value and highlights it
+     * green/blue naturally, which is the user's confirmation the write landed.
+     */
+    private fun applyPoke(request: HexEditState.Poke) {
+        poke(request.address, request.value.toByte())
+    }
+
     companion object {
+
+        /**
+         * Map a [KeyCode] to its hex nibble (0..15), or null if it isn't a hex
+         * digit. Covers the number row, the numpad (DIGIT/NUMPAD variants), and
+         * A-F. Case is irrelevant — [KeyCode] is the physical key, not the typed
+         * character.
+         */
+        fun hexDigit(code: KeyCode): Int? = when (code) {
+            KeyCode.DIGIT0, KeyCode.NUMPAD0 -> 0
+            KeyCode.DIGIT1, KeyCode.NUMPAD1 -> 1
+            KeyCode.DIGIT2, KeyCode.NUMPAD2 -> 2
+            KeyCode.DIGIT3, KeyCode.NUMPAD3 -> 3
+            KeyCode.DIGIT4, KeyCode.NUMPAD4 -> 4
+            KeyCode.DIGIT5, KeyCode.NUMPAD5 -> 5
+            KeyCode.DIGIT6, KeyCode.NUMPAD6 -> 6
+            KeyCode.DIGIT7, KeyCode.NUMPAD7 -> 7
+            KeyCode.DIGIT8, KeyCode.NUMPAD8 -> 8
+            KeyCode.DIGIT9, KeyCode.NUMPAD9 -> 9
+            KeyCode.A -> 0xA
+            KeyCode.B -> 0xB
+            KeyCode.C -> 0xC
+            KeyCode.D -> 0xD
+            KeyCode.E -> 0xE
+            KeyCode.F -> 0xF
+            else -> null
+        }
+
         /** 16 bytes per row × 4096 rows = the full 64 KB CPU bus. */
         const val ROWS = 0x10000 / 16
 
@@ -378,6 +510,18 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
          * [directionAt] and [ageAt] are lookup functions rather than direct
          * collections so the cell factory can stay decoupled from the window's
          * internal maps — useful for testing and for future renderer swaps.
+         *
+         * **Selection + editing (issue #170).** The cell whose address equals
+         * [selectedAddress] gets an amber ring so the user can see what they're
+         * about to edit. While a partial edit is in progress (the user has typed
+         * the first of two nibbles), [pendingNibble] is non-null and the selected
+         * cell shows `"X_"` (e.g. `A_`) instead of its current byte — the
+         * underscore reads as "waiting for the second digit". Every byte cell
+         * gets a click handler ([onByteClick]) so a click selects it. A cell that
+         * needs a background (fading) and/or a selection ring is wrapped in a
+         * [StackPane]; the ring is drawn with layered `-fx-background-color` +
+         * `-fx-background-insets` (NOT `-fx-border-width`) so a selected cell
+         * stays the exact width of a bare byte — the issue #169 invariant.
          */
         fun renderRow(
             rowIndex: Int,
@@ -385,6 +529,9 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
             directionAt: (Int) -> Direction,
             ageAt: (Int) -> Int,
             font: Font,
+            selectedAddress: Int?,
+            pendingNibble: Int?,
+            onByteClick: (Int) -> Unit,
         ): Node {
             val base = rowIndex * 16
             val row = HBox().apply {
@@ -395,39 +542,65 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
 
             for (i in 0 until 16) {
                 val addr = base + i
-                val byteText = Text(String.format("%02X", peek(addr).toUnsignedInt())).apply {
-                    this.font = font
-                }
-                val age = ageAt(addr)
+                val selected = addr == selectedAddress
 
-                if (age > 0) {
-                    val direction = directionAt(addr)
-                    // Linear alpha: 1.0 at FADE_TICKS, 0.0 at 1. Multiplied by
-                    // 0.5 so the tint reads as a subtle highlight rather than a
-                    // solid block — readability of the hex digits matters more
-                    // than the colour's saturation.
-                    val alpha = (age.toDouble() / FADE_TICKS) * 0.5
-                    val (r, g, b) = when (direction) {
+                // Selected cell mid-edit shows the half-typed nibble as "X_";
+                // otherwise the live byte value. Both are two monospaced chars,
+                // so the cell width never changes between display and edit.
+                val label = if (selected && pendingNibble != null) {
+                    String.format("%X_", pendingNibble)
+                } else {
+                    String.format("%02X", peek(addr).toUnsignedInt())
+                }
+                val byteText = Text(label).apply { this.font = font }
+
+                val age = ageAt(addr)
+                // The fade tint (issue #169), if this cell is currently changing.
+                // Linear alpha: 1.0 at FADE_TICKS, 0.0 at 1, then halved so the
+                // tint stays subtle enough to read the digits through it.
+                val fadeFill: String? = if (age > 0) {
+                    val (r, g, b) = when (directionAt(addr)) {
                         Direction.UP -> UP_COLOR
                         Direction.DOWN -> DOWN_COLOR
                         Direction.UNCHANGED -> DEFAULT_COLOR
                     }
-                    val cellBox = StackPane().apply {
-                        alignment = Pos.CENTER
-                        // No padding: a highlighted cell must be the same width
-                        // as a bare Text node, otherwise the row's total width
-                        // grows when bytes start flashing and the row wraps
-                        // (the original bug — see issue #169 wrap report). The
-                        // 2-px background-radius gives the highlight a soft edge
-                        // even with no padding.
-                        style = "-fx-background-color: rgba($r, $g, $b, $alpha);" +
-                                "-fx-background-radius: 2;"
+                    val alpha = (age.toDouble() / FADE_TICKS) * 0.5
+                    "rgba($r, $g, $b, $alpha)"
+                } else null
+
+                val node: Node = if (fadeFill != null || selected) {
+                    val style = if (selected) {
+                        // Draw the selection as a 1px ring via *background* layers
+                        // + `-fx-background-insets`, NOT `-fx-border-width`. A real
+                        // border adds 2px to the cell's layout size, which would
+                        // re-introduce issue #169's row-width-growth landmine (a
+                        // selected cell must stay the exact width of a bare byte).
+                        // Layer 0 (inset 0) = amber ring; layer 1 (inset 1) = the
+                        // fade tint, or transparent when the cell isn't fading.
+                        val (r, g, b) = SELECT_COLOR
+                        val inner = fadeFill ?: "transparent"
+                        "-fx-background-color: rgb($r, $g, $b), $inner;" +
+                            "-fx-background-insets: 0, 1;" +
+                            "-fx-background-radius: 2, 1;"
+                    } else {
+                        // Fading only: a single tinted background, exactly as #169.
+                        "-fx-background-color: $fadeFill;" +
+                            "-fx-background-radius: 2;"
                     }
-                    cellBox.children.add(byteText)
-                    row.children.add(cellBox)
+                    StackPane().apply {
+                        alignment = Pos.CENTER
+                        // No padding / no border-width: a background-only StackPane
+                        // sizes to its content, so a highlighted or selected cell is
+                        // the same width as a bare Text node (the issue #169 invariant).
+                        this.style = style
+                        children.add(byteText)
+                    }
                 } else {
-                    row.children.add(byteText)
+                    byteText
                 }
+
+                node.onMouseClicked = EventHandler<MouseEvent> { onByteClick(addr) }
+                row.children.add(node)
 
                 if (i != 15) {
                     row.children.add(Text(" ").apply { this.font = font })
@@ -442,5 +615,11 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
         private val UP_COLOR = Triple(46, 204, 64)     // green
         private val DOWN_COLOR = Triple(52, 152, 219)   // blue/cyan
         private val DEFAULT_COLOR = Triple(0, 0, 0)     // sentinel; never used (UNCHECKED never reaches the renderer)
+
+        // Selection border (issue #170): a warm gold that reads clearly as
+        // "this is the edit cursor" against both the default background and the
+        // muted green/blue change tints — distinct from either so a selected
+        // cell that's also fading is unambiguous.
+        private val SELECT_COLOR = Triple(255, 193, 7)  // amber/gold
     }
 }
