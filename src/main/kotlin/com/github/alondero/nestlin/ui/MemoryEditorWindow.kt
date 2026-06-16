@@ -10,10 +10,10 @@ import javafx.scene.Node
 import javafx.scene.Scene
 import javafx.scene.control.ListCell
 import javafx.scene.control.ListView
+import javafx.scene.layout.HBox
 import javafx.scene.layout.StackPane
 import javafx.scene.text.Font
 import javafx.scene.text.Text
-import javafx.scene.text.TextFlow
 import javafx.stage.Stage
 import javafx.util.Duration
 import java.util.TreeSet
@@ -65,6 +65,13 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
             object : ListCell<Int>() {
                 init {
                     font = monoFont
+                    // Force the cell to be wide enough for 16 bytes + address +
+                    // spaces. Without this, the ListView can auto-size the cell
+                    // to a narrower value (matching just the visible bytes), and
+                    // even though [renderRow] uses an [HBox] (which doesn't wrap),
+                    // a too-narrow cell would clip the rightmost bytes. 480 px
+                    // matches the Scene width so the cell fills the column.
+                    minWidth = 480.0
                 }
                 override fun updateItem(item: Int?, empty: Boolean) {
                     super.updateItem(item, empty)
@@ -72,11 +79,14 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
                         text = null
                         graphic = null
                     } else {
-                        // Cells render via the [graphic] (TextFlow with per-byte
-                        // backgrounds). [text] is nulled so the cell doesn't also
-                        // try to draw a string behind the graphic.
+                        // Cells render via the [graphic] (HBox of per-byte Text
+                        // / StackPane nodes — see [renderRow]). [text] is nulled
+                        // so the cell doesn't also try to draw a string behind
+                        // the graphic. The font is passed in so the [Text]
+                        // children inside the HBox use the monospaced font —
+                        // they don't inherit the cell's font automatically.
                         text = null
-                        graphic = renderRow(item, peek, ::currentDirection, ::currentAge)
+                        graphic = renderRow(item, peek, ::currentDirection, ::currentAge, monoFont)
                     }
                 }
             }
@@ -314,12 +324,27 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
         }
 
         /**
-         * Build the per-cell coloured [TextFlow] for one 16-byte row (issue #169).
-         * The 16 bytes are rendered in order, separated by spaces, preceded by the
-         * 4-digit address gutter. Each byte that is currently in a fade window
-         * (age > 0) is wrapped in a [StackPane] with a semi-transparent
+         * Build the per-cell coloured row for one 16-byte line (issue #169).
+         * Returns an [HBox] of [Text] / [StackPane] children: the address gutter
+         * first, then 16 byte cells separated by spaces. A byte that's currently
+         * fading (age > 0) is wrapped in a [StackPane] with a semi-transparent
          * background tinted green for UP or blue for DOWN, with alpha scaling
          * linearly with the remaining fade age.
+         *
+         * **Why an [HBox] and not a [javafx.scene.text.TextFlow].** A `TextFlow`
+         * wraps at the parent's width when the next child would overflow, and
+         * the cell can be auto-sized to a width narrower than 16 bytes (e.g.
+         * the cell's prefWidth matching its content's natural width minus the
+         * visible highlighted bytes). That made highlighted bytes wrap onto a
+         * second line, which looked broken. An `HBox` is a single-row layout —
+         * children are placed left-to-right and never wrap, so the row is
+         * always one line. The `minWidth = 480.0` on the cell forces the cell
+         * wide enough that the HBox never overflows.
+         *
+         * [font] is propagated to every [Text] child because `Text` nodes
+         * inside an `HBox` don't inherit the cell's font — without this the
+         * hex digits would render in the default System font instead of the
+         * monospaced one the rest of the editor uses.
          *
          * [directionAt] and [ageAt] are lookup functions rather than direct
          * collections so the cell factory can stay decoupled from the window's
@@ -330,15 +355,20 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
             peek: (Int) -> Byte,
             directionAt: (Int) -> Direction,
             ageAt: (Int) -> Int,
+            font: Font,
         ): Node {
             val base = rowIndex * 16
-            val flow = TextFlow()
+            val row = HBox().apply {
+                alignment = Pos.CENTER_LEFT
+            }
             // Address gutter — monospaced 4-digit hex + two spaces, no background.
-            flow.children.add(Text(String.format("%04X  ", base)))
+            row.children.add(Text(String.format("%04X  ", base)).apply { this.font = font })
 
             for (i in 0 until 16) {
                 val addr = base + i
-                val byteText = Text(String.format("%02X", peek(addr).toUnsignedInt()))
+                val byteText = Text(String.format("%02X", peek(addr).toUnsignedInt())).apply {
+                    this.font = font
+                }
                 val age = ageAt(addr)
 
                 if (age > 0) {
@@ -355,19 +385,26 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
                     }
                     val cellBox = StackPane().apply {
                         alignment = Pos.CENTER
+                        // No padding: a highlighted cell must be the same width
+                        // as a bare Text node, otherwise the row's total width
+                        // grows when bytes start flashing and the row wraps
+                        // (the original bug — see issue #169 wrap report). The
+                        // 2-px background-radius gives the highlight a soft edge
+                        // even with no padding.
                         style = "-fx-background-color: rgba($r, $g, $b, $alpha);" +
-                                "-fx-background-radius: 2;" +
-                                "-fx-padding: 0 1 0 1;"
+                                "-fx-background-radius: 2;"
                     }
                     cellBox.children.add(byteText)
-                    flow.children.add(cellBox)
+                    row.children.add(cellBox)
                 } else {
-                    flow.children.add(byteText)
+                    row.children.add(byteText)
                 }
 
-                if (i != 15) flow.children.add(Text(" "))
+                if (i != 15) {
+                    row.children.add(Text(" ").apply { this.font = font })
+                }
             }
-            return flow
+            return row
         }
 
         // Colour palette: muted greens / blues so the hex digits stay readable
