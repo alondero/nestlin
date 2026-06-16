@@ -20,7 +20,7 @@ A Nintendo Entertainment System emulator written in Kotlin. Personal learning pr
 - **Save states** (`.nstl`) and **battery-backed save RAM** (`.sav`, FCEUX/Mesen-compatible).
 - **Input** — configurable keyboard and gamepad (via JInput); default keymap written to `~/.config/nestlin/input.json` on first run.
 - **Display** — 1×/2×/3×/4× integer scale, Fit-to-window, fullscreen, nearest-neighbour pixel scaling.
-- **Quality-of-life** — hold-Tab fast-forward, pause, speed-throttle toggle, screenshot capture, recent-ROMs menu.
+- **Quality-of-life** — hold-Tab fast-forward, hold-Backspace rewind, pause, speed-throttle toggle, screenshot capture, recent-ROMs menu.
 
 ---
 
@@ -120,6 +120,7 @@ The runnable fat JAR is at `build/libs/nestlin-all.jar` (built by `shadowJar`; t
 | Quick Save State | F5 | Save to `savestates/<rom>.quick.nstl`. |
 | Quick Load State | F8 | Load the matching quick-save slot. |
 | Fast-Forward | hold Tab | Disable throttling while held. |
+| Rewind | hold Backspace | Scrub backward through the last ~10 s at ~3× speed; release to resume. |
 | Screenshot | S | Save the current frame to `screenshots/`. |
 
 ### Default keyboard mapping (NES gamepad)

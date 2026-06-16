@@ -30,6 +30,20 @@ class Apu(private val dmaPort: DmaPort) {
     private var cpuCycleCounter = 0
     private var frameIrq = false
 
+    /**
+     * When true, freshly mixed samples are discarded instead of being written to the
+     * output buffer (issue #52). The rewind feature sets this while scrubbing: each
+     * re-rendered frame would otherwise push ~735 forward-sounding samples per scrub
+     * step and produce audible crackle. Muting the producer lets the residual buffer
+     * drain to clean silence; the consumer (audio thread) simply underruns and idles.
+     *
+     * @Volatile: written by the JavaFX/emulation thread coordinating rewind, read by the
+     * emulation thread in [mixAndBuffer]. Not part of saveState — it is a transient
+     * playback concern, not machine state.
+     */
+    @Volatile
+    var outputMuted: Boolean = false
+
     private val SAMPLE_RATE = 44100.0
 
     /**
@@ -171,7 +185,9 @@ class Apu(private val dmaPort: DmaPort) {
 
         val sample = (mixed * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
 
-        audioBuffer.write(sample)
+        // Drop samples while muted (rewind scrubbing) so the buffer drains to silence
+        // rather than replaying forward audio per re-rendered frame. See [outputMuted].
+        if (!outputMuted) audioBuffer.write(sample)
     }
 
     fun getAudioSamples(): ShortArray {

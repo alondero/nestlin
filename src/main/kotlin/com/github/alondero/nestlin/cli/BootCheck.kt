@@ -111,6 +111,8 @@ object BootCheck {
         val nestlin = try {
             Nestlin().apply {
                 config.speedThrottlingEnabled = false
+                // Headless boot check never rewinds — skip per-frame savestate capture.
+                config.rewindEnabled = false
                 load(opts.romPath)
                 powerReset()
             }

@@ -152,6 +152,8 @@ object ReplayCommand {
 
     private fun boot(romPath: Path): Nestlin = Nestlin().apply {
         config.speedThrottlingEnabled = false
+        // Headless replay never rewinds — skip the per-frame savestate capture overhead.
+        config.rewindEnabled = false
         load(romPath)
         powerReset()
     }

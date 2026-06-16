@@ -4,7 +4,10 @@ import com.github.alondero.nestlin.cpu.Cpu
 import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.ppu.Ppu
+import com.github.alondero.nestlin.rewind.RewindBuffer
 import com.github.alondero.nestlin.ui.FrameListener
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
@@ -33,6 +36,24 @@ class Nestlin {
     // and we emit one PPU tick per 10 credits: NTSC = exactly 3, PAL = 3,3,3,3,4 (avg 3.2).
     private var ppuDotCredit: Int = 0
 
+    // --- Rewind (issue #52) ---
+    // Ring buffer of per-frame savestates. Captured by a frame-completion listener during
+    // normal play; consumed (scrubbed backward) when [rewindActive] is set by the UI.
+    val rewindBuffer = RewindBuffer(config.rewindCapacityFrames)
+    // @Volatile: set by the JavaFX thread (hold/release Backspace), read by the emulation
+    // loop. A plain bool could be cached in the loop and never observe the release.
+    @Volatile
+    private var rewindActive = false
+    // Tracker of whether we are *currently* in a rewind pass, so the loop can run the one-shot
+    // enter/exit transitions (mute audio, reset throttle baseline). Written by the emulation
+    // thread; @Volatile because the JavaFX thread reads it via [isRewinding] each frame to drive
+    // the on-screen indicator, and would otherwise see a stale value.
+    @Volatile
+    private var rewinding = false
+    // Set while a rewind step re-renders a frame, so the capture listener doesn't record the
+    // re-simulated frames back into the buffer (which would corrupt the timeline being scrubbed).
+    private var suppressRewindCapture = false
+
     init {
         memory = Memory()
         cpu = Cpu(memory)
@@ -40,6 +61,9 @@ class Nestlin {
         ppu = Ppu(memory)
         apu = Apu(memory)
         memory.apu = apu
+        // One savestate per frame into the rewind ring. Registered on the long-lived PPU so it
+        // survives ROM loads/resets; fires on the emulation thread at a clean frame boundary.
+        ppu.addFrameCompletionListener { captureRewindSnapshot() }
     }
 
     fun getController1() = memory.controller1
@@ -50,6 +74,9 @@ class Nestlin {
         val displayName = romPath.fileName.toString().removeSuffix(".nes").removeSuffix(".7z")
         cpu.currentGame = data?.let { GamePak(it, displayName) }
         applyRegion()
+        // Rewind history is per-ROM: a snapshot made against ROM A can't be loaded into ROM B
+        // (the savestate ROM/mapper guard would reject it). Drop it on every ROM swap.
+        rewindBuffer.clear()
     }
 
     /** The region currently in effect (after override + detection). */
@@ -94,7 +121,26 @@ class Nestlin {
     fun powerReset() {
         cpu.reset()
         applyRegion()
+        // A power-cycle is a fresh timeline; any rewind history predates this boot. Clearing
+        // here also covers the Hard Reset path (resetRomForMovieSession -> load + powerReset).
+        rewindBuffer.clear()
     }
+
+    /**
+     * Engage or disengage rewind scrubbing (issue #52). Called from the UI thread on
+     * hold/release of the Backspace key. While active and [EmulatorConfig.rewindEnabled], the
+     * emulation loop walks backward through [rewindBuffer] at ~3× real-time, re-rendering each
+     * scrubbed frame and muting audio; on release it resumes normal play from the scrubbed point.
+     */
+    fun setRewindActive(active: Boolean) {
+        rewindActive = active
+    }
+
+    /** True while a rewind scrub pass is in progress (drives the on-screen indicator). */
+    fun isRewinding(): Boolean = rewinding
+
+    /** Number of frames currently retained in the rewind buffer (diagnostics/tests). */
+    fun rewindBufferSize(): Int = rewindBuffer.size
 
     /** Write the current emulator state to [out]. Caller is responsible for closing. */
     fun saveState(out: OutputStream) = SaveState.save(this, out)
@@ -179,6 +225,15 @@ class Nestlin {
                     ticksSinceLastSync = 0
                     continue
                 }
+                // Rewind scrubbing (issue #52): while Backspace is held, walk backward through
+                // the savestate ring instead of advancing the machine. Needs a game and the
+                // feature enabled — otherwise fall through to normal play.
+                if (rewindActive && config.rewindEnabled && cpu.currentGame != null) {
+                    if (!rewinding) enterRewind()
+                    stepRewind()
+                    continue
+                }
+                if (rewinding) exitRewind()
                 stepCpuCycle()
                 ticksSinceLastSync++
 
@@ -223,7 +278,118 @@ class Nestlin {
         }
     }
 
-    fun stop() {running = false}
+    // ---------------------------------------------------------------------------------------
+    // Rewind scrubbing internals (issue #52). All run on the emulation thread.
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * Capture the just-completed frame into the rewind ring. Invoked by the PPU
+     * frame-completion listener. No-op when rewind is disabled, when no game is loaded, or
+     * while a rewind step is re-rendering (so re-simulated frames don't pollute the buffer).
+     */
+    private fun captureRewindSnapshot() {
+        if (!config.rewindEnabled) return
+        if (suppressRewindCapture) return
+        if (cpu.currentGame == null) return
+        try {
+            val out = ByteArrayOutputStream(INITIAL_SNAPSHOT_CAPACITY)
+            SaveState.save(this, out)
+            rewindBuffer.capture(out.toByteArray())
+        } catch (e: Throwable) {
+            // This runs on the emulation thread for EVERY frame, so an unhandled throw here
+            // (e.g. a mapper with an incomplete saveState, or OOM building the ~6 MB buffer)
+            // would kill the whole emulator and hang the UI on its join(). Rewind is a
+            // convenience feature, never worth crashing play for: log once, disable it, and
+            // free the partial history so the game keeps running.
+            System.err.println("[REWIND] Snapshot capture failed; disabling rewind: ${e.message}")
+            config.rewindEnabled = false
+            rewindBuffer.clear()
+        }
+    }
+
+    /** One-shot transition into a rewind pass: mute audio so scrubbing is silent, not crackly. */
+    private fun enterRewind() {
+        rewinding = true
+        apu.outputMuted = true
+    }
+
+    /** One-shot transition out of a rewind pass: unmute and reset the throttle baseline. */
+    private fun exitRewind() {
+        rewinding = false
+        apu.outputMuted = false
+        // The machine just resumed from a scrubbed point; don't let syncToWallClock treat the
+        // scrub duration as drift to "catch up" by sprinting through the next chunk of frames.
+        nextSyncDeadlineNanos = System.nanoTime()
+        ticksSinceLastSync = 0
+    }
+
+    /**
+     * Advance one rewind step: jump back [REWIND_FRAMES_PER_STEP] snapshots, load the snapshot
+     * now at the head, and re-render exactly one frame so the screen shows the rewound state
+     * (savestates carry no pixels). The re-render advances the machine one frame past the
+     * snapshot, but the next step reloads from the ring, so that drift never compounds.
+     * Paced to ~one display frame so the scrub reads as ~3× real-time backward.
+     */
+    private fun stepRewind() {
+        val snapshot = rewindBuffer.rewind(REWIND_FRAMES_PER_STEP)
+        if (snapshot == null) {
+            // Empty buffer (Backspace held before any frame was captured): nothing to scrub to,
+            // and capture only runs during normal play, so the buffer can never fill while we
+            // sit here. Sleep one frame UNCONDITIONALLY — paceRewindFrame would skip the sleep
+            // with throttling off, leaving the emulation thread spinning at 100% CPU for nothing.
+            try {
+                Thread.sleep(EMPTY_REWIND_PARK_MILLIS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            return
+        }
+        suppressRewindCapture = true
+        try {
+            SaveState.load(this, ByteArrayInputStream(snapshot))
+            runOneFrameForRender()
+        } finally {
+            suppressRewindCapture = false
+        }
+        paceRewindFrame()
+    }
+
+    /**
+     * Drive the emulator to the next frame boundary so the render listener fires and the
+     * canvas updates. Clears any stale frame-complete latch first, and bails if the emulator
+     * is stopped mid-pass.
+     */
+    private fun runOneFrameForRender() {
+        ppu.frameJustCompleted()  // consume any stale one-shot latch from normal play
+        while (running) {
+            stepCpuCycle()
+            if (ppu.frameJustCompleted()) return
+        }
+    }
+
+    /**
+     * Sleep ~one display frame between rewind steps so scrubbing runs at roughly display rate.
+     * Each step moves back [REWIND_FRAMES_PER_STEP] frames, so the apparent backward speed is
+     * ~3× real-time. Honors the throttle toggle: with throttling off (e.g. Tab fast-forward),
+     * scrubbing runs as fast as the host allows.
+     */
+    private fun paceRewindFrame() {
+        if (!config.speedThrottlingEnabled) return
+        val frameNanos = config.targetFrameTimeNanos
+        try {
+            Thread.sleep(frameNanos / 1_000_000, (frameNanos % 1_000_000).toInt())
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
+    fun stop() {
+        running = false
+        // Defensive: if we're stopped mid-rewind, make sure audio isn't left muted for the
+        // next start(). stop() runs on the UI thread; outputMuted is volatile so this is safe.
+        apu.outputMuted = false
+        rewinding = false
+    }
 
     companion object {
         // Sync to wall clock every ~1 ms of emulated time (1789 ticks at 1.79 MHz).
@@ -234,6 +400,15 @@ class Nestlin {
         private const val MIN_SLEEP_NANOS = 100_000L
         // If wall-clock is more than 100 ms ahead of emulation, give up trying to catch up.
         private const val MAX_DRIFT_NANOS = 100_000_000L
+        // Frames to walk back per rewind step. Paced at ~display rate (60 Hz), 3 frames/step
+        // gives ~3× real-time backward scrubbing (issue #52 acceptance criterion).
+        private const val REWIND_FRAMES_PER_STEP = 3
+        // Pre-size the per-frame snapshot stream to skip the early doubling reallocs. A typical
+        // savestate is ~10 KB; 16 KB covers most mappers' state without growing.
+        private const val INITIAL_SNAPSHOT_CAPACITY = 16 * 1024
+        // Idle sleep when rewind is held against an empty buffer — keeps the emulation thread
+        // off the CPU instead of busy-spinning (paceRewindFrame is skipped when throttling is off).
+        private const val EMPTY_REWIND_PARK_MILLIS = 16L
     }
 }
 
