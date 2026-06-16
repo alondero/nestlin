@@ -69,9 +69,10 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
                     // spaces. Without this, the ListView can auto-size the cell
                     // to a narrower value (matching just the visible bytes), and
                     // even though [renderRow] uses an [HBox] (which doesn't wrap),
-                    // a too-narrow cell would clip the rightmost bytes. 480 px
-                    // matches the Scene width so the cell fills the column.
-                    minWidth = 480.0
+                    // a too-narrow cell would clip the rightmost bytes. The cell
+                    // width is coupled to [SCENE_WIDTH] — if you change one,
+                    // change the other.
+                    minWidth = SCENE_WIDTH
                 }
                 override fun updateItem(item: Int?, empty: Boolean) {
                     super.updateItem(item, empty)
@@ -126,7 +127,9 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
         stage.title = "Memory Editor"
         // Float independently of the game canvas — not modal, not owned, so it can
         // sit on a second monitor and never affects the game window's aspect ratio.
-        stage.scene = Scene(listView, 480.0, 600.0)
+        // Width matches [SCENE_WIDTH] which is also the cell's minWidth — see the
+        // note on the cellFactory for why these two must stay in sync.
+        stage.scene = Scene(listView, SCENE_WIDTH, SCENE_HEIGHT)
         // Run the timer only while the window is actually showing, so a closed
         // editor costs nothing.
         stage.onShown = EventHandler { refreshTimer.play() }
@@ -194,17 +197,31 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
 
         // Forced flash (ROM load / reset) goes FIRST so the per-cell
         // decay/reset pass below doesn't immediately overwrite the fresh
-        // UP state with whatever the diff produced.
-        if (forceFullFlash) {
+        // UP state. We track the set of addresses we just forced so the
+        // phase-3 pass can skip them — otherwise, because the cleared
+        // baseline makes every diff result UNCHANGED, the decay branch
+        // would drop the freshly-set age from FADE_TICKS to FADE_TICKS-1
+        // on the very tick the user is supposed to see the flash peak.
+        val justForced: Set<Int> = if (forceFullFlash) {
+            forceFullFlash = false
             for (addr in visibleAddrs) {
                 highlightDirection[addr] = Direction.UP
                 highlightAge[addr] = FADE_TICKS
             }
-            forceFullFlash = false
+            // Reuse the same set membership for the phase-3 skip check.
+            // visibleAddrs is already sorted; wrap in a small wrapper
+            // for O(1) `in` lookup. The HashSet is discarded at the end
+            // of the tick.
+            visibleAddrs.toHashSet()
+        } else {
+            emptySet()
         }
 
         // Phase 3: per-cell fade update for the visible range.
         for ((i, addr) in visibleAddrs.withIndex()) {
+            // Cells that were just forced-flashed keep their FADE_TICKS
+            // age and don't get touched by the diff-driven update.
+            if (addr in justForced) continue
             val direction = snapshot.directions[i]
             if (direction == Direction.UNCHANGED) {
                 val age = highlightAge[addr] ?: 0
@@ -305,6 +322,18 @@ class MemoryEditorWindow(private val peek: (Int) -> Byte) {
          * at 0; one tick of `0` means the cell renders at the default background.
          */
         const val FADE_TICKS = 5
+
+        /**
+         * Default Stage / Scene width in pixels. **Must match the cell's
+         * `minWidth` in the cellFactory** — if you change one, change the other.
+         * The cell needs to be at least this wide so the 16-byte HBox never
+         * overflows; the Scene needs to be exactly this wide so the cell
+         * actually fills the column instead of being padded by empty space.
+         */
+        const val SCENE_WIDTH = 480.0
+
+        /** Default Stage / Scene height in pixels. */
+        const val SCENE_HEIGHT = 600.0
 
         /**
          * Render one 16-byte row as `"ADDR  B0 B1 ... B15"` (address + 16 hex bytes).

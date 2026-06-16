@@ -1,5 +1,7 @@
 package com.github.alondero.nestlin.ui
 
+import com.github.alondero.nestlin.toUnsignedInt
+
 /**
  * Per-byte change direction produced by [MemorySnapshot.diff], consumed by
  * the Memory Editor's cell factory to colour each cell green (UP), blue
@@ -25,12 +27,12 @@ enum class Direction { UNCHANGED, UP, DOWN }
  * lets us swap the renderer (TextFlow, Canvas, future WebView) without
  * re-validating the diff logic.
  *
- * **Boundary values.** Byte comparisons go through `b.toInt() and 0xFF` so
- * they treat bytes as unsigned 0..255, not signed -128..127. That makes
- * `0x00 → 0xFF` an UP change and `0xFF → 0x00` a DOWN change — which is
- * what a human watching a counter wrap expects, and which the raw
- * `Byte.compareTo` would silently get wrong (it sees -1 vs 1 and picks
- * the wrong side). Two dedicated tests pin the behaviour.
+ * **Boundary values.** Byte comparisons go through [toUnsignedInt] (the
+ * project's standard unsigned-byte widening) so they treat bytes as
+ * unsigned 0..255, not signed -128..127. That makes `0x00 → 0xFF` an UP
+ * change and `0xFF → 0x00` a DOWN change — which is what a human watching
+ * a counter wrap expects, and which the raw `Byte.compareTo` would
+ * silently get wrong. Two dedicated tests pin the behaviour.
  */
 data class MemorySnapshot(
     val bytes: ByteArray,
@@ -45,10 +47,12 @@ data class MemorySnapshot(
     fun directionAt(index: Int): Direction =
         if (index in directions.indices) directions[index] else Direction.UNCHANGED
 
-    // equals/hashCode are auto-generated for data class, but ByteArray and
-    // Array<Direction> use reference equality. We override to keep the
-    // snapshot safely comparable / hashable in tests and (defensively) in
-    // any future collections that key on snapshot identity.
+    // The data-class auto-generated `equals`/`hashCode` would use reference
+    // equality on the array fields (ByteArray and Array<Direction>), which
+    // would break value semantics — two snapshots with the same bytes +
+    // directions would compare unequal and have different hashCodes. The
+    // override below restores content-based equality so future collections
+    // that key on snapshot identity behave sanely.
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is MemorySnapshot) return false
@@ -76,8 +80,8 @@ data class MemorySnapshot(
                     "(previous=${previous.size}, current=${current.size})"
             }
             val dirs = Array(current.size) { i ->
-                val p = previous[i].toInt() and 0xFF
-                val c = current[i].toInt() and 0xFF
+                val p = previous[i].toUnsignedInt()
+                val c = current[i].toUnsignedInt()
                 when {
                     c > p -> Direction.UP
                     c < p -> Direction.DOWN

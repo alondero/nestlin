@@ -815,9 +815,15 @@ class NestlinApplication : FrameListener, Application() {
      * whenever the underlying bus state changes wholesale — ROM load, hard reset,
      * movie session reset — so the user gets a single-tick visual confirmation
      * that the data they're now looking at is genuinely the new state. No-op
-     * if the editor is not open (the user can't see it flash anyway), and
-     * cheap enough to call from the emulation thread or the JavaFX thread
-     * (just touches a flag the editor's own refresh timer reads).
+     * if the editor is not open (the user can't see it flash anyway).
+     *
+     * **JavaFX thread only.** This writes `forceFullFlash` and the
+     * `previousVisibleBytes` baseline on the editor, which are also touched by
+     * the editor's 10 Hz [Timeline] on the JavaFX Application Thread. Calling
+     * from any other thread races the Timeline and can produce a missed flash
+     * or a [ConcurrentModificationException] on the editor's highlight maps.
+     * All current call sites are JavaFX-thread handlers (MenuItem.setOnAction,
+     * performWithEmulationPaused which runs on the JavaFX thread).
      */
     private fun flashMemoryEditorIfOpen() {
         memoryEditorWindow?.markAllChanged()
@@ -1414,7 +1420,7 @@ class NestlinApplication : FrameListener, Application() {
             return
         }
         // Hard reset = same ROM, but a fresh boot. Drop any active movie session so
-        // playback doesn't get out of sync with the new boot state.
+        // playback doesn't get get out of sync with the new boot state.
         cancelMovieSession()
         stopEmulation()
         resetRomForMovieSession(currentRomPath!!)
@@ -1423,10 +1429,9 @@ class NestlinApplication : FrameListener, Application() {
         // CRC is unchanged by a hard reset, but refresh the slot menu
         // defensively in case future changes alter the GamePak identity.
         updateSlotMenu()
-        // Flash the Memory Editor (issue #169) so the user sees the grid
-        // briefly light up — useful for a hard reset because the visible
-        // cells will often be re-zeroed by the boot code.
-        flashMemoryEditorIfOpen()
+        // No explicit flashMemoryEditorIfOpen() here — resetRomForMovieSession
+        // already called it on the way through, and the flag is one-shot.
+        // A redundant second call would just re-set the same boolean.
         startEmulation()
     }
 
