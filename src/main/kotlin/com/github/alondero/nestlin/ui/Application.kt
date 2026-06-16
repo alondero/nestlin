@@ -774,6 +774,10 @@ class NestlinApplication : FrameListener, Application() {
             updateDebugMenu()
             EmulatorConfig.addRecentRom(romPath)
             updateRecentMenu(EmulatorConfig.getRecentRoms())
+            // Flash the Memory Editor grid (issue #169) so the user sees a
+            // full-tick highlight on every visible cell — confirms the new
+            // ROM is actually being observed.
+            flashMemoryEditorIfOpen()
             startEmulation()
         }
     }
@@ -804,6 +808,19 @@ class NestlinApplication : FrameListener, Application() {
             if (!showing) memoryEditorWindow = null
         }
         window.show()
+    }
+
+    /**
+     * Trigger a full-grid flash in the open Memory Editor (issue #169). Called
+     * whenever the underlying bus state changes wholesale — ROM load, hard reset,
+     * movie session reset — so the user gets a single-tick visual confirmation
+     * that the data they're now looking at is genuinely the new state. No-op
+     * if the editor is not open (the user can't see it flash anyway), and
+     * cheap enough to call from the emulation thread or the JavaFX thread
+     * (just touches a flag the editor's own refresh timer reads).
+     */
+    private fun flashMemoryEditorIfOpen() {
+        memoryEditorWindow?.markAllChanged()
     }
 
     /** Grey out the Debug → Memory Editor item when no ROM is loaded. */
@@ -902,6 +919,10 @@ class NestlinApplication : FrameListener, Application() {
         // ROM A's slot timestamps until they saved into a slot of their own.
         updateSlotMenu()
         updateDebugMenu()
+        // Flash the Memory Editor (issue #169) — same rationale as
+        // handleLoadGame: the user just transitioned to a different game and
+        // deserves visual confirmation in the editor window.
+        flashMemoryEditorIfOpen()
         startEmulation()
     }
 
@@ -1345,6 +1366,12 @@ class NestlinApplication : FrameListener, Application() {
         nestlin.getController1().pendingButtons = 0
         nestlin.getController2().setButtonBitmap(0)
         nestlin.getController2().pendingButtons = 0
+        // Flash the Memory Editor (issue #169). The movie session just rewound
+        // to a known boot state — without the flash, the editor would show
+        // whatever the diff against the pre-reset state happened to produce,
+        // which is rarely a clean "everything is new" because a power-cycle
+        // leaves most static bytes (ROM, mapper regs) unchanged.
+        flashMemoryEditorIfOpen()
     }
 
     /**
@@ -1396,6 +1423,10 @@ class NestlinApplication : FrameListener, Application() {
         // CRC is unchanged by a hard reset, but refresh the slot menu
         // defensively in case future changes alter the GamePak identity.
         updateSlotMenu()
+        // Flash the Memory Editor (issue #169) so the user sees the grid
+        // briefly light up — useful for a hard reset because the visible
+        // cells will often be re-zeroed by the boot code.
+        flashMemoryEditorIfOpen()
         startEmulation()
     }
 
