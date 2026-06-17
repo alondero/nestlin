@@ -38,7 +38,21 @@ data class EmulatorConfig(
      * from the ROM header/filename is used. Set to force NTSC or PAL regardless of
      * detection — surfaced via the UI's Emulation menu and the `--region` CLI flag.
      */
-    var regionOverride: Region? = null
+    var regionOverride: Region? = null,
+
+    /**
+     * Enable the rewind ring buffer (issue #52). When true, one savestate is captured
+     * per frame into a bounded buffer so the user can hold Backspace to scrub backward.
+     * Disable to remove the ~1 ms/frame capture cost entirely. Default: true.
+     */
+    var rewindEnabled: Boolean = true,
+
+    /**
+     * Rewind buffer depth in frames. 600 frames is ~10 seconds at 60 fps and, at roughly
+     * 10 KB per savestate, ~6 MB of retained history. Read once when the buffer is
+     * constructed (at Nestlin init), so changing it later has no effect this session.
+     */
+    var rewindCapacityFrames: Int = 600
 ) {
     /**
      * Target time per frame in nanoseconds.

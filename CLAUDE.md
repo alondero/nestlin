@@ -102,6 +102,7 @@ src/main/kotlin/com/github/alondero/nestlin/
 ├── apu/                    # channels, envelope, sweep, length, frame counter, resampler
 ├── gamepak/                # iNES header + Mapper0..69 dispatch (see MAPPER_SUPPORT.md)
 ├── input/                  # keyboard + JInput gamepad (config at ~/.config/nestlin/input.json)
+├── rewind/                 # RewindBuffer ring of per-frame savestates (hold-Backspace scrub, issue #52)
 ├── ui/                     # JavaFX Application (Canvas-based nearest-neighbour scaling), menus, scaling, fast-forward, screenshots
 ├── file/                   # .nes + .7z loading
 └── log/                    # CPU trace logger
@@ -131,7 +132,7 @@ testroms/                    # nestest.nes is the only ROM in git
 - Region: NTSC + PAL auto-detect (iNES header → NO-INTRO filename → user override).
 - Save state (`.nstl`, F5/F8 + menu) and save RAM (`.sav`, FCEUX-compatible).
 - Battery RAM persistence for mappers 1/4/5 (mappers with `$6000-$7FFF` PRG-RAM).
-- JavaFX UI: Canvas-based 1x/2x/3x/4x/Fit scaling, fullscreen (F11), hold-Tab fast-forward, pause (Ctrl+P), throttle toggle (Ctrl+T), screenshot (S), gamepad via JInput.
+- JavaFX UI: Canvas-based 1x/2x/3x/4x/Fit scaling, fullscreen (F11), hold-Tab fast-forward, hold-Backspace rewind (issue #52), pause (Ctrl+P), throttle toggle (Ctrl+T), screenshot (S), gamepad via JInput.
 
 **Known limits:**
 - Mapper 5 is a stub — Castlevania III not yet playable (needs bank-select decode rewrite, fill mode, multiplier output, scanline IRQ).

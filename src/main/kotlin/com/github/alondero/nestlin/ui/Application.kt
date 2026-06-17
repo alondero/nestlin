@@ -89,6 +89,16 @@ class NestlinApplication : FrameListener, Application() {
         strokeWidth = 1.0
         isVisible = false
     }
+    // Rewind scrub indicator (issue #52). Same crisp scene-node treatment as the fast-forward
+    // glyph; cyan "<<" pinned top-centre (fast-forward sits top-right, REC/PLAY top-left, so the
+    // three never collide). Toggled by the render loop while Backspace-scrubbing is active.
+    private val rewindIndicator = javafx.scene.text.Text("<<").apply {
+        font = javafx.scene.text.Font.font("Monospaced", javafx.scene.text.FontWeight.BOLD, 16.0)
+        fill = javafx.scene.paint.Color.web("#40E0FF")
+        stroke = javafx.scene.paint.Color.BLACK
+        strokeWidth = 1.0
+        isVisible = false
+    }
     // Save-state feedback toast (issue #129). Same scene-graph approach as
     // the fast-forward indicator — overlaid on canvasHolder rather than
     // pixels poked into frameImage, so it stays a crisp 18px no matter the
@@ -386,6 +396,11 @@ class NestlinApplication : FrameListener, Application() {
             StackPane.setAlignment(fastForwardIndicator, javafx.geometry.Pos.TOP_RIGHT)
             StackPane.setMargin(fastForwardIndicator, javafx.geometry.Insets(4.0, 6.0, 0.0, 0.0))
 
+            // Rewind indicator pinned top-centre (issue #52) — clear of the other two corners.
+            canvasHolder.children.add(rewindIndicator)
+            StackPane.setAlignment(rewindIndicator, javafx.geometry.Pos.TOP_CENTER)
+            StackPane.setMargin(rewindIndicator, javafx.geometry.Insets(4.0, 0.0, 0.0, 0.0))
+
             // Overlay the REC/PLAY indicator on top-LEFT so it doesn't collide with the
             // fast-forward indicator. Same Text-node pattern — crisp at any scale, hidden
             // when no movie session is active.
@@ -521,11 +536,26 @@ class NestlinApplication : FrameListener, Application() {
                         if (event.isShiftDown) handleSlotSave(slot) else handleSlotLoad(slot)
                         event.consume()
                     }
+                    // Backspace: hold to scrub backward through the rewind buffer (issue #52).
+                    // KEY_PRESSED auto-repeats while held; setRewindActive is idempotent so the
+                    // repeats are harmless. Released below in setOnKeyReleased.
+                    event.code == javafx.scene.input.KeyCode.BACK_SPACE -> {
+                        nestlin.setRewindActive(true)
+                        event.consume()
+                    }
                     // F11 is handled by the Fullscreen menu accelerator (see Settings menu).
                     else -> handleInput(event.code, true)
                 }
             }
-            scene.setOnKeyReleased { event -> handleInput(event.code, false) }
+            scene.setOnKeyReleased { event ->
+                // Release Backspace: stop scrubbing and resume play from the rewound point.
+                if (event.code == javafx.scene.input.KeyCode.BACK_SPACE) {
+                    nestlin.setRewindActive(false)
+                    event.consume()
+                } else {
+                    handleInput(event.code, false)
+                }
+            }
 
             // Tab is a focus-traversal key in JavaFX, so it must be intercepted in the
             // capturing phase (event filter) and consumed before the traversal engine
@@ -548,7 +578,12 @@ class NestlinApplication : FrameListener, Application() {
             // Tab is held, the OS stops delivering key events so KEY_RELEASED never fires.
             // Force-release on focus loss so fast-forward can't latch on indefinitely.
             focusedProperty().addListener { _, _, focused ->
-                if (!focused) fastForward.release()
+                if (!focused) {
+                    fastForward.release()
+                    // Same "stuck key" guard for rewind: if focus is lost while Backspace is
+                    // held, KEY_RELEASED never fires, so force the scrub off (issue #52).
+                    nestlin.setRewindActive(false)
+                }
             }
 
             // Window close (X button) goes through handleExit so battery RAM gets flushed.
@@ -588,6 +623,11 @@ class NestlinApplication : FrameListener, Application() {
                 // so toggling visibility is all that's needed — no per-frame drawing.
                 if (fastForwardIndicator.isVisible != fastForward.active) {
                     fastForwardIndicator.isVisible = fastForward.active
+                }
+                // Cheap-toggle the rewind indicator from the engine's live scrub state (issue #52).
+                val rewinding = nestlin.isRewinding()
+                if (rewindIndicator.isVisible != rewinding) {
+                    rewindIndicator.isVisible = rewinding
                 }
                 // Same cheap-toggle pattern for the REC/PLAY movie indicator.
                 refreshMovieIndicator()
