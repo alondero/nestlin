@@ -5,21 +5,39 @@ import javafx.animation.Animation
 import javafx.animation.KeyFrame
 import javafx.animation.Timeline
 import javafx.event.EventHandler
+import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.Node
 import javafx.scene.Scene
 import javafx.scene.control.ListCell
 import javafx.scene.control.ListView
+import javafx.scene.control.TextField
 import javafx.scene.input.KeyCode
 import javafx.scene.input.KeyEvent
 import javafx.scene.input.MouseEvent
 import javafx.scene.layout.HBox
+import javafx.scene.layout.Priority
 import javafx.scene.layout.StackPane
+import javafx.scene.layout.VBox
 import javafx.scene.text.Font
 import javafx.scene.text.Text
 import javafx.stage.Stage
 import javafx.util.Duration
 import java.util.TreeSet
+
+/**
+ * The four colour-banded regions of the NES CPU bus (issue #171). Each row in
+ * the Memory Editor's address gutter is shaded with the colour of the region
+ * it falls in, so a player can orient themselves ("is that address RAM or a
+ * mapper register?") without memorising the address boundaries.
+ *
+ * The range split mirrors the iNES / NESdev consensus:
+ *  - [RAM]:     `$0000-$1FFF` (2KB mirrored)
+ *  - [PPU]:     `$2000-$3FFF` (8-byte register file mirrored)
+ *  - [APU_IO]:  `$4000-$401F` (APU + controller + DMA)
+ *  - [CART]:    `$4020-$FFFF` (cartridge space, expansion, PRG-ROM)
+ */
+enum class MemoryRegion { RAM, PPU, APU_IO, CART }
 
 /**
  * The Memory Editor's live hex viewer — the tracer bullet for issue #168,
@@ -59,6 +77,15 @@ import java.util.TreeSet
  * key events into calls on it and renders its state. A completed edit's natural
  * change-highlight (the next tick's diff flashes the poked cell green/blue) is
  * the visual confirmation, so no special post-poke flash is needed.
+ *
+ * **Region bands / go-to / ASCII (issue #171).** The address gutter is wrapped
+ * in a background-coloured [StackPane] tinted by the row's [MemoryRegion]
+ * (RAM / PPU / APU_IO / CART) so the user can see the memory-map split at a
+ * glance. A [TextField] above the grid accepts a hex address (`$2000` or
+ * `2000`) and scrolls the [ListView] directly to that row, also selecting the
+ * cell so the next hex keystroke pokes it. Each row's right edge carries a
+ * 16-character ASCII decode — printable bytes 0x20-0x7E render as themselves,
+ * everything else as `.` — so a player can spot embedded text strings.
  */
 class MemoryEditorWindow(
     private val peek: (Int) -> Byte,
@@ -76,6 +103,32 @@ class MemoryEditorWindow(
     // be unit-tested without booting the JavaFX toolkit a Font would require.
     private val monoFont: Font = Font.font("Monospaced", 13.0)
 
+    /**
+     * The "Go to address" input field (issue #171). The user types a hex
+     * address (`$2000`, `2000`) and either presses Enter or clicks away
+     * (focus loss); either way the [ListView] scrolls to that row and the
+     * byte cell is selected so the next hex keystroke pokes it. Empty /
+     * unparseable input is silently ignored — the field never blocks the
+     * user from typing again, and the [ListView] focus is returned to the
+     * grid on a successful go-to.
+     */
+    private val goToAddressField = TextField().apply {
+        promptText = "Go to address (e.g. \$2000)"
+        prefWidth = SCENE_WIDTH
+        // A small left padding so the prompt text doesn't hug the border.
+        padding = Insets(4.0, 6.0, 4.0, 6.0)
+        // Two commit paths. setOnAction fires on Enter (the primary
+        // "I'm done typing" gesture); the focusedProperty listener fires
+        // when focus leaves the field (covers click-out, Tab-out, and
+        // clicking into the grid) so a user who types `$2000` and then
+        // clicks a cell still gets a navigation. Without the second
+        // listener, the typed text would silently sit in the field.
+        setOnAction { commitGoToAddress() }
+        focusedProperty().addListener { _, _, hasFocus ->
+            if (!hasFocus) commitGoToAddress()
+        }
+    }
+
     private val listView = ListView<Int>().apply {
         // One item per 16-byte row: row index 0..4095 → base address index*16.
         items.setAll((0 until ROWS).toList())
@@ -90,7 +143,8 @@ class MemoryEditorWindow(
                     // even though [renderRow] uses an [HBox] (which doesn't wrap),
                     // a too-narrow cell would clip the rightmost bytes. The cell
                     // width is coupled to [SCENE_WIDTH] — if you change one,
-                    // change the other.
+                    // change the other. Issue #171 added the ASCII column to the
+                    // right, so both values were bumped from 480.0 to 620.0.
                     minWidth = SCENE_WIDTH
                 }
                 override fun updateItem(item: Int?, empty: Boolean) {
@@ -155,7 +209,16 @@ class MemoryEditorWindow(
         // sit on a second monitor and never affects the game window's aspect ratio.
         // Width matches [SCENE_WIDTH] which is also the cell's minWidth — see the
         // note on the cellFactory for why these two must stay in sync.
-        stage.scene = Scene(listView, SCENE_WIDTH, SCENE_HEIGHT)
+        //
+        // The scene root is a VBox (issue #171) so the go-to-address TextField
+        // can sit on top of the grid. VBox.growVertical is left at default for
+        // the field (it sizes to its preferred height — ~28px for a 13pt
+        // monospaced prompt); the listView gets `VBox.setVgrow(ALWAYS)` so it
+        // claims the rest of the scene's [SCENE_HEIGHT].
+        val root = VBox(goToAddressField, listView).apply {
+            VBox.setVgrow(listView, Priority.ALWAYS)
+        }
+        stage.scene = Scene(root, SCENE_WIDTH, SCENE_HEIGHT)
         // Run the timer only while the window is actually showing, so a closed
         // editor costs nothing.
         stage.onShown = EventHandler { refreshTimer.play() }
@@ -399,6 +462,38 @@ class MemoryEditorWindow(
         event.consume()
     }
 
+    /**
+     * Commit the current contents of [goToAddressField] (issue #171). Parses
+     * the input via the pure [parseAddress] helper:
+     *  - on success: scroll the [ListView] to the row, select the byte cell
+     *    at that address (so the next hex keystroke can poke it), clear the
+     *    field, and return keyboard focus to the grid for continuous
+     *    editing;
+     *  - on parse failure / out-of-range: do nothing. The field keeps the
+     *    user's text so they can correct the typo, and we don't flag it red
+     *    — a transient empty value is normal (focus events fire on every
+     *    keystroke) and the editor must never block the user.
+     */
+    private fun commitGoToAddress() {
+        val addr = parseAddress(goToAddressField.text) ?: return
+        // Compute the row that *contains* the address, not addr / 16 alone —
+        // rows are 16-byte aligned so the two are equivalent, but the named
+        // constant makes the intent obvious in a future read.
+        val row = addr / 16
+        // scrollTo picks the closest visible position; clamp to the legal
+        // range so an input that mapped to the very last row doesn't try to
+        // scroll past the end.
+        val clampedRow = row.coerceIn(0, ROWS - 1)
+        listView.scrollTo(clampedRow)
+        // Selecting the cell draws the amber selection ring (issue #170) so
+        // the user can see *where* the editor landed. The next hex digit
+        // they type will poke this address.
+        editState.select(addr)
+        listView.requestFocus()
+        goToAddressField.clear()
+        listView.refresh()
+    }
+
     /** True if [row] currently has a live (on-screen) ListCell. */
     private fun isRowVisible(row: Int): Boolean =
         listView.lookupAll(".list-cell").any { it is ListCell<*> && it.index == row }
@@ -461,26 +556,143 @@ class MemoryEditorWindow(
          * The cell needs to be at least this wide so the 16-byte HBox never
          * overflows; the Scene needs to be exactly this wide so the cell
          * actually fills the column instead of being padded by empty space.
+         *
+         * Bumped from 480.0 to 620.0 in issue #171 to fit the new ASCII
+         * decode column (16 extra characters on the right). The new layout
+         * is "4-char address + space + 16 hex bytes (47 chars) + space + 16
+         * ASCII chars = 70 chars"; at 13pt monospaced (~7.8px/char) that's
+         * ~546px of content, plus the StackPane padding for the gutter and
+         * byte cells we round up to 620 for headroom.
          */
-        const val SCENE_WIDTH = 480.0
+        const val SCENE_WIDTH = 620.0
 
-        /** Default Stage / Scene height in pixels. */
+        /** Default Stage / Scene height in pixels. The VBox root has a 28px
+         *  go-to-address [TextField] on top (issue #171) plus a 4px gap, so
+         *  the listView gets ~568px. That still shows ~30 rows — enough that
+         *  the user sees the region bands and the selected cell at a glance
+         *  without scrolling.
+         */
         const val SCENE_HEIGHT = 600.0
 
         /**
-         * Render one 16-byte row as `"ADDR  B0 B1 ... B15"` (address + 16 hex bytes).
-         * Pure function of [rowIndex] and the [peek] provider — no JavaFX, so it's
-         * unit-testable on its own. [rowIndex] is 0..[ROWS]-1; the row covers CPU
-         * addresses `rowIndex*16 .. rowIndex*16+15`.
+         * Classify a CPU address into its NES memory region. Pure function
+         * (issue #171) — no side effects, safe to call from the cell factory
+         * for every rendered row.
+         *
+         * Boundaries are inclusive at the low end and exclusive at the high
+         * end, matching the actual hardware decode:
+         *  - `0x0000 .. 0x1FFF` → [MemoryRegion.RAM] (2KB mirrored)
+         *  - `0x2000 .. 0x3FFF` → [MemoryRegion.PPU] (8-byte register file mirrored)
+         *  - `0x4000 .. 0x401F` → [MemoryRegion.APU_IO]
+         *  - `0x4020 .. 0xFFFF` → [MemoryRegion.CART]
+         *
+         * Negative inputs are treated as [MemoryRegion.CART] (the largest
+         * region) so a typo or future regression in row math never silently
+         * drops into a smaller region. The editor never passes anything
+         * outside 0..0xFFFF, but the defensive default is cheap.
+         */
+        fun regionForAddress(address: Int): MemoryRegion = when {
+            address < 0 -> MemoryRegion.CART
+            address < 0x2000 -> MemoryRegion.RAM
+            address < 0x4000 -> MemoryRegion.PPU
+            address < 0x4020 -> MemoryRegion.APU_IO
+            else -> MemoryRegion.CART
+        }
+
+        /**
+         * The pastel RGB triple used to tint the address gutter for a given
+         * [MemoryRegion] (issue #171). The colours are deliberately light
+         * so the black hex digits of the address stay readable through the
+         * tint, and deliberately distinct from the green / blue change
+         * highlights (issue #169) and the amber selection ring (issue #170)
+         * — a region gutter and a fading byte must never look the same.
+         */
+        fun regionColor(region: MemoryRegion): Triple<Int, Int, Int> = when (region) {
+            MemoryRegion.RAM -> RAM_GUTTER_COLOR
+            MemoryRegion.PPU -> PPU_GUTTER_COLOR
+            MemoryRegion.APU_IO -> APU_GUTTER_COLOR
+            MemoryRegion.CART -> CART_GUTTER_COLOR
+        }
+
+        /**
+         * Decode one byte of a row as ASCII for the right-hand column
+         * (issue #171). Printable bytes (0x20..0x7E inclusive — the standard
+         * ASCII printable range) render as themselves; everything else
+         * renders as '.'. The output length always matches the input length,
+         * so a 16-byte row produces a 16-character ASCII column.
+         */
+        fun formatAsciiColumn(bytes: ByteArray): String {
+            val sb = StringBuilder(bytes.size)
+            for (b in bytes) {
+                val unsigned = b.toUnsignedInt()
+                sb.append(if (unsigned in 0x20..0x7E) unsigned.toChar() else '.')
+            }
+            return sb.toString()
+        }
+
+        /**
+         * Parse a hex address string from the Go-to-address field (issue #171).
+         * Returns the parsed value (0..0xFFFF) on success, or null on any
+         * failure mode so the caller can treat the input as a no-op rather
+         * than crashing the editor.
+         *
+         * Accepted forms:
+         *  - plain hex digits: `"2000"`, `"00A5"`, `"ffff"` (case-insensitive)
+         *  - leading `$` (FCEUX / Mesen style): `"$2000"`, `"$00A5"`
+         *  - surrounding whitespace: trimmed before parsing
+         *
+         * Rejected forms (return null):
+         *  - empty / whitespace-only
+         *  - non-hex characters anywhere (including `0x` prefix or trailing `h`)
+         *  - out of range (more than 4 hex digits = > 0xFFFF)
+         *
+         * Pure function — the test suite exercises the full matrix in
+         * [MemoryEditorWindowTest] without booting JavaFX.
+         */
+        fun parseAddress(text: String): Int? {
+            val trimmed = text.trim()
+            if (trimmed.isEmpty()) return null
+            // Strip a single leading '$'. Only the first character — a stray
+            // '$' mid-string is treated as a non-hex typo (returns null).
+            val withoutDollar = if (trimmed.startsWith('$')) trimmed.substring(1) else trimmed
+            if (withoutDollar.isEmpty()) return null
+            if (withoutDollar.length > 4) return null // > 0xFFFF guaranteed
+            // toLong with radix 16 throws NumberFormatException on non-hex
+            // chars (and is faster + safer than rolling our own digit check).
+            return try {
+                val value = withoutDollar.toLong(16)
+                if (value in 0..0xFFFF) value.toInt() else null
+            } catch (e: NumberFormatException) {
+                null
+            }
+        }
+
+        /**
+         * Render one 16-byte row as `"ADDR B0 B1 ... B15 ASCII"` (address + 16
+         * hex bytes + 16-character ASCII column). Pure function of [rowIndex]
+         * and the [peek] provider — no JavaFX, so it's unit-testable on its
+         * own. [rowIndex] is 0..[ROWS]-1; the row covers CPU addresses
+         * `rowIndex*16 .. rowIndex*16+15`.
+         *
+         * The layout changed in issue #171 — the 2-space separator after the
+         * address was kept (the address gutter still claims 6 chars
+         * visually) and a single space now separates the hex bytes from the
+         * ASCII column. The pure form is what the cell factory's [renderRow]
+         * mirrors when building the [HBox]; keeping them in lockstep means
+         * a unit test of the format also validates the visible row shape.
          */
         fun formatRow(rowIndex: Int, peek: (Int) -> Byte): String {
             val base = rowIndex * 16
             val sb = StringBuilder()
             sb.append(String.format("%04X", base)).append("  ")
+            val bytes = ByteArray(16)
             for (i in 0 until 16) {
-                sb.append(String.format("%02X", peek(base + i).toUnsignedInt()))
+                val b = peek(base + i)
+                bytes[i] = b
+                sb.append(String.format("%02X", b.toUnsignedInt()))
                 if (i != 15) sb.append(' ')
             }
+            sb.append(" ").append(formatAsciiColumn(bytes))
             return sb.toString()
         }
 
@@ -537,8 +749,37 @@ class MemoryEditorWindow(
             val row = HBox().apply {
                 alignment = Pos.CENTER_LEFT
             }
-            // Address gutter — monospaced 4-digit hex + two spaces, no background.
-            row.children.add(Text(String.format("%04X  ", base)).apply { this.font = font })
+            // Peek all 16 bytes of this row once (issue #171 review): the
+            // hex cells below and the trailing ASCII column both need the
+            // same values, and `formatRow` (the pure contract the test
+            // suite pins) already uses this once-and-reuse pattern. Halving
+            // the per-row peek count also matches the byte-cell's
+            // contract — each visible byte is read exactly once per render.
+            val rowBytes = ByteArray(16) { i -> peek(base + i) }
+
+            // Address gutter (issue #171): 4-digit hex address, wrapped in a
+            // StackPane whose background is the row's [MemoryRegion] colour.
+            // A StackPane is the same wrap used for byte cells (issue #169),
+            // so the gutter still sizes to its content and never adds row
+            // width beyond the 6-char `"XXXX  "` footprint. The region tint
+            // is the visual "where am I in the NES memory map" hint.
+            val region = regionForAddress(base)
+            val (rr, rg, rb) = regionColor(region)
+            row.children.add(StackPane().apply {
+                alignment = Pos.CENTER
+                this.style = "-fx-background-color: rgb($rr, $rg, $rb);" +
+                    "-fx-background-radius: 2;"
+                children.add(Text(String.format("%04X", base)).apply { this.font = font })
+            })
+            // Two bare-space Text nodes between the gutter and the first
+            // byte — mirrors the pure `formatRow` output of `"ADDR  B0..."`
+            // (2 spaces) so the cell factory and the test-pinned contract
+            // produce the same column alignment. The StackPane above
+            // provides the visual region band; the spaces preserve the
+            // "feels like one column" hex reader has learned from prior
+            // slices.
+            row.children.add(Text(" ").apply { this.font = font })
+            row.children.add(Text(" ").apply { this.font = font })
 
             for (i in 0 until 16) {
                 val addr = base + i
@@ -550,7 +791,7 @@ class MemoryEditorWindow(
                 val label = if (selected && pendingNibble != null) {
                     String.format("%X_", pendingNibble)
                 } else {
-                    String.format("%02X", peek(addr).toUnsignedInt())
+                    String.format("%02X", rowBytes[i].toUnsignedInt())
                 }
                 val byteText = Text(label).apply { this.font = font }
 
@@ -606,6 +847,15 @@ class MemoryEditorWindow(
                     row.children.add(Text(" ").apply { this.font = font })
                 }
             }
+            // ASCII decode column (issue #171). One Text, 16 chars, '.' for
+            // non-printable bytes. The single-space separator before it keeps
+            // the column visually grouped with the hex bytes without crowding
+            // them — the eye still scans the row as "hex first, ASCII second".
+            // Reuses [rowBytes] from the top of this function rather than
+            // re-peeking, matching the once-and-reuse pattern of the pure
+            // [formatRow] helper.
+            row.children.add(Text(" ").apply { this.font = font })
+            row.children.add(Text(formatAsciiColumn(rowBytes)).apply { this.font = font })
             return row
         }
 
@@ -621,5 +871,15 @@ class MemoryEditorWindow(
         // muted green/blue change tints — distinct from either so a selected
         // cell that's also fading is unambiguous.
         private val SELECT_COLOR = Triple(255, 193, 7)  // amber/gold
+
+        // Region gutter colours (issue #171). Pastels — pale enough that the
+        // black hex digits of the address stay readable through the tint, and
+        // muted enough that a band of 4-row RAM next to a band of 50-row CART
+        // doesn't visually compete. The four values are pinned by
+        // `regionColor` test (must all differ from one another).
+        private val RAM_GUTTER_COLOR = Triple(220, 235, 250)  // pale blue
+        private val PPU_GUTTER_COLOR = Triple(215, 240, 215)  // pale green
+        private val APU_GUTTER_COLOR = Triple(255, 240, 210)  // pale amber
+        private val CART_GUTTER_COLOR = Triple(230, 230, 230) // light grey
     }
 }
