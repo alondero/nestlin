@@ -17,8 +17,10 @@ data class InputConfig(
     companion object {
         private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
 
-        private val configDir = File(System.getProperty("user.home"), ".config/nestlin")
-        private val configFile = File(configDir, "input.json")
+        private const val FILE_NAME = "input.json"
+        // The production config location. Tests pass their own @TempDir so the round-trip
+        // can be exercised without touching the developer's real ~/.config/nestlin.
+        private val defaultConfigDir = File(System.getProperty("user.home"), ".config/nestlin")
 
         // Default keyboard mapping: JavaFX KeyCode name -> NES button name
         val defaultKeyboardMapping = mapOf(
@@ -35,11 +37,15 @@ data class InputConfig(
         /**
          * Load configuration from file, or return defaults if file doesn't exist.
          */
-        fun load(): InputConfig {
+        fun load(configDir: File = defaultConfigDir): InputConfig {
+            val configFile = File(configDir, FILE_NAME)
             return try {
                 if (configFile.exists()) {
                     println("[INPUT] Loading config from ${configFile.absolutePath}")
-                    gson.fromJson(configFile.readText(), InputConfig::class.java)
+                    // gson returns null for an empty file or literal `null` content (no
+                    // exception thrown), so coalesce to defaults — the return type is non-null
+                    // and callers (e.g. handleInput) deref it every key event.
+                    gson.fromJson(configFile.readText(), InputConfig::class.java) ?: InputConfig()
                 } else {
                     println("[INPUT] No config file found, using defaults")
                     InputConfig()
@@ -53,7 +59,8 @@ data class InputConfig(
         /**
          * Save configuration to file (creates directory if needed).
          */
-        fun save(config: InputConfig) {
+        fun save(config: InputConfig, configDir: File = defaultConfigDir) {
+            val configFile = File(configDir, FILE_NAME)
             try {
                 configDir.mkdirs()
                 configFile.writeText(gson.toJson(config))
@@ -66,9 +73,9 @@ data class InputConfig(
         /**
          * Create default config file if it doesn't exist.
          */
-        fun createDefaultIfMissing() {
-            if (!configFile.exists()) {
-                save(InputConfig())
+        fun createDefaultIfMissing(configDir: File = defaultConfigDir) {
+            if (!File(configDir, FILE_NAME).exists()) {
+                save(InputConfig(), configDir)
             }
         }
     }

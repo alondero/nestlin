@@ -11,10 +11,26 @@ import net.java.games.input.Component
  */
 class GamepadInput(
     private val nesController: NesController,
-    private val config: GamepadConfig = GamepadConfig()
+    private var config: GamepadConfig = GamepadConfig()
 ) {
     private var currentController: Controller? = null
     private var initialized = false
+
+    /**
+     * When non-null, the next gamepad button that goes *down* is reported here as a raw
+     * button index instead of being routed to the NES pad. The Controller Configuration
+     * screen sets this to capture a binding, and clears it (sets null) when it closes, so
+     * pressing a button to bind a control doesn't also move the in-game character.
+     */
+    var captureListener: ((Int) -> Unit)? = null
+
+    /**
+     * Swap in a new gamepad mapping at runtime (after the user saves new controls), without
+     * tearing down and re-initialising JInput. [poll] reads [config] fresh each frame.
+     */
+    fun updateConfig(newConfig: GamepadConfig) {
+        config = newConfig
+    }
 
     // Track previous button states to detect changes
     private val previousButtonStates = mutableMapOf<String, Boolean>()
@@ -117,6 +133,14 @@ class GamepadInput(
         if (pressed != wasPressed) {
             previousButtonStates[componentId] = pressed
 
+            // Binding-capture mode (Controller Config screen): report the first button to
+            // go down as a raw index and do NOT route it to the game pad.
+            val listener = captureListener
+            if (listener != null) {
+                if (pressed) componentToIndex(componentId)?.let(listener)
+                return
+            }
+
             // Map common button identifiers to NES buttons
             val nesButton = mapButtonToNes(componentId)
             if (nesButton != null) {
@@ -165,20 +189,31 @@ class GamepadInput(
         updateAxisButton("pov_right", !centered && (value == 0.5f || value == 0.375f || value == 0.625f), NesController.Button.RIGHT)
     }
 
-    private fun mapButtonToNes(buttonId: String): NesController.Button? {
-        // Common button mappings for various controllers
-        // Xbox-style: 0=A, 1=B, 2=X, 3=Y, 6=Back, 7=Start
-        // Many controllers use similar numbering
+    /**
+     * Map a JInput component identifier to an NES button. **Config-first**: a user remap of
+     * any button index (saved via the Controller Config screen) wins over the built-in
+     * defaults — without this, remapping the conventional indices 0/1/6/7 would silently
+     * no-op because the hardcoded names below used to be consulted first. Only when the
+     * index is absent from config (or the id isn't numeric) do we fall back to the
+     * conventional Xbox-style names/indices. `internal` so the precedence is unit-testable
+     * without booting JInput.
+     */
+    internal fun mapButtonToNes(buttonId: String): NesController.Button? {
+        // Config-first: an explicit remap of this index takes precedence.
+        componentToIndex(buttonId)?.let { index ->
+            config.getButtonForIndex(index)?.let { return it }
+        }
+
+        // Fallback: conventional Xbox-style identifiers for an unconfigured button.
         return when (buttonId.lowercase()) {
-            // Standard numbered buttons
             "0", "button 0", "a" -> NesController.Button.A
             "1", "button 1", "b" -> NesController.Button.B
             "6", "button 6", "back", "select" -> NesController.Button.SELECT
             "7", "button 7", "start" -> NesController.Button.START
 
-            // Some controllers use these names
-            "2", "button 2", "x" -> null  // X button - not mapped
-            "3", "button 3", "y" -> null  // Y button - not mapped
+            // X / Y buttons - not mapped on a 2-button NES pad
+            "2", "button 2", "x" -> null
+            "3", "button 3", "y" -> null
 
             // D-pad buttons (if not using axes/POV)
             "up", "dpad up" -> NesController.Button.UP
@@ -186,17 +221,17 @@ class GamepadInput(
             "left", "dpad left" -> NesController.Button.LEFT
             "right", "dpad right" -> NesController.Button.RIGHT
 
-            else -> {
-                // Try to match button indices from config
-                val buttonIndex = buttonId.filter { it.isDigit() }.toIntOrNull()
-                if (buttonIndex != null) {
-                    config.getButtonForIndex(buttonIndex)
-                } else {
-                    null
-                }
-            }
+            else -> null
         }
     }
+
+    /**
+     * Extract the numeric button index from a JInput component identifier
+     * (e.g. `"Button 11"` -> 11), or null if it carries no digits (e.g. `"x"`).
+     * `internal` for unit testing.
+     */
+    internal fun componentToIndex(componentId: String): Int? =
+        componentId.filter { it.isDigit() }.toIntOrNull()
 
     private fun updateAxisButton(axisName: String, pressed: Boolean, nesButton: NesController.Button) {
         val wasPressed = previousAxisStates[axisName] ?: false
