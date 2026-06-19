@@ -180,9 +180,13 @@ class NestlinApplication : FrameListener, Application() {
     // so a crash or force-kill costs at most ~10s of in-game saves.
     private var batteryFlushTimer: java.util.Timer? = null
 
-    // Input configuration and gamepad support
-    private val inputConfig = InputConfig.load()
+    // Input configuration and gamepad support. `var` because the Controller Config screen
+    // can swap in a freshly-saved mapping at runtime; handleInput() reads it per key event.
+    private var inputConfig = InputConfig.load()
     private lateinit var gamepadInput: GamepadInput
+
+    // Settings → Configure Controls… window (lazily created, recreated after close).
+    private var controllerConfigWindow: ControllerConfigWindow? = null
 
     // Held to keep the menu's check state in sync with keyboard shortcuts and
     // to clear pause when starting a fresh game via Load / Hard Reset.
@@ -336,7 +340,13 @@ class NestlinApplication : FrameListener, Application() {
             fullscreenItem.accelerator = javafx.scene.input.KeyCombination.keyCombination("F11")
             fullscreenItem.setOnAction { setFullscreen(fullscreenItem.isSelected) }
 
-            settingsMenu.items.addAll(throttleMenuItem, scaleMenu, fullscreenItem)
+            val configureControlsItem = MenuItem("Configure Controls...")
+            configureControlsItem.setOnAction { handleOpenControllerConfig() }
+
+            settingsMenu.items.addAll(
+                throttleMenuItem, scaleMenu, fullscreenItem,
+                javafx.scene.control.SeparatorMenuItem(), configureControlsItem,
+            )
             menuBar.menus.add(settingsMenu)
 
             // Emulation menu
@@ -835,6 +845,43 @@ class NestlinApplication : FrameListener, Application() {
      * resets without needing to be recreated. The showing-property listener nulls
      * our reference when the user closes the window so the next open builds fresh.
      */
+    /**
+     * Open (or focus) the Controller Configuration screen. Mirrors [handleOpenMemoryEditor]'s
+     * show/recreate pattern. Saving from the window calls back into [applyInputConfig], which
+     * persists the file and applies the new mapping live this session.
+     */
+    private fun handleOpenControllerConfig() {
+        val existing = controllerConfigWindow
+        if (existing != null) {
+            existing.show()
+            return
+        }
+        val window = ControllerConfigWindow(
+            loadConfig = { inputConfig },
+            applyAndSave = { cfg -> applyInputConfig(cfg) },
+            gamepad = if (::gamepadInput.isInitialized) gamepadInput else null,
+        )
+        controllerConfigWindow = window
+        window.stage.showingProperty().addListener { _, _, showing ->
+            if (!showing) controllerConfigWindow = null
+        }
+        window.show()
+    }
+
+    /**
+     * Persist a new input configuration and apply it live. Keyboard remaps take effect
+     * immediately because [handleInput] reads [inputConfig] per key event; gamepad remaps are
+     * pushed into the running [GamepadInput] via [GamepadInput.updateConfig] (no re-init).
+     */
+    private fun applyInputConfig(cfg: InputConfig) {
+        InputConfig.save(cfg)
+        inputConfig = cfg
+        if (::gamepadInput.isInitialized) {
+            gamepadInput.updateConfig(cfg.gamepad)
+        }
+        println("[APP] Applied new controller configuration")
+    }
+
     private fun handleOpenMemoryEditor() {
         if (currentRomPath == null) return
         val existing = memoryEditorWindow
