@@ -173,6 +173,28 @@ class WorkCyclesLeftConsistencyTest {
         assertThat(cpu.registers.programCounter, equalTo(0x0010.toSignedShort()))
     }
 
+    @Test
+    fun bccBranchTakenAcrossPageBoundarySetsFourCycles() {
+        // Regression for issue #176 — taken relative branch across a page
+        // boundary adds +1 cycle (4 cycles vs 3). BCC at PC=$10FD, offset $01
+        // -> target $1100 crosses $10xx -> $11xx. carry CLEAR makes BCC take
+        // the branch.
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x10FD.toSignedShort()
+        cpu.memory[0x10FD] = 0x90.toSignedByte() // BCC relative
+        cpu.memory[0x10FE] = 0x01.toSignedByte() // offset +1 -> $1100
+        cpu.processorStatus.carry = false
+
+        cpu.tick()
+
+        // 4-cycle branch (taken, page-crossed), post-tick decrement leaves 3.
+        assertThat(cpu.workCyclesLeft, equalTo(3))
+        // PC followed the relative offset across the page.
+        assertThat(cpu.registers.programCounter, equalTo(0x1100.toSignedShort()))
+        // pageBoundaryFlag is set so saveState can persist the cross.
+        assertThat(cpu.pageBoundaryFlag, equalTo(true))
+    }
+
     // ----- Issue #175: helpers stamp per-addressing-mode cycle counts -----
     // The tests below exercise one representative addressing mode per refactored
     // helper and assert the real-6502 base cycle count. They are the regression
