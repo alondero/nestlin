@@ -46,10 +46,6 @@ class ControllerConfigWindow(
 ) {
     val stage = Stage()
 
-    // The on-screen size of the (square) controller image. Hotspots are positioned as
-    // fractions of this so the layout stays correct if the constant changes.
-    private val displaySize = 500.0
-
     /** One clickable region: which NES button, where on the image (centre + size as 0..1 fractions), and its glyph. */
     private data class Spot(
         val button: Button,
@@ -57,17 +53,31 @@ class ControllerConfigWindow(
         val glyph: String,
     )
 
-    // Fractions measured against the generated nes-controller.jpg (square). The D-pad is on the
-    // left, the two grey Select/Start ovals in the middle, the red B (left) and A (right) on the right.
+    // Image-derived layout. The pane and the ImageView are sized to match the asset's actual
+    // aspect ratio so neither letterboxes nor stretches; hotspots stay positioned in that same
+    // rectangle, so the fractions below remain meaningful for any image shape.
+    private val controllerImage: Image? = loadControllerImage()
+    /** The longer edge of the pane in screen pixels; the shorter edge is derived from the image aspect. */
+    private val displayLongEdge = 500.0
+    // Guard against corrupt assets: a 0-byte or truncated image leaves width/height at 0,
+    // producing NaN/Infinity that would poison every downstream dimension.
+    private val aspect: Double = (controllerImage?.let { it.width.toDouble() / it.height } ?: 1.0)
+        .takeIf { it.isFinite() && it > 0 } ?: 1.0
+    private val displayWidth: Double = displayLongEdge * minOf(1.0, aspect)
+    private val displayHeight: Double = displayLongEdge / maxOf(1.0, aspect)
+
+    // Fractions measured against the loaded image. cx/w are 0..1 of displayWidth, cy/h are 0..1
+    // of displayHeight. The D-pad is on the left, the two grey Select/Start ovals in the middle,
+    // the red B (left) and A (right) on the right.
     private val spots = listOf(
-        Spot(Button.UP,     0.270, 0.489, 0.060, 0.075, "↑"),
-        Spot(Button.DOWN,   0.270, 0.604, 0.060, 0.075, "↓"),
-        Spot(Button.LEFT,   0.216, 0.546, 0.072, 0.060, "←"),
-        Spot(Button.RIGHT,  0.324, 0.546, 0.072, 0.060, "→"),
-        Spot(Button.SELECT, 0.448, 0.573, 0.075, 0.052, "SEL"),
-        Spot(Button.START,  0.528, 0.573, 0.075, 0.052, "STA"),
-        Spot(Button.B,      0.675, 0.564, 0.085, 0.085, "B"),
-        Spot(Button.A,      0.770, 0.564, 0.085, 0.085, "A"),
+        Spot(Button.UP,     0.180, 0.455, 0.090, 0.140, "↑"),
+        Spot(Button.DOWN,   0.180, 0.745, 0.090, 0.140, "↓"),
+        Spot(Button.LEFT,   0.120, 0.595, 0.090, 0.140, "←"),
+        Spot(Button.RIGHT,  0.240, 0.595, 0.090, 0.140, "→"),
+        Spot(Button.SELECT, 0.410, 0.710, 0.100, 0.070, "SEL"),
+        Spot(Button.START,  0.540, 0.710, 0.100, 0.070, "STA"),
+        Spot(Button.B,      0.713, 0.710, 0.100, 0.210, "B"),
+        Spot(Button.A,      0.843, 0.710, 0.100, 0.210, "A"),
     )
 
     // Legend order reads like a controller spec, independent of the picture layout.
@@ -84,7 +94,6 @@ class ControllerConfigWindow(
             "-fx-border-width: 2; -fx-background-radius: 6; -fx-border-radius: 6;"
 
     private var bindings = ControllerBindings.fromInputConfig(loadConfig())
-    private val controllerImage: Image? = loadControllerImage()
 
     private val promptLabel = Label().apply {
         font = Font.font(13.0)
@@ -128,14 +137,14 @@ class ControllerConfigWindow(
 
     private fun buildControllerPane(): Pane {
         val pane = Pane().apply {
-            prefWidth = displaySize; prefHeight = displaySize
-            minWidth = displaySize; minHeight = displaySize
+            prefWidth = displayWidth; prefHeight = displayHeight
+            minWidth = displayWidth; minHeight = displayHeight
         }
         if (controllerImage != null) {
             pane.children.add(ImageView(controllerImage).apply {
-                fitWidth = displaySize
-                fitHeight = displaySize
-                isPreserveRatio = true
+                fitWidth = displayWidth
+                fitHeight = displayHeight
+                isPreserveRatio = false  // pane already matches the image aspect
             })
         } else {
             // Asset missing: still show the hotspots over a neutral background.
@@ -150,8 +159,8 @@ class ControllerConfigWindow(
     }
 
     private fun createHotspot(spot: Spot): StackPane {
-        val w = spot.w * displaySize
-        val h = spot.h * displaySize
+        val w = spot.w * displayWidth
+        val h = spot.h * displayHeight
         val glyph = Label(spot.glyph).apply {
             font = Font.font("System", 10.0)
             style = "-fx-font-weight: bold; -fx-text-fill: white;"
@@ -160,8 +169,8 @@ class ControllerConfigWindow(
             prefWidth = w; prefHeight = h
             minWidth = w; minHeight = h
             maxWidth = w; maxHeight = h
-            layoutX = spot.cx * displaySize - w / 2
-            layoutY = spot.cy * displaySize - h / 2
+            layoutX = spot.cx * displayWidth - w / 2
+            layoutY = spot.cy * displayHeight - h / 2
             style = idleHotspotStyle
             onMouseClicked = EventHandler { startListening(spot.button) }
         }
@@ -196,7 +205,9 @@ class ControllerConfigWindow(
         bindings.startListening(button)
         // gamepad.poll() runs inside the JavaFX AnimationTimer, so this listener fires on the
         // FX thread — safe to touch nodes directly, no Platform.runLater needed.
-        gamepad?.captureListener = { index -> onCaptured { bindings.capturePad(index) } }
+        // GH #182: the binding may be a digital button index, an analog-axis direction, or
+        // a POV hat direction — the sealed GamepadBinding covers all three.
+        gamepad?.captureListener = { binding -> onCaptured { bindings.capture(binding) } }
         refresh()
     }
 
@@ -253,9 +264,9 @@ class ControllerConfigWindow(
             node.style = if (button == listening) listeningHotspotStyle else idleHotspotStyle
         }
         promptLabel.text = if (listening != null) {
-            "Press a key or gamepad button for ${displayName(listening)}…  (Esc to cancel)"
+            "Press a key, gamepad button, stick direction, or D-pad for ${displayName(listening)}…  (Esc to cancel)"
         } else {
-            "Click a button on the controller, then press a key or gamepad button to bind it."
+            "Click a button on the controller, then press a key, gamepad button, stick direction, or D-pad to bind it."
         }
     }
 
@@ -264,7 +275,7 @@ class ControllerConfigWindow(
     private fun bindingText(button: Button): String {
         val parts = mutableListOf<String>()
         bindings.keyFor(button)?.let { parts.add(it) }
-        bindings.padFor(button)?.let { parts.add("pad $it") }
+        bindings.padFor(button)?.let { parts.add(it.displayName) }
         return if (parts.isEmpty()) "—" else parts.joinToString(" / ")
     }
 

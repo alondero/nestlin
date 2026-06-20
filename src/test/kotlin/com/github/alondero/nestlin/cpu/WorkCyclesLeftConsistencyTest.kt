@@ -194,4 +194,352 @@ class WorkCyclesLeftConsistencyTest {
         // pageBoundaryFlag is set so saveState can persist the cross.
         assertThat(cpu.pageBoundaryFlag, equalTo(true))
     }
+
+    // ----- Issue #175: helpers stamp per-addressing-mode cycle counts -----
+    // The tests below exercise one representative addressing mode per refactored
+    // helper and assert the real-6502 base cycle count. They are the regression
+    // bar for the Opcodes.kt cycle-thread refactor: any future helper that
+    // hardcodes a single value (or drops the `cycles: Int` parameter) will fail
+    // here because the per-mode count is no longer constant.
+    //
+    // Out of scope for #175: page-boundary +1 cycles (issue #172), accumulator
+    // variants of shift/rotate (0x0A/0x2A/0x4A/0x6A, already 2 cycles), and the
+    // complex load/store family (LAX/SAX/AHX/etc). The tests intentionally stay
+    // inside zero-page or non-page-crossing addressing so a future page-boundary
+    // fix doesn't break them.
+
+    @Test
+    fun adcZeroPageSetsThreeCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x65.toSignedByte() // ADC $zp
+        cpu.memory[0x0001] = 0x42.toSignedByte() // zp address
+        cpu.memory[0x0042] = 0x10.toSignedByte() // operand
+        cpu.registers.accumulator = 0x01.toSignedByte()
+
+        cpu.tick()
+
+        // 3-cycle instruction, post-tick decrement leaves 2.
+        assertThat(cpu.workCyclesLeft, equalTo(2))
+    }
+
+    @Test
+    fun adcAbsoluteSetsFourCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x6D.toSignedByte() // ADC $abs
+        cpu.memory[0x0001] = 0x00.toSignedByte() // low byte
+        cpu.memory[0x0002] = 0x02.toSignedByte() // high byte -> $0200 (RAM)
+        cpu.memory[0x0200] = 0x10.toSignedByte() // operand
+        cpu.registers.accumulator = 0x01.toSignedByte()
+
+        cpu.tick()
+
+        // 4-cycle instruction, post-tick decrement leaves 3.
+        assertThat(cpu.workCyclesLeft, equalTo(3))
+    }
+
+    @Test
+    fun sbcZeroPageSetsThreeCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0xE5.toSignedByte() // SBC $zp
+        cpu.memory[0x0001] = 0x42.toSignedByte()
+        cpu.memory[0x0042] = 0x10.toSignedByte()
+        cpu.registers.accumulator = 0x20.toSignedByte()
+
+        cpu.tick()
+
+        // 3-cycle instruction, post-tick decrement leaves 2.
+        assertThat(cpu.workCyclesLeft, equalTo(2))
+    }
+
+    @Test
+    fun ldaZeroPageSetsThreeCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0xA5.toSignedByte() // LDA $zp
+        cpu.memory[0x0001] = 0x42.toSignedByte()
+        cpu.memory[0x0042] = 0x55.toSignedByte()
+
+        cpu.tick()
+
+        // 3-cycle instruction, post-tick decrement leaves 2.
+        assertThat(cpu.workCyclesLeft, equalTo(2))
+        // The load actually happened (proves the parametrised path ran).
+        assertThat(cpu.registers.accumulator, equalTo(0x55.toSignedByte()))
+    }
+
+    @Test
+    fun ldaAbsoluteSetsFourCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0xAD.toSignedByte() // LDA $abs
+        cpu.memory[0x0001] = 0x00.toSignedByte()
+        cpu.memory[0x0002] = 0x02.toSignedByte() // -> $0200 (RAM)
+        cpu.memory[0x0200] = 0xAA.toSignedByte()
+
+        cpu.tick()
+
+        // 4-cycle instruction, post-tick decrement leaves 3.
+        assertThat(cpu.workCyclesLeft, equalTo(3))
+    }
+
+    @Test
+    fun ldaIndirectXSetsSixCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0xA1.toSignedByte() // LDA ($zp,X)
+        cpu.memory[0x0001] = 0x20.toSignedByte() // zp base
+        cpu.registers.indexX = 0x04.toSignedByte()
+        // Pointer at $0024: low=$00, high=$02 -> target $0200 (RAM).
+        cpu.memory[0x0024] = 0x00.toSignedByte()
+        cpu.memory[0x0025] = 0x02.toSignedByte()
+        cpu.memory[0x0200] = 0x77.toSignedByte()
+
+        cpu.tick()
+
+        // 6-cycle instruction, post-tick decrement leaves 5.
+        // (Old hardcoded value was 2 -> would have been 1; the +4 delta is the
+        //  regression bar for the `load` helper.)
+        assertThat(cpu.workCyclesLeft, equalTo(5))
+        assertThat(cpu.registers.accumulator, equalTo(0x77.toSignedByte()))
+    }
+
+    @Test
+    fun staZeroPageSetsThreeCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x85.toSignedByte() // STA $zp
+        cpu.memory[0x0001] = 0x42.toSignedByte()
+        cpu.registers.accumulator = 0xAB.toSignedByte()
+
+        cpu.tick()
+
+        // 3-cycle instruction, post-tick decrement leaves 2.
+        assertThat(cpu.workCyclesLeft, equalTo(2))
+        // The store actually happened.
+        assertThat(cpu.memory[0x0042], equalTo(0xAB.toSignedByte()))
+    }
+
+    @Test
+    fun staIndirectYSetsSixCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x91.toSignedByte() // STA ($zp),Y
+        cpu.memory[0x0001] = 0x20.toSignedByte() // zp base
+        // Pointer at $0020: low=$00, high=$02 -> target $0200 (RAM).
+        cpu.memory[0x0020] = 0x00.toSignedByte()
+        cpu.memory[0x0021] = 0x02.toSignedByte()
+        cpu.registers.indexY = 0x04.toSignedByte()
+        cpu.registers.accumulator = 0xCD.toSignedByte()
+
+        cpu.tick()
+
+        // 6-cycle instruction, post-tick decrement leaves 5.
+        // (Old hardcoded value was 4 -> would have been 3; +2 delta.)
+        assertThat(cpu.workCyclesLeft, equalTo(5))
+        // STA wrote to $0204 ($0200 + Y=4).
+        assertThat(cpu.memory[0x0204], equalTo(0xCD.toSignedByte()))
+    }
+
+    @Test
+    fun andZeroPageSetsThreeCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x25.toSignedByte() // AND $zp
+        cpu.memory[0x0001] = 0x42.toSignedByte()
+        cpu.memory[0x0042] = 0x0F.toSignedByte()
+        cpu.registers.accumulator = 0xFF.toSignedByte()
+
+        cpu.tick()
+
+        // 3-cycle instruction, post-tick decrement leaves 2.
+        assertThat(cpu.workCyclesLeft, equalTo(2))
+        // A AND 0x0F = 0x0F.
+        assertThat(cpu.registers.accumulator, equalTo(0x0F.toSignedByte()))
+    }
+
+    @Test
+    fun eorImmediateSetsTwoCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x49.toSignedByte() // EOR #imm
+        cpu.memory[0x0001] = 0xFF.toSignedByte()
+        cpu.registers.accumulator = 0x0F.toSignedByte()
+
+        cpu.tick()
+
+        // 2-cycle instruction, post-tick decrement leaves 1.
+        assertThat(cpu.workCyclesLeft, equalTo(1))
+        assertThat(cpu.registers.accumulator, equalTo(0xF0.toSignedByte()))
+    }
+
+    @Test
+    fun cmpZeroPageSetsThreeCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0xC5.toSignedByte() // CMP $zp
+        cpu.memory[0x0001] = 0x42.toSignedByte()
+        cpu.memory[0x0042] = 0x10.toSignedByte()
+        cpu.registers.accumulator = 0x10.toSignedByte()
+
+        cpu.tick()
+
+        // 3-cycle instruction, post-tick decrement leaves 2.
+        assertThat(cpu.workCyclesLeft, equalTo(2))
+        // Equal -> zero flag set, carry set.
+        assertThat(cpu.processorStatus.zero, equalTo(true))
+        assertThat(cpu.processorStatus.carry, equalTo(true))
+    }
+
+    @Test
+    fun cpyImmediateSetsTwoCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0xC0.toSignedByte() // CPY #imm
+        cpu.memory[0x0001] = 0x05.toSignedByte()
+        cpu.registers.indexY = 0x10.toSignedByte()
+
+        cpu.tick()
+
+        // 2-cycle instruction, post-tick decrement leaves 1.
+        assertThat(cpu.workCyclesLeft, equalTo(1))
+    }
+
+    @Test
+    fun aslZeroPageSetsFiveCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x06.toSignedByte() // ASL $zp
+        cpu.memory[0x0001] = 0x42.toSignedByte()
+        cpu.memory[0x0042] = 0x40.toSignedByte()
+
+        cpu.tick()
+
+        // 5-cycle instruction, post-tick decrement leaves 4.
+        // (Old hardcoded value was 2 -> would have been 1; +3 delta.)
+        assertThat(cpu.workCyclesLeft, equalTo(4))
+        // 0x40 << 1 = 0x80, carry cleared (bit 7 of original was 0).
+        assertThat(cpu.memory[0x0042], equalTo(0x80.toSignedByte()))
+        assertThat(cpu.processorStatus.carry, equalTo(false))
+    }
+
+    @Test
+    fun lsrAbsoluteSetsSixCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x4E.toSignedByte() // LSR $abs
+        cpu.memory[0x0001] = 0x00.toSignedByte()
+        cpu.memory[0x0002] = 0x02.toSignedByte() // -> $0200 (RAM)
+        cpu.memory[0x0200] = 0x01.toSignedByte()
+
+        cpu.tick()
+
+        // 6-cycle instruction, post-tick decrement leaves 5.
+        // (Old hardcoded value was 2 -> would have been 1; +4 delta.)
+        assertThat(cpu.workCyclesLeft, equalTo(5))
+        // 0x01 >> 1 = 0x00, carry set (bit 0 of original was 1).
+        assertThat(cpu.memory[0x0200], equalTo(0x00.toSignedByte()))
+        assertThat(cpu.processorStatus.carry, equalTo(true))
+    }
+
+    @Test
+    fun rolZeroPageXSetsSixCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x36.toSignedByte() // ROL $zp,X
+        cpu.memory[0x0001] = 0x40.toSignedByte() // zp base
+        cpu.registers.indexX = 0x02.toSignedByte()
+        cpu.memory[0x0042] = 0x80.toSignedByte()
+        cpu.processorStatus.carry = true
+
+        cpu.tick()
+
+        // 6-cycle instruction, post-tick decrement leaves 5.
+        // (Old hardcoded value was 2 -> would have been 1; +4 delta.)
+        assertThat(cpu.workCyclesLeft, equalTo(5))
+        // (0x80 << 1) | 1 = 0x101, low byte 0x01, carry = 1 (bit 7 of original).
+        assertThat(cpu.memory[0x0042], equalTo(0x01.toSignedByte()))
+        assertThat(cpu.processorStatus.carry, equalTo(true))
+    }
+
+    @Test
+    fun rorAbsoluteXSetsSevenCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x7E.toSignedByte() // ROR $abs,X
+        cpu.memory[0x0001] = 0x00.toSignedByte()
+        cpu.memory[0x0002] = 0x02.toSignedByte() // -> $0200 base (RAM)
+        cpu.registers.indexX = 0x04.toSignedByte()
+        cpu.memory[0x0204] = 0x01.toSignedByte()
+        cpu.processorStatus.carry = true
+
+        cpu.tick()
+
+        // 7-cycle instruction, post-tick decrement leaves 6.
+        // (Old hardcoded value was 2 -> would have been 1; +5 delta.)
+        assertThat(cpu.workCyclesLeft, equalTo(6))
+        // (0x01 >> 1) | 0x80 = 0x80, carry = 1 (bit 0 of original).
+        assertThat(cpu.memory[0x0204], equalTo(0x80.toSignedByte()))
+        assertThat(cpu.processorStatus.carry, equalTo(true))
+    }
+
+    @Test
+    fun incZeroPageSetsFiveCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0xE6.toSignedByte() // INC $zp
+        cpu.memory[0x0001] = 0x42.toSignedByte()
+        cpu.memory[0x0042] = 0x0F.toSignedByte()
+
+        cpu.tick()
+
+        // 5-cycle instruction, post-tick decrement leaves 4.
+        // (Old hardcoded value was 6 -> would have been 5; -1 delta is also a
+        //  regression signal that the parametrised path is wired.)
+        assertThat(cpu.workCyclesLeft, equalTo(4))
+        assertThat(cpu.memory[0x0042], equalTo(0x10.toSignedByte()))
+    }
+
+    @Test
+    fun decAbsoluteXSetsSevenCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0xDE.toSignedByte() // DEC $abs,X
+        cpu.memory[0x0001] = 0x00.toSignedByte()
+        cpu.memory[0x0002] = 0x02.toSignedByte() // -> $0200 base (RAM)
+        cpu.registers.indexX = 0x04.toSignedByte()
+        cpu.memory[0x0204] = 0x10.toSignedByte()
+
+        cpu.tick()
+
+        // 7-cycle instruction, post-tick decrement leaves 6.
+        // (Old hardcoded `unary = 6` -> would have been 5; +1 cycle delta
+        //  is the regression bar proving DEC $abs,X is no longer under-
+        //  counted by the parametrised path.)
+        assertThat(cpu.workCyclesLeft, equalTo(6))
+        assertThat(cpu.memory[0x0204], equalTo(0x0F.toSignedByte()))
+    }
+
+    @Test
+    fun bitAbsoluteSetsFourCycles() {
+        val cpu = freshCpu()
+        cpu.registers.programCounter = 0x0000.toSignedShort()
+        cpu.memory[0x0000] = 0x2C.toSignedByte() // BIT $abs
+        cpu.memory[0x0001] = 0x00.toSignedByte()
+        cpu.memory[0x0002] = 0x02.toSignedByte() // -> $0200 (RAM)
+        cpu.memory[0x0200] = 0xC0.toSignedByte() // bits 6+7 set -> V+N
+        cpu.registers.accumulator = 0x00.toSignedByte()
+
+        cpu.tick()
+
+        // 4-cycle instruction, post-tick decrement leaves 3.
+        // (Old hardcoded value was 3 -> would have been 2; +1 delta.)
+        assertThat(cpu.workCyclesLeft, equalTo(3))
+        // A=0 AND M=0xC0 = 0 -> zero set, V and N mirror M's bits 6 and 7.
+        assertThat(cpu.processorStatus.zero, equalTo(true))
+        assertThat(cpu.processorStatus.overflow, equalTo(true))
+        assertThat(cpu.processorStatus.negative, equalTo(true))
+    }
 }

@@ -20,6 +20,9 @@ hs_err_pid*
 .worktrees/
 .claude/worktrees/
 
+# Claude agent scratch directory (ephemeral — recreated every session for diff staging)
+.claude-tmp/
+
 # Claude local settings
 .claude/settings.local.json
 .claude/ralph-loop.local.md
