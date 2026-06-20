@@ -26,8 +26,16 @@ import javafx.scene.control.Button as FxButton
  * The Controller Configuration screen (Settings → Configure Controls…). Shows a picture of an
  * NES pad with a clickable hotspot over each of the eight buttons. Click a hotspot, then press a
  * keyboard key **or** a gamepad button — whichever fires first becomes that NES button's binding.
- * **Save** writes `input.json` and applies the new mapping live; **Reset to Default** restores the
- * shipped defaults (committed on the next Save). Player 1 only.
+ *
+ * The bottom button bar:
+ *   - **Save** writes `input.json`, applies the new mapping live, and closes the window — the
+ *     close *is* the "saved" confirmation.
+ *   - **Reset to Default** restores the shipped defaults **on-screen only** (no file write); press
+ *     Save to commit them, or Cancel to discard them.
+ *   - **Cancel** closes the window without writing — any in-progress bindings or pending reset are
+ *     discarded.
+ *
+ * Player 1 only.
  *
  * This class is a thin JavaFX shell — all the editing/listening/steal logic lives in the pure,
  * unit-tested [ControllerBindings] (mirroring how [MemoryEditorWindow] sits over [HexEditState]).
@@ -192,8 +200,8 @@ class ControllerConfigWindow(
     private fun buildButtonBar(): HBox {
         val save = FxButton("Save").apply { setOnAction { onSave() } }
         val reset = FxButton("Reset to Default").apply { setOnAction { onReset() } }
-        val close = FxButton("Close").apply { setOnAction { stage.hide() } }
-        return HBox(8.0, save, reset, close).apply {
+        val cancel = FxButton("Cancel").apply { setOnAction { stage.hide() } }
+        return HBox(8.0, save, reset, cancel).apply {
             alignment = Pos.CENTER_RIGHT
             padding = Insets(6.0)
         }
@@ -244,8 +252,9 @@ class ControllerConfigWindow(
         bindings.cancel()
         stopGamepadCapture()
         applyAndSave(bindings.toInputConfig(loadConfig()))
-        refresh()
-        promptLabel.text = "Saved to input.json."
+        // Save commits-and-exits: the window closing IS the "saved" confirmation.
+        // stage.hide() also triggers onHidden, which re-runs the cleanup above — idempotent.
+        stage.hide()
     }
 
     private fun onReset() {
