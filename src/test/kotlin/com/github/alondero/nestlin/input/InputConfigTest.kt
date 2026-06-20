@@ -15,7 +15,7 @@ class InputConfigTest {
     fun `save then load round-trips the config`() {
         val original = InputConfig(
             keyboard = mapOf("K" to "A", "L" to "B", "ENTER" to "START"),
-            gamepad = GamepadConfig(buttons = mapOf(3 to "A"), axisDeadzone = 0.7f),
+            gamepad = GamepadConfig(bindings = mapOf("btn:3" to "A"), axisDeadzone = 0.7f),
         )
 
         InputConfig.save(original, tempDir)

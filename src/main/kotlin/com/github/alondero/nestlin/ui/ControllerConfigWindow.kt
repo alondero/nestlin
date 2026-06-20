@@ -196,7 +196,9 @@ class ControllerConfigWindow(
         bindings.startListening(button)
         // gamepad.poll() runs inside the JavaFX AnimationTimer, so this listener fires on the
         // FX thread — safe to touch nodes directly, no Platform.runLater needed.
-        gamepad?.captureListener = { index -> onCaptured { bindings.capturePad(index) } }
+        // GH #182: the binding may be a digital button index, an analog-axis direction, or
+        // a POV hat direction — the sealed GamepadBinding covers all three.
+        gamepad?.captureListener = { binding -> onCaptured { bindings.capture(binding) } }
         refresh()
     }
 
@@ -253,9 +255,9 @@ class ControllerConfigWindow(
             node.style = if (button == listening) listeningHotspotStyle else idleHotspotStyle
         }
         promptLabel.text = if (listening != null) {
-            "Press a key or gamepad button for ${displayName(listening)}…  (Esc to cancel)"
+            "Press a key, gamepad button, stick direction, or D-pad for ${displayName(listening)}…  (Esc to cancel)"
         } else {
-            "Click a button on the controller, then press a key or gamepad button to bind it."
+            "Click a button on the controller, then press a key, gamepad button, stick direction, or D-pad to bind it."
         }
     }
 
@@ -264,7 +266,7 @@ class ControllerConfigWindow(
     private fun bindingText(button: Button): String {
         val parts = mutableListOf<String>()
         bindings.keyFor(button)?.let { parts.add(it) }
-        bindings.padFor(button)?.let { parts.add("pad $it") }
+        bindings.padFor(button)?.let { parts.add(it.displayName) }
         return if (parts.isEmpty()) "—" else parts.joinToString(" / ")
     }
 

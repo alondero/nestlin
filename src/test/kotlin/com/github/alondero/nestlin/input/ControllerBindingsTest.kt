@@ -18,8 +18,8 @@ class ControllerBindingsTest {
         assertThat(bindings.keyFor(Button.START), equalTo("ENTER"))
         assertThat(bindings.keyFor(Button.UP), equalTo("UP"))
         // Default gamepad: index 0 -> A, 7 -> START.
-        assertThat(bindings.padFor(Button.A), equalTo(0))
-        assertThat(bindings.padFor(Button.START), equalTo(7))
+        assertThat(bindings.padFor(Button.A), equalTo(GamepadBinding.ButtonIndex(0)))
+        assertThat(bindings.padFor(Button.START), equalTo(GamepadBinding.ButtonIndex(7)))
     }
 
     @Test
@@ -41,14 +41,41 @@ class ControllerBindingsTest {
     }
 
     @Test
-    fun `capturePad binds the listening button and stops listening`() {
+    fun `capture binds a gamepad button index to the listening button`() {
         val bindings = ControllerBindings.defaults()
         bindings.startListening(Button.SELECT)
 
-        val bound = bindings.capturePad(9)
+        val bound = bindings.capture(GamepadBinding.ButtonIndex(9))
 
         assertThat(bound, equalTo(Button.SELECT))
-        assertThat(bindings.padFor(Button.SELECT), equalTo(9))
+        assertThat(bindings.padFor(Button.SELECT), equalTo(GamepadBinding.ButtonIndex(9)))
+        assertThat(bindings.listeningFor, absent())
+    }
+
+    @Test
+    fun `capture binds an analog stick axis to the listening button`() {
+        // GH #182: pressing the left stick up (Y-axis negative) while listening for NES UP
+        // must bind the axis and stop the listening state.
+        val bindings = ControllerBindings.defaults()
+        bindings.startListening(Button.UP)
+
+        val bound = bindings.capture(GamepadBinding.Axis("y", AxisDirection.NEGATIVE))
+
+        assertThat(bound, equalTo(Button.UP))
+        assertThat(bindings.padFor(Button.UP), equalTo(GamepadBinding.Axis("y", AxisDirection.NEGATIVE)))
+        assertThat(bindings.listeningFor, absent())
+    }
+
+    @Test
+    fun `capture binds a POV hat direction to the listening button`() {
+        // GH #182: pressing a D-pad hat north while listening for NES UP must bind the POV.
+        val bindings = ControllerBindings.defaults()
+        bindings.startListening(Button.UP)
+
+        val bound = bindings.capture(GamepadBinding.Pov("pov", PovDirection.N))
+
+        assertThat(bound, equalTo(Button.UP))
+        assertThat(bindings.padFor(Button.UP), equalTo(GamepadBinding.Pov("pov", PovDirection.N)))
         assertThat(bindings.listeningFor, absent())
     }
 
@@ -92,10 +119,25 @@ class ControllerBindingsTest {
         val bindings = ControllerBindings.defaults() // index 0 -> A by default
         bindings.startListening(Button.B)
 
-        bindings.capturePad(0)
+        bindings.capture(GamepadBinding.ButtonIndex(0))
 
-        assertThat(bindings.padFor(Button.B), equalTo(0))
+        assertThat(bindings.padFor(Button.B), equalTo(GamepadBinding.ButtonIndex(0)))
         assertThat(bindings.padFor(Button.A), absent())
+    }
+
+    @Test
+    fun `binding an axis steals it from any other button that owned it`() {
+        // Mirror the steal semantics across gamepad input kinds: an axis is bound to one
+        // NES button, so handing it to B should clear any prior owner.
+        val bindings = ControllerBindings.defaults()
+        bindings.startListening(Button.UP)
+        bindings.capture(GamepadBinding.Axis("y", AxisDirection.NEGATIVE))
+        bindings.startListening(Button.DOWN)
+
+        bindings.capture(GamepadBinding.Axis("y", AxisDirection.NEGATIVE))
+
+        assertThat(bindings.padFor(Button.DOWN), equalTo(GamepadBinding.Axis("y", AxisDirection.NEGATIVE)))
+        assertThat(bindings.padFor(Button.UP), absent())
     }
 
     @Test
@@ -117,25 +159,65 @@ class ControllerBindingsTest {
         original.startListening(Button.A)
         original.captureKey("K") // remap A to K
         original.startListening(Button.B)
-        original.capturePad(3)    // remap B's pad button to index 3
+        original.capture(GamepadBinding.ButtonIndex(3)) // remap B's pad button to index 3
 
         val config = original.toInputConfig(InputConfig())
         val reloaded = ControllerBindings.fromInputConfig(config)
 
         assertThat(reloaded.keyFor(Button.A), equalTo("K"))
-        assertThat(reloaded.padFor(Button.B), equalTo(3))
+        assertThat(reloaded.padFor(Button.B), equalTo(GamepadBinding.ButtonIndex(3)))
         assertThat(reloaded.keyFor(Button.START), equalTo("ENTER")) // untouched default survives
     }
 
     @Test
-    fun `toInputConfig preserves gamepad axis and deadzone fields`() {
-        val base = InputConfig(gamepad = GamepadConfig(axisDeadzone = 0.8f, dpadAxisX = 4))
+    fun `round-trips an axis binding through InputConfig`() {
+        val original = ControllerBindings.defaults()
+        original.startListening(Button.UP)
+        original.capture(GamepadBinding.Axis("y", AxisDirection.NEGATIVE))
+
+        val config = original.toInputConfig(InputConfig())
+        val reloaded = ControllerBindings.fromInputConfig(config)
+
+        assertThat(reloaded.padFor(Button.UP), equalTo(GamepadBinding.Axis("y", AxisDirection.NEGATIVE)))
+    }
+
+    @Test
+    fun `round-trips a POV binding through InputConfig`() {
+        val original = ControllerBindings.defaults()
+        original.startListening(Button.DOWN)
+        original.capture(GamepadBinding.Pov("pov", PovDirection.S))
+
+        val config = original.toInputConfig(InputConfig())
+        val reloaded = ControllerBindings.fromInputConfig(config)
+
+        assertThat(reloaded.padFor(Button.DOWN), equalTo(GamepadBinding.Pov("pov", PovDirection.S)))
+    }
+
+    @Test
+    fun `toInputConfig preserves gamepad axis deadzone`() {
+        val base = InputConfig(gamepad = GamepadConfig(axisDeadzone = 0.8f))
         val bindings = ControllerBindings.fromInputConfig(base)
 
         val result = bindings.toInputConfig(base)
 
         assertThat(result.gamepad.axisDeadzone, equalTo(0.8f))
-        assertThat(result.gamepad.dpadAxisX, equalTo(4))
+    }
+
+    @Test
+    fun `toInputConfig stores axis and pov bindings on GamepadConfig`() {
+        val original = ControllerBindings.defaults()
+        original.startListening(Button.UP)
+        original.capture(GamepadBinding.Axis("y", AxisDirection.NEGATIVE))
+        original.startListening(Button.LEFT)
+        original.capture(GamepadBinding.Pov("pov", PovDirection.W))
+
+        val result = original.toInputConfig(InputConfig())
+
+        // One unified bindings map: axis and POV share storageKey shape with button indices.
+        assertThat(result.gamepad.bindings["axis:y:neg"], equalTo("UP"))
+        assertThat(result.gamepad.bindings["pov:pov:w"], equalTo("LEFT"))
+        // Unrelated defaults survive (standard Xbox button 0 still maps to NES A).
+        assertThat(result.gamepad.bindings["btn:0"], equalTo("A"))
     }
 
     @Test
