@@ -17,23 +17,23 @@ class GamepadInputMappingTest {
 
     @Test
     fun `config remap overrides the built-in default for a conventional index`() {
-        // Built-in default maps index 0 -> A. A config remap of 0 -> SELECT must win
+        // Built-in default maps index 0 -> A. A config remap of btn:0 -> SELECT must win
         // (this is the wart the config-first change fixes).
-        val gp = gamepad(GamepadConfig(buttons = mapOf(0 to "SELECT")))
+        val gp = gamepad(GamepadConfig(bindings = mapOf("btn:0" to "SELECT")))
 
         assertThat(gp.mapButtonToNes("Button 0"), equalTo(Controller.Button.SELECT))
     }
 
     @Test
     fun `falls back to the built-in mapping when the index is absent from config`() {
-        val gp = gamepad(GamepadConfig(buttons = emptyMap()))
+        val gp = gamepad(GamepadConfig(bindings = emptyMap()))
 
         assertThat(gp.mapButtonToNes("Button 1"), equalTo(Controller.Button.B))
     }
 
     @Test
     fun `unmapped index with no built-in fallback yields null`() {
-        val gp = gamepad(GamepadConfig(buttons = emptyMap()))
+        val gp = gamepad(GamepadConfig(bindings = emptyMap()))
 
         assertThat(gp.mapButtonToNes("Button 9"), absent())
     }

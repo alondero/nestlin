@@ -94,54 +94,53 @@ data class InputConfig(
 }
 
 /**
- * Gamepad button mapping configuration.
- * Uses SDL2 button indices which are standard across most controllers.
+ * Gamepad input mapping configuration. Every binding — digital button, analog-stick
+ * axis direction, or POV-hat direction — is keyed in a single map by its
+ * [GamepadBinding.storageKey]. The runtime and editor look up by constructing the
+ * matching [GamepadBinding] and calling [getButtonForBinding].
  *
- * Standard Xbox-style layout:
- * - Button 0: A (bottom)
- * - Button 1: B (right)
- * - Button 2: X (left)
- * - Button 3: Y (top)
- * - Button 4: Left Bumper
- * - Button 5: Right Bumper
- * - Button 6: Back/Select
- * - Button 7: Start
- * - Button 8: Left Stick Click
- * - Button 9: Right Stick Click
- * - Button 10: Guide/Home
+ * SDL2 button indices are standard across most controllers:
+ * - Button 0: A (bottom)   - Button 1: B (right)
+ * - Button 2: X (left)     - Button 3: Y (top)
+ * - Button 6: Back/Select  - Button 7: Start
+ * - Buttons 11..14: D-pad (some controllers report it as buttons, not axes)
  */
 data class GamepadConfig(
-    // Button index -> NES button name
-    val buttons: Map<Int, String> = defaultButtonMapping,
+    /**
+     * GamepadBinding.storageKey -> NES button name. Keys look like
+     * `"btn:0"` (A button), `"axis:y:neg"` (left stick pushed up), or
+     * `"pov:pov:n"` (D-pad north). Defaults to the standard Xbox layout; the editor
+     * rewrites this map on Save.
+     */
+    val bindings: Map<String, String> = defaultBindings,
 
-    // Axis configuration for D-pad (some controllers use axes for D-pad)
-    val useAxisForDpad: Boolean = true,
-    val dpadAxisX: Int = 0,  // Left stick X axis (or D-pad axis on some controllers)
-    val dpadAxisY: Int = 1,  // Left stick Y axis
-    val axisDeadzone: Float = 0.5f  // Threshold for axis to register as pressed
+    /** Threshold above which an axis value registers as pressed in either direction. */
+    val axisDeadzone: Float = 0.5f,
 ) {
     companion object {
-        // Standard Xbox-style button mapping
-        val defaultButtonMapping = mapOf(
-            0 to "A",       // A button -> NES A
-            1 to "B",       // B button -> NES B
-            6 to "SELECT",  // Back button -> NES Select
-            7 to "START",   // Start button -> NES Start
-            // D-pad buttons (if controller reports D-pad as buttons, not axes)
-            11 to "UP",
-            12 to "DOWN",
-            13 to "LEFT",
-            14 to "RIGHT"
+        // Standard Xbox-style bindings (storage keys → NES button names).
+        val defaultBindings = mapOf(
+            "btn:0" to "A",
+            "btn:1" to "B",
+            "btn:6" to "SELECT",
+            "btn:7" to "START",
+            // D-pad buttons (some controllers report D-pad as digital buttons, not axes).
+            "btn:11" to "UP",
+            "btn:12" to "DOWN",
+            "btn:13" to "LEFT",
+            "btn:14" to "RIGHT",
         )
     }
 
     /**
-     * Get the NES button for a gamepad button index, or null if not mapped.
+     * Resolve a [GamepadBinding] to its NES button, or null if the user hasn't bound
+     * (or has explicitly cleared) this source. Single source of truth for runtime
+     * dispatch — covers button indices, analog axes, and POV hats uniformly.
      */
-    fun getButtonForIndex(buttonIndex: Int): Controller.Button? {
-        val buttonName = buttons[buttonIndex] ?: return null
+    fun getButtonForBinding(binding: GamepadBinding): Controller.Button? {
+        val name = bindings[binding.storageKey] ?: return null
         return try {
-            Controller.Button.valueOf(buttonName)
+            Controller.Button.valueOf(name)
         } catch (e: IllegalArgumentException) {
             null
         }
