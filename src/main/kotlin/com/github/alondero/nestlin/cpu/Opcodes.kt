@@ -505,8 +505,15 @@ workCyclesLeft = 2
                 //  Relative addressing
                 registers.programCounter = (readByteAtPC() + registers.programCounter).toSignedShort()
 
+                // Issue #176: a taken relative branch costs 3 cycles; if it
+                // crosses a 256-byte page boundary, the 6502 adds +1 cycle.
+                // Compute cycles directly in the taken-arm so the +1 reaches
+                // the scheduler (pageBoundaryFlag alone is write-only).
                 workCyclesLeft = 3
-                if (hasCrossedPageBoundary(previousCounter, registers.programCounter)) pageBoundaryFlag = true
+                if (hasCrossedPageBoundary(previousCounter, registers.programCounter)) {
+                    pageBoundaryFlag = true
+                    workCyclesLeft = 4
+                }
                 if ((previousCounter - 2).toSignedShort() == registers.programCounter) idle = true
             } else {
                 registers.programCounter++ // Increment the program counter
