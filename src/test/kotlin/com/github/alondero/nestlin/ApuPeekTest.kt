@@ -14,9 +14,11 @@ import org.junit.jupiter.api.Test
 class ApuPeekTest {
 
     private fun apuWithFrameIrqPending(): Apu {
-        val memory = Memory()
-        val apu = Apu(memory)
-        memory.apu = apu
+        // Use the factory (issue #22): Memory and Apu are wired together so that
+        // memory.apu is non-null. Test scenarios below call apu.* directly anyway,
+        // but keeping the factory path means a future change to register dispatch
+        // through Memory won't break this helper.
+        val (_, apu) = Memory.createWithApu()
         // 4-step sequence, IRQ enabled (bit 7 = 0 mode, bit 6 = 0 inhibit).
         apu.handleRegisterWrite(0x17, 0)
         // Run the frame counter until it raises the frame IRQ (fires once per
@@ -55,9 +57,7 @@ class ApuPeekTest {
 
     @Test
     fun `peek of a non-status register returns the backing byte`() {
-        val memory = Memory()
-        val apu = Apu(memory)
-        memory.apu = apu
+        val (_, apu) = Memory.createWithApu()
         apu.handleRegisterWrite(0x03, 0xAB.toByte()) // pulse1 length/timer-high
 
         assertThat(apu.peekRegisterRead(0x03), equalTo(0xAB.toByte()))

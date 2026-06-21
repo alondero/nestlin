@@ -19,7 +19,9 @@ class InterruptCounterTest {
 
     @Test
     fun nmiCountIncrementsOncePerDispatchedNmi() {
-        val cpu = Cpu(Memory()).apply {
+        // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
+        // the IRQ-check path reads it on every tick.
+        val cpu = Cpu(Memory.createWithApu().first).apply {
             currentGame = GamePak(spinLoopRom())
             reset()
         }
@@ -47,7 +49,7 @@ class InterruptCounterTest {
 
     @Test
     fun armedButSuppressedNmiDoesNotCount() {
-        val cpu = Cpu(Memory()).apply {
+        val cpu = Cpu(Memory.createWithApu().first).apply {
             reset()
             registers.programCounter = 0x0000.toSignedShort()
             // A run of NOPs so there is always an in-flight instruction (no idle park),

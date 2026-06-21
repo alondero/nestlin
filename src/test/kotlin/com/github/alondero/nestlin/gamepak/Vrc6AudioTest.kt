@@ -233,7 +233,8 @@ class Vrc6AudioTest {
         // Saw divider clocks every other CPU cycle (2 CPU cycles per divider
         // tick). The 6-add-then-reset cycle gives 7 divider ticks per saw
         // period. So f_saw = CPU / (2 * 4096 * 7) ≈ 31.2 Hz.
-        val apu = com.github.alondero.nestlin.Apu(com.github.alondero.nestlin.Memory())
+        // Factory (issue #22): Memory and Apu are wired together so memory.apu is non-null.
+        val (_, apu) = com.github.alondero.nestlin.Memory.createWithApu()
         val saw = Vrc6Saw()
         saw.writeB000(b(0x20))           // rate = 32 → nonzero output
         saw.writeB001(b(0xFF))           // period low = 0xFF

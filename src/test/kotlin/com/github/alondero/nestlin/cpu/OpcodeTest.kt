@@ -9,7 +9,9 @@ import org.junit.jupiter.api.Test
 
 class OpcodeCMPTest {
 
-    val cpu = Cpu(Memory())
+    // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
+    // the IRQ-check path reads it on every tick.
+    val cpu = Cpu(Memory.createWithApu().first)
 
     init {
         with(cpu) {
@@ -55,7 +57,7 @@ class OpcodeCMPTest {
 }
 
 class OpcodePLATest() {
-    val cpu = Cpu(Memory())
+    val cpu = Cpu(Memory.createWithApu().first)
 
     init {
         with(cpu) {
@@ -87,7 +89,7 @@ class OpcodePLATest() {
 }
 
 class OpcodeJSRTest() {
-    val cpu = Cpu(Memory())
+    val cpu = Cpu(Memory.createWithApu().first)
 
     init {
         with(cpu) {

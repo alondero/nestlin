@@ -19,8 +19,9 @@ class AudioPipelineTest {
 
     @Test
     fun bufferFillsOverTimeWithoutThrottling() {
-        val memory = Memory()
-        val apu = Apu(memory)
+        // Factory (issue #22): Memory and Apu are wired so register writes through
+        // Memory dispatch to the APU rather than being silently dropped.
+        val (_, apu) = Memory.createWithApu()
 
         // Run for 60 frames worth of CPU cycles (no throttling)
         // Each frame is 29830 CPU cycles at 4-step mode
@@ -38,8 +39,7 @@ class AudioPipelineTest {
 
     @Test
     fun bufferLevelRemainsStableOverManyFrames() {
-        val memory = Memory()
-        val apu = Apu(memory)
+        val (_, apu) = Memory.createWithApu()
 
         val bufferLevels = mutableListOf<Int>()
 
@@ -71,8 +71,11 @@ class AudioPipelineTest {
 
     @Test
     fun mixingFormulaProducesConsistentOutputRange() {
-        val memory = Memory()
-        val apu = Apu(memory)
+        // Factory (issue #22): Memory and Apu are wired together so writes to
+        // $4000-$4015 actually configure the channels. Before the factory this
+        // test only saw silent output (apu?. was null); now it exercises the real
+        // pulse channel path.
+        val (memory, apu) = Memory.createWithApu()
 
         // Enable pulse channel 1 (square wave)
         memory[0x4000] = 0x50.toByte()  // Duty 12.5%, no envelope
@@ -103,9 +106,55 @@ class AudioPipelineTest {
     }
 
     @Test
+    fun `write to 4000 through Memory actually configures the APU pulse channel`() {
+        // Regression for issue #22: pre-factory, `Memory` had a nullable Apu and
+        // `apu?.handleRegisterWrite(...)` was a silent no-op when unwired, so a
+        // test that built `Memory()` + `Apu(memory)` WITHOUT setting `memory.apu = apu`
+        // (or the AudioPipelineTest pre-#22) wrote to `$4000` and saw the byte land
+        // in `Memory.apuAddressedMemory`, but the pulse channel driver never ran
+        // and `getAudioSamples()` returned all-zero buffers. Now the factory always
+        // wires the pair, so writing `$4000` through Memory MUST configure pulse1
+        // and the channel output MUST go non-zero. If anyone re-introduces a
+        // nullable Apu field (or accidentally restores `apu?.`), this test fails
+        // fast with a zero-output assertion.
+        val (memory, apu) = Memory.createWithApu()
+
+        // Enable pulse1 BEFORE the $4003 write so the length counter actually loads.
+        memory[0x4015] = 0x01.toByte()  // enable pulse1 (length counter now loads)
+        // 75% duty (bits 7-6 = 11 — duty bit is 1 at sequenceStep 0), length halt,
+        // constant volume=15. 75% duty is the only NES duty that has bit=1 at
+        // sequenceStep=0, so the channel output is non-zero IMMEDIATELY after
+        // write4003 resets the sequencer (no need to wait for the timer to wrap).
+        memory[0x4000] = 0xFF.toByte()
+        memory[0x4001] = 0x00.toByte()  // no sweep
+        memory[0x4002] = 0x08.toByte()  // timer low = 8
+        // lengthLoad=1 (NTSC table → 254 frames), timer high=0 → timerPeriod = 8.
+        // Period 8 = ~14 kHz at 1.79 MHz CPU clock, ticks pulse1 every other CPU
+        // cycle. Period >= 8 avoids the `timerPeriod < 8 → silenced` output gate.
+        memory[0x4003] = 0x08.toByte()
+
+        // Two CPU cycles is enough to clock pulse1 once (timer ticks on even
+        // cycles, period 8 → advances the sequence by 1). After that, pulse1.output()
+        // returns either 0 or 15 depending on the duty-cycle bit at the new step.
+        repeat(2) { apu.tick() }
+
+        // The wiring is exercised iff the channel state actually advanced.
+        // pulse1.output() returns 0 when isEnabled=false, lengthCounter=0,
+        // timerPeriod<8, or sweep-muted. With the writes above, all four should
+        // pass — pre-#22 the writes never reached the channel and output was
+        // ALWAYS 0 regardless of how many ticks elapsed.
+        val output = apu.pulse1Output()
+        assertThat(
+            "Memory.write($4000-$4003) must configure pulse1 via the factory wiring; " +
+                "pulse1.output() was $output — wiring regression (issue #22)",
+            output,
+            greaterThan(0)
+        )
+    }
+
+    @Test
     fun emptyBufferDoesNotCauseCrash() {
-        val memory = Memory()
-        val apu = Apu(memory)
+        val (_, apu) = Memory.createWithApu()
 
         // Get samples before any ticks (should return empty array)
         val initialSamples = apu.getAudioSamples()
@@ -121,8 +170,7 @@ class AudioPipelineTest {
 
     @Test
     fun frameCounterResetDoesNotCorruptCycleAccumulator() {
-        val memory = Memory()
-        val apu = Apu(memory)
+        val (_, apu) = Memory.createWithApu()
 
         // Track samples produced over multiple frames
         val samplesPerFrame = mutableListOf<Int>()

@@ -22,7 +22,9 @@ import org.junit.jupiter.api.Test
  */
 class WorkCyclesLeftConsistencyTest {
 
-    private fun freshCpu() = Cpu(Memory()).apply { reset() }
+    // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
+    // the IRQ-check path reads it on every tick.
+    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply { reset() }
 
     @Test
     fun nopImpliedSetsTwoCycles() {
