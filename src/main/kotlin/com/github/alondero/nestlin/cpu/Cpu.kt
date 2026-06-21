@@ -276,7 +276,7 @@ class Cpu(var memory: Memory)
         // after the NMI.
         if (_nmiArmed) return false
         if (_processorStatus.interruptDisable) return false
-        if (memory.apu?.isIrqPending() != true && memory.mapper?.isIrqPending() != true) return false
+        if (!memory.apu.isIrqPending() && memory.mapper?.isIrqPending() != true) return false
 
         // Push PC (high byte first, then low byte)
         val pc = _registers.programCounter.toUnsignedInt()

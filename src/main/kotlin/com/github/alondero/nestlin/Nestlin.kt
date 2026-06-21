@@ -55,12 +55,14 @@ class Nestlin {
     private var suppressRewindCapture = false
 
     init {
-        memory = Memory()
+        // Memory↔APU circular wiring goes through the factory (issue #22): the factory
+        // builds Memory, hands it to Apu (DmaPort for DMC), then attaches Apu back to
+        // Memory (for $4000-$401F register dispatch). After this, memory.apu is
+        // non-null and stays that way for the lifetime of the Memory instance.
+        Memory.createWithApu().also { (m, a) -> memory = m; apu = a }
         cpu = Cpu(memory)
         memory.cpu = cpu
         ppu = Ppu(memory)
-        apu = Apu(memory)
-        memory.apu = apu
         // One savestate per frame into the rewind ring. Registered on the long-lived PPU so it
         // survives ROM loads/resets; fires on the emulation thread at a clean frame boundary.
         ppu.addFrameCompletionListener { captureRewindSnapshot() }

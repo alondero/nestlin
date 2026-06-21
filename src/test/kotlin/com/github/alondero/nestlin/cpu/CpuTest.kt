@@ -20,7 +20,9 @@ class CpuTest {
     fun startsNesTestRomInAutomationByProgramCounter0xC000() {
         val path = Paths.get("testroms/nestest.nes")
 
-        val cpu = Cpu(Memory()).apply {
+        // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
+        // the IRQ-check path reads it on every tick.
+        val cpu = Cpu(Memory.createWithApu().first).apply {
             this.currentGame = GamePak(Files.readAllBytes(path))
             this.reset()
         }
@@ -43,7 +45,7 @@ class CpuTest {
         // mapped), so it triggers the `?: run { logUndocumentedOpcode(...) }`
         // branch in tick(). Set the byte AFTER reset() because reset() calls
         // memory.clear() which would wipe it.
-        val cpu = Cpu(Memory()).apply {
+        val cpu = Cpu(Memory.createWithApu().first).apply {
             reset()
             this.memory[0] = 0xCB.toSignedByte()
         }

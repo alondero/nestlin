@@ -30,7 +30,11 @@ class ExpansionAudioChannelTest {
 
     @Test
     fun `register and clear track the expansion channel list`() {
-        val apu = Apu(Memory())
+        // Factory (issue #22): Memory and Apu are wired so register dispatch
+        // through Memory is non-null. This test only exercises expansion-channel
+        // surface, but going through the factory keeps the construction pattern
+        // consistent.
+        val (_, apu) = Memory.createWithApu()
         val ch1 = NullExpansionChannel()
         val ch2 = NullExpansionChannel()
 
@@ -111,7 +115,7 @@ class ExpansionAudioChannelTest {
 
     @Test
     fun `clearing the expansion channel silences subsequent output`() {
-        val apu = Apu(Memory())
+        val (_, apu) = Memory.createWithApu()
         val ch = FakeSquareChannel(frequencyHz = 1000.0, cpuHz = ntscCpuHz)
         apu.registerExpansionChannel(ch)
         runCycles(apu, seconds = 0.05)
@@ -132,7 +136,7 @@ class ExpansionAudioChannelTest {
      * its own expansion channels before clocking begins.
      */
     private fun renderToSamples(seconds: Double, configure: (Apu) -> Unit): ShortArray {
-        val apu = Apu(Memory())
+        val (_, apu) = Memory.createWithApu()
         configure(apu)
         runCycles(apu, seconds)
         return apu.getAudioSamples()

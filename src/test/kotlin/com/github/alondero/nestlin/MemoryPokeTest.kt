@@ -38,7 +38,9 @@ class MemoryPokeTest {
 
     @Test
     fun `poke of 4014 does not trigger OAM DMA`() {
-        val memory = Memory()
+        // Factory (issue #22): keeps the Cpu construction pattern consistent with the
+        // other Memory tests; the IRQ-check path on cpu.tick() now needs apu non-null.
+        val (memory, _) = Memory.createWithApu()
         val cpu = Cpu(memory)
         memory.cpu = cpu
         // Seed a recognisable page so we'd notice if a DMA copied it into OAM.
@@ -83,7 +85,9 @@ class MemoryPokeTest {
 
     @Test
     fun `poke of a mapper register triggers the bank switch`() {
-        val memory = Memory()
+        // Factory (issue #22): readCartridge now dispatches mapper audio channels
+        // through Apu, so memory.apu must be wired before any readCartridge call.
+        val (memory, _) = Memory.createWithApu()
         // Mapper 2 (UNROM): $8000-$BFFF is the switchable 16KB PRG window, selected
         // by the low 3 bits of any $8000-$FFFF write. 128KB = 8 banks; stamp each
         // bank's first byte with its index so the mapped bank is directly readable.

@@ -33,7 +33,9 @@ class MemoryOamDmaTest {
 
     @Test
     fun `OAM DMA halts the CPU for 513 cycles`() {
-        val memory = Memory()
+        // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
+        // the IRQ-check path reads it on every cpu.tick().
+        val (memory, _) = Memory.createWithApu()
         val cpu = Cpu(memory)
         memory.cpu = cpu
 
@@ -66,7 +68,7 @@ class MemoryOamDmaTest {
 
     @Test
     fun `multiple DMAs in a row each halt the CPU independently`() {
-        val memory = Memory()
+        val (memory, _) = Memory.createWithApu()
         val cpu = Cpu(memory)
         memory.cpu = cpu
 

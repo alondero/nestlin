@@ -50,7 +50,9 @@ class PalApuTimingTest {
 
     @Test
     fun `setting Apu region cascades to the frame counter`() {
-        val apu = Apu(Memory())
+        // Factory (issue #22): Apu needs Memory as DmaPort for DMC; the factory
+        // builds both and wires memory.apu non-null.
+        val (_, apu) = Memory.createWithApu()
         apu.region = Region.PAL
         assertEquals(33254, apu.frameCounterMaxCycles())  // 4-step default, PAL
         // Audio output sample rate is fixed at 44.1 kHz regardless of region.

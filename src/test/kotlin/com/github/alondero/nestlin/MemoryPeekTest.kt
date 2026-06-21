@@ -40,7 +40,9 @@ class MemoryPeekTest {
 
     @Test
     fun `peek does not update the data bus`() {
-        val memory = Memory()
+        // Use the factory (issue #22): $4015 peek dispatches to Apu, and
+        // Memory.apu is non-nullable after the factory wires the pair.
+        val (memory, _) = Memory.createWithApu()
         memory[0x0005] = 0x42
         memory.dataBus = 0x7E // sentinel
 
@@ -55,7 +57,9 @@ class MemoryPeekTest {
 
     @Test
     fun `peek of cartridge space matches the mapper read`() {
-        val memory = Memory()
+        // Factory (issue #22): readCartridge now dispatches mapper audio channels
+        // through Apu, so memory.apu must be wired before any readCartridge call.
+        val (memory, _) = Memory.createWithApu()
         memory.readCartridge(testGamePak { mapper = 0; prgKb = 16; chrKb = 8 })
         val mapper = memory.mapper!!
 

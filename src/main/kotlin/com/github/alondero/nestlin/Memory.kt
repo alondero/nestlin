@@ -16,8 +16,23 @@ class Memory : DmaPort {
     val controller1 = Controller()
     val controller2 = Controller()
 
-    // Will be set by Nestlin after APU creation
-    var apu: Apu? = null
+    /**
+     * APU back-reference for dispatching $4000-$401F register writes/reads
+     * (issue #22). The two halves of Memory↔APU have a circular wiring:
+     * [Apu] takes a [DmaPort] for DMC sample reads, while [Memory] needs
+     * [Apu] to actually drive the channel/frame-counter state on a register
+     * access. The cycle is broken by [createWithApu] — the factory builds
+     * Memory first, hands it to Apu, then attaches Apu back here. Once the
+     * factory returns, [apu] is non-null for the lifetime of this Memory
+     * instance, so dispatch sites can read `apu.handleRegisterWrite(...)`
+     * directly with no null-check.
+     *
+     * Tests that only touch RAM / PPU / controller / DMA regions (i.e. never
+     * read or write $4000-$401F) can still `Memory()` standalone — the lateinit
+     * check fires only when the field is actually read.
+     */
+    lateinit var apu: Apu
+        private set
 
     // Will be set by Nestlin after CPU creation. Memory needs this back-reference
     // so it can halt the CPU for the 513 cycles an OAM DMA takes (NESdev: the CPU
@@ -54,8 +69,8 @@ class Memory : DmaPort {
         // wiring this cart's. Without the clear, swapping a Mapper-24 ROM out
         // for a Mapper-0 ROM would leave the previous VRC6 voices ticking
         // against the silent APU.
-        apu?.clearExpansionChannels()
-        m.expansionAudioChannels().forEach { apu?.registerExpansionChannel(it) }
+        apu.clearExpansionChannels()
+        m.expansionAudioChannels().forEach { apu.registerExpansionChannel(it) }
 
         // Wire CHR banking delegates to the mapper. PPU CHR reads also
         // update the system data-bus, since the PPU drives the shared
@@ -145,7 +160,7 @@ class Memory : DmaPort {
             }
             in 0x4000..0x401F -> {
                 apuAddressedMemory[address - 0x4000] = value
-                apu?.handleRegisterWrite(address - 0x4000, value)
+                apu.handleRegisterWrite(address - 0x4000, value)
             }
             in 0x4020..0xFFFF -> {
                 mapper?.cpuWrite(address, value)
@@ -166,7 +181,7 @@ class Memory : DmaPort {
             in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
             0x4016 -> controller1.read()
             0x4017 -> controller2.read()
-            in 0x4000..0x401F -> apu?.handleRegisterRead(address - 0x4000) ?: apuAddressedMemory[address - 0x4000]
+            in 0x4000..0x401F -> apu.handleRegisterRead(address - 0x4000)
             in 0x4020..0xFFFF -> {
                 // Push the current data-bus value into the mapper BEFORE
                 // calling `cpuRead`, so mappers that opt into open-bus
@@ -213,7 +228,7 @@ class Memory : DmaPort {
         in 0x2000..0x3FFF -> ppuAddressedMemory.peek(address % 8)
         0x4016 -> controller1.peek()
         0x4017 -> controller2.peek()
-        in 0x4000..0x401F -> apu?.peekRegisterRead(address - 0x4000) ?: apuAddressedMemory[address - 0x4000]
+        in 0x4000..0x401F -> apu.peekRegisterRead(address - 0x4000)
         in 0x4020..0xFFFF -> mapper?.cpuPeek(address) ?: 0
         else -> 0
     }
@@ -263,4 +278,32 @@ class Memory : DmaPort {
     }
 
     fun resetVector() = this[0xFFFC, 0xFFFD]
+
+    companion object {
+        /**
+         * Build [Memory] and [Apu] together, breaking their circular wiring
+         * (issue #22).
+         *
+         * Why a factory: the two classes have a genuine mutual wiring dependency —
+         * Apu takes a [DmaPort] (which Memory implements) so the DMC channel can
+         * pull sample bytes, while Memory needs Apu to actually drive the channel
+         * / frame-counter state when a CPU write lands at $4000-$401F. There is no
+         * valid construction order where neither references the other, so Kotlin
+         * can't model it with a plain constructor chain. The factory builds Memory
+         * first, hands it to Apu, then attaches Apu back to Memory. From this point
+         * on `memory.apu` is non-null for the lifetime of the [Memory] instance,
+         * so dispatch sites read `apu.handleRegisterWrite(...)` directly with no
+         * null-check penalty.
+         *
+         * Tests that touch only RAM / PPU / controller / DMA regions (i.e. never
+         * read or write $4000-$401F) can keep using `Memory()` standalone — the
+         * [apu] lateinit check fires only when the field is actually accessed.
+         */
+        fun createWithApu(): Pair<Memory, Apu> {
+            val memory = Memory()
+            val apu = Apu(memory)
+            memory.apu = apu
+            return memory to apu
+        }
+    }
 }

@@ -21,7 +21,9 @@ class IdleLoopTest {
 
     @Test
     fun branchToSelfStopsReExecutingTheInstruction() {
-        val cpu = Cpu(Memory()).apply {
+        // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
+        // the IRQ-check path reads it on every tick.
+        val cpu = Cpu(Memory.createWithApu().first).apply {
             reset()
             registers.programCounter = 0x0000.toSignedShort()
             // BEQ -2  (branches to its own opcode when the zero flag is set)
@@ -46,7 +48,7 @@ class IdleLoopTest {
 
     @Test
     fun jumpToSelfSetsIdle() {
-        val cpu = Cpu(Memory()).apply {
+        val cpu = Cpu(Memory.createWithApu().first).apply {
             reset()
             registers.programCounter = 0x0200.toSignedShort()
             // JMP $0200  (jumps to its own opcode — an unconditional spin loop)
@@ -63,7 +65,7 @@ class IdleLoopTest {
 
     @Test
     fun nmiBreaksOutOfTheIdleParkAndClearsTheFlag() {
-        val cpu = Cpu(Memory()).apply {
+        val cpu = Cpu(Memory.createWithApu().first).apply {
             currentGame = GamePak(spinLoopRom())
             reset()
         }
