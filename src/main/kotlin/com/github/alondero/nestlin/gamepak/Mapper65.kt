@@ -73,10 +73,11 @@ class Mapper65(private val gamePak: GamePak) : Mapper {
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
 
-    // CHR RAM fallback for 0 KB-CHR dumps. The Irem H3001 games all ship
-    // CHR ROM, but a defensive fallback costs nothing and keeps homebrew /
-    // truncated dumps from crashing the PPU read path.
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    // CHR bus: backed by ROM when present, otherwise 8KB of CHR-RAM.
+    // The Irem H3001 games all ship CHR ROM, but the fallback costs
+    // nothing and keeps homebrew or truncated dumps from crashing the
+    // PPU read path.
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
 
     // 8 KB PRG bank count. `coerceAtLeast(1)` so a malformed 0-PRG ROM
     // can't make the fixed-bank read at $E000 compute a negative index.
@@ -181,7 +182,7 @@ class Mapper65(private val gamePak: GamePak) : Mapper {
 
     override fun ppuRead(address: Int): Byte {
         val a = address and 0x1FFF
-        if (chrRom.isEmpty()) return chrRam!![a]
+        if (chrRom.isEmpty()) return chrMemory.read(a)
         // Eight 1 KB CHR windows. Integer division picks the bank, modulo
         // gives the offset inside the bank. `% chrRom.size` keeps an
         // out-of-range bank (game writes a bank number bigger than the ROM)
@@ -194,7 +195,7 @@ class Mapper65(private val gamePak: GamePak) : Mapper {
     }
 
     override fun ppuWrite(address: Int, value: Byte) {
-        if (chrRam != null) chrRam[address and 0x1FFF] = value
+        if (chrRom.isEmpty()) chrMemory.write(address and 0x1FFF, value)
     }
 
     override fun currentMirroring(): Mapper.MirroringMode {
@@ -211,8 +212,8 @@ class Mapper65(private val gamePak: GamePak) : Mapper {
         out.writeInt(irqCounter)
         out.writeInt(irqReloadValue)
         out.writeBoolean(irqPending)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
@@ -224,8 +225,8 @@ class Mapper65(private val gamePak: GamePak) : Mapper {
         irqCounter = input.readInt()
         irqReloadValue = input.readInt()
         irqPending = input.readBoolean()
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 
     override fun snapshot(): MapperStateSnapshot {
@@ -254,7 +255,8 @@ class Mapper65(private val gamePak: GamePak) : Mapper {
                 "irqReloadValue" to irqReloadValue,
                 "irqPending" to if (irqPending) 1 else 0
             ),
-            chrRam = chrRam?.copyOf()
+            // Snapshot chrRam for debug display: extract via the peek seam.
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null
         )
     }
 }

@@ -24,7 +24,7 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
 
     protected val programRom = gamePak.programRom
     protected val chrRom = gamePak.chrRom
-    protected val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    protected val chrMemory: ChrMemory = ChrMemory.default(chrRom)
 
     // PRG bank count (8KB units)
     protected val prgBankCount = programRom.size / 0x2000
@@ -233,7 +233,7 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
         val maskedAddress = address and 0x1FFF
 
         if (chrRom.isEmpty()) {
-            return chrRam!![maskedAddress]
+            return chrMemory.read(maskedAddress)
         }
 
         // MMC3 CHR banking (per NESdev MMC3 wiki):
@@ -266,7 +266,7 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
 
     override fun ppuWrite(address: Int, value: Byte) {
         if (chrRom.isEmpty()) {
-            chrRam!![address and 0x1FFF] = value
+            chrMemory.write(address and 0x1FFF, value)
         }
         // CHR ROM is read-only
     }
@@ -303,8 +303,8 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
         out.writeBoolean(prgMode)
         scanlineCounter.saveState(out)
         out.writeInt(mirroringOverride?.ordinal ?: -1)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
@@ -321,8 +321,8 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
         scanlineCounter.loadState(input)
         val mirrorOrd = input.readInt()
         mirroringOverride = if (mirrorOrd < 0) null else Mapper.MirroringMode.values()[mirrorOrd]
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 
     override fun snapshot(): MapperStateSnapshot {
@@ -351,7 +351,8 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
                 "irqPending" to if (scanlineCounter.isIrqPending()) 1 else 0,
                 "a12ToggleCount" to 0
             ),
-            chrRam = chrRam?.copyOf(),
+            // Snapshot chrRam for debug display: extract via the peek seam.
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
             prgRam = prgRam.copyOf()
         )
     }

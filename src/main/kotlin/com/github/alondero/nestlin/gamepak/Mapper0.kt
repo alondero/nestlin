@@ -12,6 +12,13 @@ class Mapper0(private val gamePak: GamePak) : Mapper {
 
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
+    // No ChrMemory: NROM is purely CHR-ROM. The `chrRom.isEmpty()` guard
+    // in ppuRead returns 0 because NROM has no CHR-RAM bus on real hardware
+    // — unlike MMC1/UNROM/Color Dreams/etc., which allocate 8KB of CHR-RAM
+    // when their CHR-ROM is empty. ADR-0002's chrRamSize=0 case is a
+    // theoretical adapter option; NROM matches that case for a *different*
+    // reason (chip-level, not design-mandated). Don't add a chrMemory here
+    // without first checking real NROM homebrew expectations.
     private val prgBankCount = programRom.size / 0x4000
 
     override fun cpuRead(address: Int): Byte {

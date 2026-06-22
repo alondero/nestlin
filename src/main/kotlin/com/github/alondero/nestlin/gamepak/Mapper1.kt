@@ -24,11 +24,13 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     private var chrBank1 = 0
     private var prgBank = 0
 
-    // CHR RAM is used when CHR ROM is empty
-    private val chrRam: ByteArray? = if (gamePak.chrRom.isEmpty()) ByteArray(0x2000) else null
+    // CHR bus: backed by ROM when present, otherwise 8KB of CHR-RAM.
+    private val chrMemory: ChrMemory = ChrMemory.default(gamePak.chrRom)
+    // Held for save-state/snapshot compatibility (the snapshot field exposes
+    // the backing buffer; the per-mapper save code reads it directly).
+    private val chrRom = gamePak.chrRom
 
     private val programRom = gamePak.programRom
-    private val chrRom = gamePak.chrRom
     private val prgBankCount = programRom.size / 0x4000
 
     // PRG RAM ($6000-$7FFF)
@@ -110,8 +112,8 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     }
 
     override fun ppuRead(address: Int): Byte {
-        if (chrRam != null) {
-            return chrRam[address and 0x1FFF]
+        if (chrRom.isEmpty()) {
+            return chrMemory.read(address and 0x1FFF)
         }
         // CHR banking mode
         val chrMode = if (controlReg.isBitSet(4)) 1 else 0
@@ -135,8 +137,8 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     }
 
     override fun ppuWrite(address: Int, value: Byte) {
-        if (chrRam != null) {
-            chrRam[address and 0x1FFF] = value
+        if (chrRom.isEmpty()) {
+            chrMemory.write(address and 0x1FFF, value)
         }
         // CHR ROM is read-only
     }
@@ -157,8 +159,8 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
         out.writeInt(chrBank0)
         out.writeInt(chrBank1)
         out.writeInt(prgBank)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
         out.write(prgRam)
     }
 
@@ -169,8 +171,8 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
         chrBank0 = input.readInt()
         chrBank1 = input.readInt()
         prgBank = input.readInt()
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
         input.readFully(prgRam)
     }
 
@@ -188,7 +190,10 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
                 "shiftReg" to shiftReg
             ),
             irqState = null,
-            chrRam = chrRam?.copyOf(),
+            // Snapshot chrRam for debug display: extract via the peek seam
+            // (no public accessor for raw bytes; the snapshot is rare so
+            // per-byte copy is fine).
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
             prgRam = prgRam.copyOf()
         )
     }

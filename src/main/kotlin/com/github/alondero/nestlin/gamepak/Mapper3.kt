@@ -25,7 +25,7 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
 
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
     private var chrBank = 0
 
     // Diagnostic: when non-null, every PRG-window write is appended.
@@ -50,12 +50,13 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
         banks = mapOf("chr" to chrBank),
         registers = emptyMap(),
         irqState = null,
-        chrRam = chrRam
+        // Snapshot chrRam for debug display: extract via the peek seam.
+        chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null
     )
 
     override fun ppuRead(address: Int): Byte {
         return if (chrRom.isEmpty()) {
-            chrRam!![address and 0x1FFF]
+            chrMemory.read(address and 0x1FFF)
         } else {
             // 8KB CHR banks
             chrRom[(chrBank * 0x2000 + (address and 0x1FFF)) % chrRom.size]
@@ -65,7 +66,7 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
     override fun ppuWrite(address: Int, value: Byte) {
         if (chrRom.isEmpty()) {
             // CHR RAM is writable
-            chrRam!![address and 0x1FFF] = value
+            chrMemory.write(address and 0x1FFF, value)
         }
         // CHR ROM is read-only
     }
@@ -80,14 +81,14 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(chrBank)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
         super.loadState(input)
         chrBank = input.readInt()
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 }

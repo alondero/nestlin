@@ -132,7 +132,7 @@ class Mapper64(private val gamePak: GamePak) : Mapper4(gamePak) {
     // ---- CHR read ($0000-$1FFF) ----
 
     override fun ppuRead(address: Int): Byte {
-        if (chrRom.isEmpty()) return chrRam!![address and 0x1FFF]
+        if (chrRom.isEmpty()) return chrMemory.read(address and 0x1FFF)
 
         val a = address and 0x1FFF
         val inv = if (chrInvert) 4 else 0
@@ -210,7 +210,7 @@ class Mapper64(private val gamePak: GamePak) : Mapper4(gamePak) {
                 "irqPending" to if (scanlineCounter.isIrqPending()) 1 else 0,
                 "a12ToggleCount" to 0
             ),
-            chrRam = chrRam?.copyOf(),
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
             prgRam = null   // No PRG-RAM on real hardware.
         )
     }

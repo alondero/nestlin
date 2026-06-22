@@ -56,10 +56,10 @@ class Mapper33(private val gamePak: GamePak) : Mapper {
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
 
-    // CHR RAM fallback for 0KB-CHR dumps. The original cartridges all ship CHR
-    // ROM, but a defensive fallback costs nothing and keeps homebrew dumps
-    // from crashing the emulator on PPU read.
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    // CHR bus: backed by ROM when present, otherwise 8KB of CHR-RAM.
+    // The original cartridges all ship CHR ROM, but a defensive fallback
+    // costs nothing and keeps homebrew dumps from crashing the PPU read.
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
 
     // 8KB PRG bank count. `coerceAtLeast(1)` so a malformed 0-PRG ROM can't
     // make `prgBankCount - 1` go negative and crash the fixed-bank read path.
@@ -133,7 +133,7 @@ class Mapper33(private val gamePak: GamePak) : Mapper {
     override fun ppuRead(address: Int): Byte {
         val a = address and 0x1FFF
         if (chrRom.isEmpty()) {
-            return chrRam!![a]
+            return chrMemory.read(a)
         }
         // Eight 1KB CHR windows. Integer division picks the bank, modulo gives
         // the offset inside the bank. `% chrRom.size` keeps an out-of-range
@@ -146,7 +146,7 @@ class Mapper33(private val gamePak: GamePak) : Mapper {
     }
 
     override fun ppuWrite(address: Int, value: Byte) {
-        if (chrRam != null) chrRam[address and 0x1FFF] = value
+        if (chrRom.isEmpty()) chrMemory.write(address and 0x1FFF, value)
     }
 
     override fun currentMirroring(): Mapper.MirroringMode {
@@ -160,8 +160,8 @@ class Mapper33(private val gamePak: GamePak) : Mapper {
         out.writeInt(prgBank1)
         for (b in chrBanks) out.writeInt(b)
         out.writeBoolean(horizontalMirroring)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
@@ -170,8 +170,8 @@ class Mapper33(private val gamePak: GamePak) : Mapper {
         prgBank1 = input.readInt()
         for (i in chrBanks.indices) chrBanks[i] = input.readInt()
         horizontalMirroring = input.readBoolean()
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 
     override fun snapshot(): MapperStateSnapshot {
@@ -194,7 +194,8 @@ class Mapper33(private val gamePak: GamePak) : Mapper {
                 "horizontalMirroring" to if (horizontalMirroring) 1 else 0
             ),
             irqState = null,
-            chrRam = chrRam?.copyOf()
+            // Snapshot chrRam for debug display: extract via the peek seam.
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null
         )
     }
 }
