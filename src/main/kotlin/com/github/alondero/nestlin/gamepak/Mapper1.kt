@@ -152,6 +152,8 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
         }
     }
 
+    override val saveStateVersion: Int = 2
+
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(shiftReg)
@@ -159,7 +161,6 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
         out.writeInt(chrBank0)
         out.writeInt(chrBank1)
         out.writeInt(prgBank)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
         out.write(prgRam)
     }
@@ -171,7 +172,6 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
         chrBank0 = input.readInt()
         chrBank1 = input.readInt()
         prgBank = input.readInt()
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
         input.readFully(prgRam)
     }
@@ -190,10 +190,8 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
                 "shiftReg" to shiftReg
             ),
             irqState = null,
-            // Snapshot chrRam for debug display: extract via the peek seam
-            // (no public accessor for raw bytes; the snapshot is rare so
-            // per-byte copy is fine).
-            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
+            // Snapshot chrRam for debug display.
+            chrRam = chrMemory.snapshotBytes(),
             prgRam = prgRam.copyOf()
         )
     }

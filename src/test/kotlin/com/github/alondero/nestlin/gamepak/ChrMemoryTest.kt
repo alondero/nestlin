@@ -146,4 +146,54 @@ class ChrMemoryTest {
             mem.read(0x2000)
         }
     }
+
+    @Test
+    fun `snapshotBytes returns null when CHR-ROM is present`() {
+        val mem = ChrMemory.default(ByteArray(0x2000) { it.toByte() })
+        assertThat(mem.snapshotBytes(), equalTo(null as ByteArray?))
+    }
+
+    @Test
+    fun `snapshotBytes copies CHR-RAM contents at the configured size`() {
+        val mem = ChrMemory.default(chrRom = ByteArray(0), chrRamSize = 0x2000)
+        mem.write(0x0001, 0x11.toByte())
+        mem.write(0x1234, 0x22.toByte())
+        mem.write(0x1FFF, 0x33.toByte())
+
+        val snap = mem.snapshotBytes()
+        assertThat(snap!!.size, equalTo(0x2000))
+        assertThat(snap[0x0001], equalTo(0x11.toByte()))
+        assertThat(snap[0x1234], equalTo(0x22.toByte()))
+        assertThat(snap[0x1FFF], equalTo(0x33.toByte()))
+        assertThat(snap[0x0000], equalTo(0.toByte()))   // untouched byte stays zero
+    }
+
+    @Test
+    fun `snapshotBytes size tracks chrRamSize - Mapper 19 N163 12KB`() {
+        // The whole point of snapshotBytes vs an inline peek loop: the
+        // size follows the underlying buffer, so Mapper 19's 0x3000 case
+        // works without a per-mapper special case.
+        val mem = ChrMemory.default(chrRom = ByteArray(0), chrRamSize = 0x3000)
+        mem.write(0x2400, 0xCD.toByte())   // bank 9
+        mem.write(0x2FFF, 0xEF.toByte())   // bank 11 last byte
+
+        val snap = mem.snapshotBytes()
+        assertThat(snap!!.size, equalTo(0x3000))
+        assertThat(snap[0x2400], equalTo(0xCD.toByte()))
+        assertThat(snap[0x2FFF], equalTo(0xEF.toByte()))
+    }
+
+    @Test
+    fun `snapshotBytes returns a fresh array - mutating it does not affect backing`() {
+        // The snapshot is a debug-display copy. Mutating it must not
+        // mutate the ChrMemory's RAM.
+        val mem = ChrMemory.default(chrRom = ByteArray(0), chrRamSize = 0x10)
+        mem.write(0x05, 0x42.toByte())
+
+        val snap = mem.snapshotBytes()
+        snap!![0x05] = 0xFF.toByte()
+
+        assertThat(mem.read(0x05), equalTo(0x42.toByte()))
+        assertThat(snap[0x05], equalTo(0xFF.toByte()))
+    }
 }

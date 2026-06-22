@@ -384,14 +384,14 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
                 "irqCounter" to irqCounter,
                 "irqPending" to if (irqPending) 1 else 0
             ),
-            chrRam = if (chrRom.isEmpty()) ByteArray(0x3000) { i -> chrMemory.peek(i) } else null,
+            chrRam = chrMemory.snapshotBytes(),
             prgRam = prgRam.copyOf()
         )
     }
 
     // ---- Save state --------------------------------------------------------
 
-    override val saveStateVersion: Int = 2
+    override val saveStateVersion: Int = 3
 
     override fun saveState(out: DataOutput) {
         super.saveState(out)
@@ -406,7 +406,6 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
         out.writeBoolean(prgRamGlobalWriteEnable)
         out.writeInt(prgRamPageWriteProtectMask)
         out.write(prgRam)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
         audio.saveState(out)
     }
@@ -424,7 +423,6 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
         prgRamGlobalWriteEnable = input.readBoolean()
         prgRamPageWriteProtectMask = input.readInt()
         input.readFully(prgRam)
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
         audio.loadState(input)
     }

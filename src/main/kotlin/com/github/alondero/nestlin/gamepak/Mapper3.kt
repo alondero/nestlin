@@ -51,7 +51,7 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
         registers = emptyMap(),
         irqState = null,
         // Snapshot chrRam for debug display: extract via the peek seam.
-        chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null
+        chrRam = chrMemory.snapshotBytes()
     )
 
     override fun ppuRead(address: Int): Byte {
@@ -78,17 +78,17 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
         }
     }
 
+    override val saveStateVersion: Int = 2
+
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(chrBank)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
         super.loadState(input)
         chrBank = input.readInt()
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
     }
 }

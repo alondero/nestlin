@@ -86,7 +86,7 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
             registers = emptyMap(),
             irqState = null,
             // Snapshot chrRam for debug display: extract via the peek seam.
-            chrRam = ByteArray(0x2000) { i -> chrMemory.peek(i) }
+            chrRam = chrMemory.snapshotBytes()
         )
     }
 }

@@ -29,10 +29,15 @@ import java.io.DataOutput
  *   - [peek] mirrors the project's existing `peek` precedent from
  *     `Memory.kt`. It defaults to [read] but a mapper that grows
  *     read-side-effect banking can override it without changing [read].
- *   - [serialize] / [deserialize] reserve the save-state seam so a future
- *     [ChrMemory] adapter (e.g. battery-backed CHR-RAM) can plug in
- *     without touching [DefaultChrMemory]. The mapper save-state refactor
- *     that uses these hooks is tracked separately from this issue.
+ *   - [serialize] / [deserialize] are the save-state seam: mappers call
+ *     these directly (no leading boolean prefix). ROM-backed adapters
+ *     write 0 bytes; RAM-backed adapters write N bytes — the byte count
+ *     is self-describing. A future [ChrMemory] adapter (e.g. battery-
+ *     backed CHR-RAM) can plug in without touching any mapper.
+ *   - [snapshotBytes] returns a fresh `ByteArray?` copy of the RAM for
+ *     the debug snapshot — null when ROM-backed. Its size tracks
+ *     [chrRamSize], so Mapper 19 N163's 12KB buffer just works without
+ *     a per-mapper special case.
  */
 interface ChrMemory {
     fun read(offset: Int): Byte
@@ -48,6 +53,20 @@ interface ChrMemory {
 
     /** Save-state hook — default no-op. Mirror of [serialize]. */
     fun deserialize(input: DataInput) {}
+
+    /**
+     * Fresh [ByteArray] copy of the CHR-RAM contents for the
+     * [MapperStateSnapshot.chrRam] debug-display field, or null when the
+     * backing is CHR-ROM (the ROM is reference-held by [com.github.alondero.nestlin.gamepak.GamePak]
+     * and not part of the mapper state).
+     *
+     * Uses [peek] so any future adapter that grows a read-side effect (none
+     * today) snapshots cleanly. The size tracks the underlying RAM — Mapper 19
+     * N163's 12KB buffer just works without a per-mapper special case.
+     *
+     * Default is null; [DefaultChrMemory] overrides.
+     */
+    fun snapshotBytes(): ByteArray? = null
 
     companion object {
         /**
@@ -92,4 +111,7 @@ class DefaultChrMemory(
     override fun deserialize(input: DataInput) {
         if (ram.isNotEmpty()) input.readFully(ram)
     }
+
+    override fun snapshotBytes(): ByteArray? =
+        if (ram.isNotEmpty()) ByteArray(ram.size) { i -> peek(i) } else null
 }

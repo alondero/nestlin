@@ -74,11 +74,12 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
         }
     }
 
+    override val saveStateVersion: Int = 2
+
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(prgBank)
         out.writeInt(chrBank)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
     }
 
@@ -86,7 +87,6 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
         super.loadState(input)
         prgBank = input.readInt()
         chrBank = input.readInt()
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
     }
 }

@@ -150,12 +150,13 @@ class Mapper113(private val gamePak: GamePak) : Mapper {
         else Mapper.MirroringMode.HORIZONTAL
     }
 
+    override val saveStateVersion: Int = 2
+
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(prgBank)
         out.writeInt(chrBank)
         out.writeBoolean(verticalMirroring)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
     }
 
@@ -164,7 +165,6 @@ class Mapper113(private val gamePak: GamePak) : Mapper {
         prgBank = input.readInt()
         chrBank = input.readInt()
         verticalMirroring = input.readBoolean()
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
     }
 
@@ -181,7 +181,7 @@ class Mapper113(private val gamePak: GamePak) : Mapper {
             ),
             irqState = null,
             // Snapshot chrRam for debug display: extract via the peek seam.
-            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null
+            chrRam = chrMemory.snapshotBytes()
         )
     }
 }

@@ -158,6 +158,8 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
         }
     }
 
+    override val saveStateVersion: Int = 2
+
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(prgBank6)
@@ -165,7 +167,6 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
         for (b in chrBanks) out.writeInt(b)
         out.writeInt(bankSelect)
         out.write(prgRam)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
     }
 
@@ -176,7 +177,6 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
         for (i in chrBanks.indices) chrBanks[i] = input.readInt()
         bankSelect = input.readInt()
         input.readFully(prgRam)
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
     }
 
@@ -199,7 +199,7 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
             ),
             irqState = null,
             // Snapshot chrRam for debug display: extract via the peek seam.
-            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
+            chrRam = chrMemory.snapshotBytes(),
             prgRam = prgRam.copyOf()
         )
     }

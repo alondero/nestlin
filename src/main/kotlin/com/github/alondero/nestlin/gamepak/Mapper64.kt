@@ -210,7 +210,7 @@ class Mapper64(private val gamePak: GamePak) : Mapper4(gamePak) {
                 "irqPending" to if (scanlineCounter.isIrqPending()) 1 else 0,
                 "a12ToggleCount" to 0
             ),
-            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
+            chrRam = chrMemory.snapshotBytes(),
             prgRam = null   // No PRG-RAM on real hardware.
         )
     }
