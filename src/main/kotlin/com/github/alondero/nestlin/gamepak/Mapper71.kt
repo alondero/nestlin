@@ -110,12 +110,13 @@ class Mapper71(private val gamePak: GamePak) : Mapper {
         }
     }
 
+    override val saveStateVersion: Int = 2
+
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(prgBank)
         out.writeBoolean(bf9097Mode)
         out.writeBoolean(firehawkMirrorUpper == true)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
     }
 
@@ -124,7 +125,6 @@ class Mapper71(private val gamePak: GamePak) : Mapper {
         prgBank = input.readInt()
         bf9097Mode = input.readBoolean()
         firehawkMirrorUpper = if (input.readBoolean()) true else null
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
     }
 
@@ -143,7 +143,7 @@ class Mapper71(private val gamePak: GamePak) : Mapper {
             ),
             irqState = null,
             // Snapshot chrRam for debug display: extract via the peek seam.
-            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null
+            chrRam = chrMemory.snapshotBytes()
         )
     }
 }

@@ -245,6 +245,8 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
         }
     }
 
+    override val saveStateVersion: Int = 2
+
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(prg0)
@@ -261,7 +263,6 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
         out.writeBoolean(irqEnabled)
         out.writeBoolean(irqEnableAfterAck)
         out.writeBoolean(irqPending)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
     }
 
@@ -281,7 +282,6 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
         irqEnabled = input.readBoolean()
         irqEnableAfterAck = input.readBoolean()
         irqPending = input.readBoolean()
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
     }
 
@@ -321,7 +321,7 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
                 "irqEnableAfterAck" to if (irqEnableAfterAck) 1 else 0,
                 "irqPending" to if (irqPending) 1 else 0
             ),
-            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
+            chrRam = chrMemory.snapshotBytes(),
             prgRam = prgRam.copyOf()
         )
     }

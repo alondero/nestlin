@@ -290,6 +290,8 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
      */
     override fun isIrqPending(): Boolean = scanlineCounter.isIrqPending()
 
+    override val saveStateVersion: Int = 2
+
     override fun saveState(out: DataOutput) {
         super.saveState(out)
         out.writeInt(prgBank6)
@@ -303,7 +305,6 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
         out.writeBoolean(prgMode)
         scanlineCounter.saveState(out)
         out.writeInt(mirroringOverride?.ordinal ?: -1)
-        out.writeBoolean(chrRom.isEmpty())
         chrMemory.serialize(out)
     }
 
@@ -321,7 +322,6 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
         scanlineCounter.loadState(input)
         val mirrorOrd = input.readInt()
         mirroringOverride = if (mirrorOrd < 0) null else Mapper.MirroringMode.values()[mirrorOrd]
-        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
         chrMemory.deserialize(input)
     }
 
@@ -352,7 +352,7 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
                 "a12ToggleCount" to 0
             ),
             // Snapshot chrRam for debug display: extract via the peek seam.
-            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
+            chrRam = chrMemory.snapshotBytes(),
             prgRam = prgRam.copyOf()
         )
     }
