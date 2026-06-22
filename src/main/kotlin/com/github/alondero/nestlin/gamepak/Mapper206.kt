@@ -31,7 +31,7 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
 
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
 
     // Number of 8 KB PRG banks available.
     private val prgBankCount = programRom.size / 0x2000
@@ -127,7 +127,7 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
         val maskedAddress = address and 0x1FFF
 
         if (chrRom.isEmpty()) {
-            return chrRam!![maskedAddress]
+            return chrMemory.read(maskedAddress)
         }
 
         // CHR mode 0 is hardwired. R0/R1 are 2 KB banks with the low bit ignored
@@ -145,7 +145,7 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
 
     override fun ppuWrite(address: Int, value: Byte) {
         if (chrRom.isEmpty()) {
-            chrRam!![address and 0x1FFF] = value
+            chrMemory.write(address and 0x1FFF, value)
         }
         // CHR ROM is read-only
     }
@@ -165,8 +165,8 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
         for (b in chrBanks) out.writeInt(b)
         out.writeInt(bankSelect)
         out.write(prgRam)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
@@ -176,8 +176,8 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
         for (i in chrBanks.indices) chrBanks[i] = input.readInt()
         bankSelect = input.readInt()
         input.readFully(prgRam)
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 
     override fun snapshot(): MapperStateSnapshot {
@@ -198,7 +198,8 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
                 "bankSelect" to bankSelect
             ),
             irqState = null,
-            chrRam = chrRam?.copyOf(),
+            // Snapshot chrRam for debug display: extract via the peek seam.
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
             prgRam = prgRam.copyOf()
         )
     }

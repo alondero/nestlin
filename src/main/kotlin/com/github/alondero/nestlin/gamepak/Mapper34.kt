@@ -18,7 +18,7 @@ class Mapper34(private val gamePak: GamePak) : Mapper {
 
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
     private val prgBankCount = programRom.size / 0x8000
     private var prgBank = 0
     private var chrBank = 0
@@ -44,7 +44,7 @@ class Mapper34(private val gamePak: GamePak) : Mapper {
     override fun ppuRead(address: Int): Byte {
         val maskedAddress = address and 0x1FFF
         return if (chrRom.isEmpty()) {
-            chrRam!![maskedAddress]
+            chrMemory.read(maskedAddress)
         } else {
             // 8KB CHR banks
             chrRom[(chrBank * 0x2000 + maskedAddress) % chrRom.size]
@@ -54,7 +54,7 @@ class Mapper34(private val gamePak: GamePak) : Mapper {
     override fun ppuWrite(address: Int, value: Byte) {
         if (chrRom.isEmpty()) {
             // CHR RAM is writable
-            chrRam!![address and 0x1FFF] = value
+            chrMemory.write(address and 0x1FFF, value)
         }
         // CHR ROM is read-only
     }
@@ -70,16 +70,16 @@ class Mapper34(private val gamePak: GamePak) : Mapper {
         super.saveState(out)
         out.writeInt(prgBank)
         out.writeInt(chrBank)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
         super.loadState(input)
         prgBank = input.readInt()
         chrBank = input.readInt()
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 
     override fun snapshot(): MapperStateSnapshot {
@@ -92,7 +92,8 @@ class Mapper34(private val gamePak: GamePak) : Mapper {
             ),
             registers = emptyMap(),
             irqState = null,
-            chrRam = chrRam?.copyOf()
+            // Snapshot chrRam for debug display: extract via the peek seam.
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null
         )
     }
 }

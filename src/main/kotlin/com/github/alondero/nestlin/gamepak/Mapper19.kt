@@ -92,7 +92,7 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
     // the "CHR" page pool + the "extended CHR/nametable" page pool; for our
     // model a single 12KB buffer is enough because reads from both go through
     // the same `ppuRead` dispatch.
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x3000) else null
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom, chrRamSize = 0x3000)
 
     // 4 × 2KB PRG-RAM pages at $6000-$7FFF. _writeProtect gates writes per
     // page; reads are always live.
@@ -306,7 +306,7 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
             val offset = (bank and 0xFF) * 0x0400 + (a and 0x03FF)
             rom[offset % rom.size]
         } else {
-            chrRam!![bankIndex * 0x0400 + (a and 0x03FF)]
+            chrMemory.read(bankIndex * 0x0400 + (a and 0x03FF))
         }
     }
 
@@ -320,7 +320,7 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
             return
         }
         if (chrRom.isEmpty()) {
-            chrRam!![bankIndex * 0x0400 + (a and 0x03FF)] = value
+            chrMemory.write(bankIndex * 0x0400 + (a and 0x03FF), value)
         }
     }
 
@@ -384,7 +384,7 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
                 "irqCounter" to irqCounter,
                 "irqPending" to if (irqPending) 1 else 0
             ),
-            chrRam = chrRam?.copyOf(),
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x3000) { i -> chrMemory.peek(i) } else null,
             prgRam = prgRam.copyOf()
         )
     }
@@ -406,8 +406,8 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
         out.writeBoolean(prgRamGlobalWriteEnable)
         out.writeInt(prgRamPageWriteProtectMask)
         out.write(prgRam)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
         audio.saveState(out)
     }
 
@@ -424,8 +424,8 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
         prgRamGlobalWriteEnable = input.readBoolean()
         prgRamPageWriteProtectMask = input.readInt()
         input.readFully(prgRam)
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
         audio.loadState(input)
     }
 }

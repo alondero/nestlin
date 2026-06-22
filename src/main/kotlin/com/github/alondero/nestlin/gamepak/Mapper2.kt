@@ -21,10 +21,9 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
 
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
-    // CHR RAM initialized to zeros (same as Mapper 3)
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) {
-        ByteArray(0x2000)
-    } else null
+    // CNROM/UNROM: when CHR-ROM is empty, the chip exposes 8KB of CHR-RAM
+    // (some CNROM homebrew relies on this).
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
     private val prgBankCount = programRom.size / 0x4000
     private var chrBank = 0
     // UNROM: $8000-$BFFF switchable, $C000-$FFFF fixed to last bank
@@ -56,7 +55,7 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
     override fun ppuRead(address: Int): Byte {
         val maskedAddress = address and 0x1FFF
         return if (chrRom.isEmpty()) {
-            chrRam!![maskedAddress]
+            chrMemory.read(maskedAddress)
         } else {
             chrRom[(chrBank * 0x2000 + maskedAddress) % chrRom.size]
         }
@@ -64,7 +63,7 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
 
     override fun ppuWrite(address: Int, value: Byte) {
         if (chrRom.isEmpty()) {
-            chrRam!![address and 0x1FFF] = value
+            chrMemory.write(address and 0x1FFF, value)
         }
     }
 
@@ -79,15 +78,15 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
         super.saveState(out)
         out.writeInt(prgBank)
         out.writeInt(chrBank)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
         super.loadState(input)
         prgBank = input.readInt()
         chrBank = input.readInt()
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 }

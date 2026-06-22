@@ -45,7 +45,7 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
 
     protected val programRom: ByteArray = gamePak.programRom
     protected val chrRom: ByteArray = gamePak.chrRom
-    protected val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    protected val chrMemory: ChrMemory = ChrMemory.default(chrRom)
 
     // 8KB PRG bank count; $E000-$FFFF is fixed to the last bank.
     private val prgBankCount = (programRom.size / 0x2000).coerceAtLeast(1)
@@ -223,13 +223,13 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
 
     override fun ppuRead(address: Int): Byte {
         val a = address and 0x1FFF
-        if (chrRom.isEmpty()) return chrRam!![a]
+        if (chrRom.isEmpty()) return chrMemory.read(a)
         val bank = chrBanks[a shr 10]
         return chrRom[(bank * 0x0400 + (a and 0x03FF)) % chrRom.size]
     }
 
     override fun ppuWrite(address: Int, value: Byte) {
-        if (chrRom.isEmpty()) chrRam!![address and 0x1FFF] = value
+        if (chrRom.isEmpty()) chrMemory.write(address and 0x1FFF, value)
     }
 
     override fun currentMirroring(): Mapper.MirroringMode {
@@ -261,8 +261,8 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
         out.writeBoolean(irqEnabled)
         out.writeBoolean(irqEnableAfterAck)
         out.writeBoolean(irqPending)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
@@ -281,8 +281,8 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
         irqEnabled = input.readBoolean()
         irqEnableAfterAck = input.readBoolean()
         irqPending = input.readBoolean()
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 
     /**
@@ -321,7 +321,7 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
                 "irqEnableAfterAck" to if (irqEnableAfterAck) 1 else 0,
                 "irqPending" to if (irqPending) 1 else 0
             ),
-            chrRam = chrRam?.copyOf(),
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null,
             prgRam = prgRam.copyOf()
         )
     }

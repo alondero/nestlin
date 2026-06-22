@@ -17,8 +17,9 @@ import java.io.DataOutput
 class Mapper7(private val gamePak: GamePak) : Mapper {
 
     private val programRom = gamePak.programRom
-    // AxROM uses CHR RAM, not ROM
-    private val chrRam = ByteArray(0x2000)
+    // AxROM uses CHR RAM, not ROM. Pass an empty chrRom to ChrMemory so the
+    // storage-side allocates the standard 8KB CHR-RAM buffer.
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom = ByteArray(0))
     private val prgBankCount = programRom.size / 0x8000
     private var prgBank = 0
     private var mirroringBit = 0
@@ -43,12 +44,12 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
     }
 
     override fun ppuRead(address: Int): Byte {
-        return chrRam[address and 0x1FFF]
+        return chrMemory.read(address and 0x1FFF)
     }
 
     override fun ppuWrite(address: Int, value: Byte) {
         // CHR RAM is fully writable
-        chrRam[address and 0x1FFF] = value
+        chrMemory.write(address and 0x1FFF, value)
     }
 
     override fun currentMirroring(): Mapper.MirroringMode {
@@ -64,14 +65,14 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
         super.saveState(out)
         out.writeInt(prgBank)
         out.writeInt(mirroringBit)
-        out.write(chrRam)
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
         super.loadState(input)
         prgBank = input.readInt()
         mirroringBit = input.readInt()
-        input.readFully(chrRam)
+        chrMemory.deserialize(input)
     }
 
     override fun snapshot(): MapperStateSnapshot {
@@ -84,7 +85,8 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
             ),
             registers = emptyMap(),
             irqState = null,
-            chrRam = chrRam.copyOf()
+            // Snapshot chrRam for debug display: extract via the peek seam.
+            chrRam = ByteArray(0x2000) { i -> chrMemory.peek(i) }
         )
     }
 }

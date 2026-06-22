@@ -38,8 +38,9 @@ class Mapper71(private val gamePak: GamePak) : Mapper {
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
 
+    // CHR bus: backed by ROM when present, otherwise 8KB of CHR-RAM.
     // CHR RAM fallback for dumps that ship 0 KB of CHR (8 KB writable).
-    private val chrRam: ByteArray? = if (chrRom.isEmpty()) ByteArray(0x2000) else null
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
 
     private val prgBankCount = programRom.size / 0x4000
 
@@ -91,11 +92,11 @@ class Mapper71(private val gamePak: GamePak) : Mapper {
 
     override fun ppuRead(address: Int): Byte {
         val a = address and 0x1FFF
-        return if (chrRam != null) chrRam[a] else chrRom[a]
+        return if (chrRom.isEmpty()) chrMemory.read(a) else chrRom[a]
     }
 
     override fun ppuWrite(address: Int, value: Byte) {
-        if (chrRam != null) chrRam[address and 0x1FFF] = value
+        if (chrRom.isEmpty()) chrMemory.write(address and 0x1FFF, value)
     }
 
     override fun currentMirroring(): Mapper.MirroringMode {
@@ -114,8 +115,8 @@ class Mapper71(private val gamePak: GamePak) : Mapper {
         out.writeInt(prgBank)
         out.writeBoolean(bf9097Mode)
         out.writeBoolean(firehawkMirrorUpper == true)
-        out.writeBoolean(chrRam != null)
-        if (chrRam != null) out.write(chrRam)
+        out.writeBoolean(chrRom.isEmpty())
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
@@ -123,8 +124,8 @@ class Mapper71(private val gamePak: GamePak) : Mapper {
         prgBank = input.readInt()
         bf9097Mode = input.readBoolean()
         firehawkMirrorUpper = if (input.readBoolean()) true else null
-        val hasChrRam = input.readBoolean()
-        if (hasChrRam && chrRam != null) input.readFully(chrRam)
+        input.readBoolean()    // hasChrRam — chrMemory knows whether it has RAM
+        chrMemory.deserialize(input)
     }
 
     override fun snapshot(): MapperStateSnapshot {
@@ -141,7 +142,8 @@ class Mapper71(private val gamePak: GamePak) : Mapper {
                 }
             ),
             irqState = null,
-            chrRam = chrRam?.copyOf()
+            // Snapshot chrRam for debug display: extract via the peek seam.
+            chrRam = if (chrRom.isEmpty()) ByteArray(0x2000) { i -> chrMemory.peek(i) } else null
         )
     }
 }
