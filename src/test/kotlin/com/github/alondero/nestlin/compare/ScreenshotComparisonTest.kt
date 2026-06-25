@@ -1,17 +1,27 @@
 package com.github.alondero.nestlin.compare
 
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Paths
 
-@org.junit.jupiter.api.Tag("mesen")
+/**
+ * Pixel-diff vs Mesen2 across a small smoke set (Tetris/Lolo1/Kirby).
+ *
+ * Lane membership + Mesen2 availability are gated by [RequiresMesen2]: the test
+ * is excluded from `./gradlew test` (tag-inherited), included by
+ * `./gradlew testMesenComparison`, and SKIPs loudly with the resolved Mesen2 path
+ * when Mesen2 is absent (or hard-FAILs when `NESTLIN_REQUIRE_MESEN2` is set —
+ * see `RequiresMesen2Condition`). Mesen2-execution errors mid-capture
+ * (`Mesen2ScreenshotException`, `Mesen2ExecutionException`) propagate as hard
+ * FAILs instead of being swallowed into SKIPPED — those are real harness
+ * failures (broken `MESEN2_PATH`, missing I/O permissions, Mesen2 non-zero
+ * exit), not "no oracle" situations, and they must surface loudly (GH #44).
+ */
+@RequiresMesen2
 class ScreenshotComparisonTest {
 
     companion object {
-        private const val MESEN2_SKIP_MESSAGE = "Mesen2 not available or screenshot capture not supported"
-
         @JvmStatic
         fun data(): List<Arguments> = listOf(
             Arguments.of("tetris.nes", 60, 0.0),
@@ -23,8 +33,6 @@ class ScreenshotComparisonTest {
     @ParameterizedTest(name = "{0} @ frame {1}")
     @MethodSource("data")
     fun compareFrames(romName: String, frameNumber: Int, threshold: Double) {
-        assumeTrue(Mesen2ReferenceRunner.isMesen2Available(), MESEN2_SKIP_MESSAGE)
-
         val romPath = Paths.get("testroms/$romName")
         val reportsDir = Paths.get("build/reports/screenshot-diffs/$romName-frame-$frameNumber")
         val nestlinPng = reportsDir.resolve("nestlin.png")
@@ -33,17 +41,11 @@ class ScreenshotComparisonTest {
 
         NestlinHeadlessRunner.captureFrame(romPath, frameNumber, nestlinPng)
 
-        try {
-            Mesen2ReferenceRunner.captureFrame(romPath, frameNumber, mesen2Png)
-        } catch (e: Mesen2ScreenshotException) {
-            // Screenshot capture failed (I/O access disabled, no display, etc.)
-            // Skip rather than fail - this is an environment limitation, not a code bug.
-            assumeTrue(false, e.message)
-        } catch (e: Mesen2ExecutionException) {
-            // Mesen2 crashed or couldn't run (missing, permissions, etc.)
-            // Skip rather than fail.
-            assumeTrue(false, e.message)
-        }
+        // Let Mesen2ScreenshotException / Mesen2ExecutionException propagate as
+        // hard FAILs. These are real harness errors — a missing screenshot file,
+        // a Mesen2 non-zero exit, a missing display — and the GH #44 issue is
+        // explicit that they must NOT be converted to SKIPPED.
+        Mesen2ReferenceRunner.captureFrame(romPath, frameNumber, mesen2Png)
 
         val result = diff(nestlinPng, mesen2Png, threshold)
 
