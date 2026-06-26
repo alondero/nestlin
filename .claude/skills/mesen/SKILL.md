@@ -160,14 +160,13 @@ local s = string.format("tile=${'$'}%02X", t)
 | `src/test/kotlin/.../compare/Mesen2ReferenceRunner.kt` | Screenshot capture via v2 GUI |
 | `src/test/kotlin/.../compare/Mesen2OamDumpRunner.kt` | Multi-frame OAM dump via Lua + `emu.read(spriteRam)` |
 | `src/test/kotlin/.../compare/Mesen2StateCapturer.kt` | Single-frame CPU/PPU state via `getState()` |
-| `src/test/kotlin/.../compare/ScreenshotComparisonTest.kt` | Parameterised pixel-diff harness |
-| `src/test/kotlin/.../compare/KirbyMesenVsNestlinOamTest.kt` | Driver for OAM dump comparison |
+| `src/test/kotlin/.../compare/ScreenshotComparisonTest.kt` | Parameterised pixel-diff harness (now `@RequiresMesen2`-gated; see GH #44) |
 | `src/test/kotlin/.../compare/DebugMesen2CaptureTest.kt` | Manual state-capture smoke test |
 
 ## Known gotchas
 
 - **Gradle daemon env var inheritance**: `MESEN2_PATH` set in PowerShell may not reach the test JVM. Restart the daemon (`./gradlew --stop`) or forward explicitly via `build.gradle.kts`.
-- **`assumeTrue` swallows real errors**: `ScreenshotComparisonTest` catches `Mesen2ExecutionException`/`Mesen2ScreenshotException` and calls `assumeTrue(false)`, hiding the real cause as SKIPPED. When debugging, temporarily convert to `fail()` to see the message.
+- **`assumeTrue` swallowed real errors (FIXED by GH #44)**: `ScreenshotComparisonTest` and `Mapper64KlaxMesen2ScreenshotTest` used to catch `Mesen2ExecutionException`/`Mesen2ScreenshotException` and call `assumeTrue(false, e.message)`, masking harness failures (broken `MESEN2_PATH`, missing I/O permissions, Mesen2 non-zero exit) as SKIPPED. Both tests are now `@RequiresMesen2`-gated for the availability precondition (loud SKIP, or hard FAIL under `NESTLIN_REQUIRE_MESEN2`) and let Mesen2-execution exceptions propagate as hard FAILs. If you see a test fail with `Mesen2ScreenshotException` / `Mesen2ExecutionException`, the harness is broken — read the message, do not retry the test.
 
 ## See also
 

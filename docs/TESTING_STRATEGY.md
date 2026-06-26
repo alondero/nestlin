@@ -18,8 +18,7 @@ Today's regression net for rendering/mapper bugs is heavily weighted toward **pi
 
 | Test | File | What it checks | Cost per run | Brittleness |
 |---|---|---|---|---|
-| `ScreenshotComparisonTest.compareFrames` (×3) | `src/test/kotlin/.../compare/ScreenshotComparisonTest.kt:1-70` | Tetris@60, Lolo1@60, Kirby@150 — pixel diff | ~10–30s per case (Mesen2 GUI boot + emulation) | Tetris/Lolo1 at **0.0% threshold** (sub-pixel differences fail); Kirby at 20% (loose, low value). Silently skips on missing Mesen2. |
-| `KirbyScreenshotTest` (×4) | `src/test/kotlin/.../compare/KirbyScreenshotTest.kt:17-211` | Captures Kirby frames 1–20 as PNGs, prints non-black pixel counts | Multiple emulation passes | **No assertions** — outputs files for human inspection. Test passes regardless of correctness. |
+| `ScreenshotComparisonTest.compareFrames` (×3) | `src/test/kotlin/.../compare/ScreenshotComparisonTest.kt` | Tetris@60, Lolo1@60, Kirby@150 — pixel diff | ~10–30s per case (Mesen2 GUI boot + emulation) | Tetris/Lolo1 at **0.0% threshold** (sub-pixel differences fail); Kirby at 20% (loose, low value). `@RequiresMesen2` — loud SKIP or hard FAIL (under `NESTLIN_REQUIRE_MESEN2`) when Mesen2 is missing; Mesen2-execution errors mid-capture propagate as hard FAILs (no silent skip). |
 | `ScreenshotCapture.captureScreenshots` | `.../compare/ScreenshotCapture.kt:20-79` | Ad-hoc capture from env-var ROM list | Variable | Dev helper, not a regression test. Silently no-op without env vars. |
 
 ### 2.2 State/OAM tests (the model to expand)
@@ -29,8 +28,6 @@ Today's regression net for rendering/mapper bugs is heavily weighted toward **pi
 | `GoldenLogTest` | `src/test/kotlin/.../GoldenLogTest.kt:10-91` | CPU instruction-by-instruction trace vs `src/test/resources/nestest.log` | ~10–30s | The gold standard for CPU. Byte-precise, no display, no Mesen2 process. **This is the shape every test should aspire to.** |
 | `StateComparisonTest.compareStates` (×3) | `.../compare/StateComparisonTest.kt:1-68` | CPU + PPU regs + RAM + OAM + palette at target frame | ~30s for 3 cases (Mesen2 boots once per case) | Already non-pixel. Just needs the runner to stop booting cold per test. |
 | `StateCaptureIntegrationTest` (×3) | `.../compare/StateCaptureIntegrationTest.kt:1-57` | Same shape as above, Tetris @ frame 60 | ~10s per case | Diagnostic variant. |
-| `KirbyOamSnapshotTest` | `.../compare/KirbyOamSnapshotTest.kt:20-106` | Writes Nestlin OAM dump to `build/kirby-oam-snapshots.txt` at many frames | ~5–10s (1500 emulated frames) | **No comparison — human reads the file.** |
-| `KirbyMesenVsNestlinOamTest` | `.../compare/KirbyMesenVsNestlinOamTest.kt:14-42` | Same as above, but Mesen2 side. Outputs to `build/kirby-oam-mesen2/frameNNNN.txt` | ~10–30s | **No comparison — human diffs the two directories by eye.** |
 
 ### 2.3 Helper infrastructure
 
@@ -44,9 +41,9 @@ Today's regression net for rendering/mapper bugs is heavily weighted toward **pi
 ### 2.4 Concrete pain-point findings
 
 1. **Mesen2 GUI boot per test.** Every Mesen2-backed test starts a fresh process, loads the ROM cold, emulates to the target frame, exits. Six Mesen2-backed tests = six full boots = several minutes wall time.
-2. **`assumeTrue()` silent skips.** `ScreenshotComparisonTest:33-34`, `StateComparisonTest:35`, `StateCaptureIntegrationTest:25-35`, `KirbyMesenVsNestlinOamTest:19-26`. When Mesen2 is missing, when a display is detached, when I/O permissions are off, when a ROM isn't on disk — the test passes. CI on a host without Mesen2 gives a false green.
+2. **`assumeTrue()` silent skips.** (GH #44 partly addressed.) `StateComparisonTest:34`, `StateCaptureIntegrationTest:28,42` still use bare `assumeTrue(Mesen2StateCapturer.isMesen2Available(), ...)` for their Mesen2 gate — fine because the precondition message names the cause, but candidate for migration to `@RequiresMesen2` for consistency. `ScreenshotComparisonTest` + `Mapper64KlaxMesen2ScreenshotTest` are now `@RequiresMesen2`-gated (loud SKIP or strict-mode hard FAIL) AND let Mesen2-execution exceptions propagate as hard FAILs. ROM-missing skips in `BigNoseHangTest`, `MicroMachines*` tests, and `AkiraMesen2OracleTest`/`AkiraFreezeRegressionTest` are a separate `Phase 1.2` concern (parameterized exclusion).
 3. **0.0% pixel threshold** on Tetris/Lolo1 means any sub-pixel rounding, palette LUT change, or 1-cycle scroll skew fails. The PPU pixel pipeline has a known latent off-by-one between background `x = cycle - 2` and sprite `pixelX = cycle - 1` (see `mmc3-sprite-pipeline-fix-2026-05-18` memory) — fixing that *correctly* could currently fail these tests.
-4. **Manual eye-diffing.** `KirbyOamSnapshotTest` and `KirbyMesenVsNestlinOamTest` produce file trees in `build/` and expect a human to compare them. This caught Kirby bugs once; it does not protect against regressions.
+4. **Manual eye-diffing.** (GH #44 removed the named offenders: `KirbyOamSnapshotTest` + `KirbyMesenVsNestlinOamTest` + `KirbyScreenshotTest` deleted per Phase 6; their build/ artefacts are no longer produced by the test suite.) Remaining eye-diff surface: `build/reports/state-diffs/` and `build/reports/klax-screenshots/` for diagnostic dives after a FAIL — by design, not by accident.
 5. **Reflection-based PPU state extraction.** `NestlinStateCapturer:112-128` reaches into private `Ppu` fields by name. Rename `cycle` → `dot` and the test silently captures zeros.
 6. **Lua → JSON → regex pipeline** in `Mesen2StateCapturer:246-280` has no validation. Missing fields parse as `0`, silently producing false matches.
 7. **PNG round-trip when only bytes are needed.** `Mesen2OamDumpRunner` writes a 60KB screenshot per target frame even though the caller filters for `.txt` outputs.
@@ -189,9 +186,9 @@ This is the production pattern, not optional defensive programming. Lua silently
 **New regression test added:** `Mesen2StateCapturerSmokeTest` — uses the in-repo `nestest.nes` so it's the first Mesen2-backed test that can actually run in CI when Mesen2 is available. Lives in the `testMesenComparison` task (not the default `test`).
 
 ### Phase 1 — Stop the silent skips (≤1 day)
-- [ ] Replace every `assumeTrue(mesen2Available)` with a strict mode controlled by a single env var (`NESTLIN_REQUIRE_MESEN2`). CI sets it to `true` and fails loudly when Mesen2 is missing. Local devs can opt in. Today's pattern of "silently green if oracle absent" is the worst of both worlds.
+- [x] Replace every `assumeTrue(mesen2Available)` with a strict mode controlled by a single env var (`NESTLIN_REQUIRE_MESEN2`). CI sets it to `true` and fails loudly when Mesen2 is missing. Local devs can opt in. Today's pattern of "silently green if oracle absent" is the worst of both worlds. **DONE for the two named sites (`ScreenshotComparisonTest`, `Mapper64KlaxMesen2ScreenshotTest`) via GH #44.** Other `assumeTrue(Mesen2StateCapturer.isMesen2Available())` sites (`StateComparisonTest`, `StateCaptureIntegrationTest`, `Mesen2StateCapturerSmokeTest`, `GxRomStateComparisonTest`, `MicroMachinesDivergenceSweepTest`, `MicroMachinesMapper71StateComparisonTest`, mapper regression tests' bank-move guards) carry a meaningful precondition message and remain — migration candidate, not a bug.
 - [ ] Same for missing ROMs: `assumeTrue(Files.exists(kirbyRom))` becomes a parameterized exclusion driven by a single config, not scattered silent returns.
-- [ ] `KirbyScreenshotTest`, `KirbyOamSnapshotTest`, `KirbyMesenVsNestlinOamTest` — either gain assertions or move out of `test/` into a separate `debug/` source set so they don't masquerade as regression tests.
+- [x] `KirbyScreenshotTest`, `KirbyOamSnapshotTest`, `KirbyMesenVsNestlinOamTest` — either gain assertions or move out of `test/` into a separate `debug/` source set so they don't masquerade as regression tests. **DONE via GH #44 — all three deleted.** Phase 6 deletion item resolved early.
 
 ### Phase 2 — Reuse one Mesen2 process per suite (≤2 days)
 - [ ] Build a `Mesen2Session` that launches Mesen2 once per JUnit suite (via `@BeforeAll`/`@AfterAll`), loads a Lua "test server" script that accepts commands over a file/stdin/socket: `load <rom>`, `runTo <frame>`, `snapshotState`, `snapshotOam`, `snapshotPalette`, `quit`. Each individual test issues commands and parses replies.
@@ -218,7 +215,7 @@ This is the production pattern, not optional defensive programming. Lua silently
 - [ ] New tests load the fixture and assert behaviour from N frames after the savepoint, not from cold boot. Per-test wall time drops from 10s to 0.5s.
 
 ### Phase 6 — Retire the dead weight
-- [ ] Delete `KirbyScreenshotTest`, `KirbyOamSnapshotTest`, `KirbyMesenVsNestlinOamTest` once Phase 3 + Phase 4 cover the same behaviour with assertions.
+- [x] Delete `KirbyScreenshotTest`, `KirbyOamSnapshotTest`, `KirbyMesenVsNestlinOamTest` once Phase 3 + Phase 4 cover the same behaviour with assertions. **DONE via GH #44 — deleted outright (no successor test yet; the comparison surface they enable is covered by `./gradlew bootcheck` for oracle-free smoke and `./gradlew diverge` for state-diff diagnostic).** Re-introduce an asserted successor once Phase 3 (state diffs) lands.
 - [ ] Consolidate `Mesen2OamDumpRunner` into the `Mesen2Session` API from Phase 2 — the standalone runner stops writing PNGs callers don't want.
 
 ---
@@ -264,7 +261,7 @@ When adding a regression test for a new bug, pick the cheapest level that catche
 ## 9. Definition of done for this strategy
 
 - [ ] Phase 0 spike result recorded in this doc.
-- [ ] No `assumeTrue()`-style silent skip in any `compare/` test (Phase 1).
+- [x] No `assumeTrue()`-style silent skip in any `compare/` test (Phase 1). **DONE for the two named silent-Mesen2-error swallow sites (`ScreenshotComparisonTest`, `Mapper64KlaxMesen2ScreenshotTest`) via GH #44; remaining `assumeTrue(mesen2Available)` sites carry a precondition message, so they are loud skips not silent skips.** ROM-missing skips are a separate `Phase 1.2` item.
 - [ ] Mesen2 process starts ≤1× per JUnit suite (Phase 2).
 - [ ] `ScreenshotComparisonTest` retains at most one pixel-diff case; the rest are state diffs (Phase 3).
 - [ ] At least one hook-based test exists for MMC3 IRQ correctness (Phase 4).
