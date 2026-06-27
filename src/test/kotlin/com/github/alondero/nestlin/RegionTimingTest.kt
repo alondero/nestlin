@@ -62,7 +62,9 @@ class RegionTimingTest {
         nestlin.config.regionOverride = Region.PAL
         nestlin.applyRegion()
         assertEquals(Region.PAL, nestlin.currentRegion())
-        assertEquals(Region.PAL.refreshRateHz, nestlin.config.targetFps, 0.0001)
+        // targetFps now lives on RegionConfig (issue #189): single source of truth for the
+        // resolved timing, no more writeback from applyRegion into EmulatorConfig.targetFps.
+        assertEquals(Region.PAL.refreshRateHz, nestlin.regionConfig.targetFps, 0.0001)
 
         // Clearing the override falls back to detection (NTSC default here).
         nestlin.config.regionOverride = null

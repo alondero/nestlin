@@ -149,8 +149,8 @@ class NestlinApplication : FrameListener, Application() {
 
     private val mouseNearTopProperty = javafx.beans.property.SimpleBooleanProperty(false)
 
-    // Current ROM path for Hard Reset functionality
-    private var currentRomPath: Path? = null
+    // Current ROM path: read from `nestlin.loadedRom?.sourcePath` (issue #189). The path
+    // lives with the GamePak in Nestlin now, so we don't keep a separate cached field.
     // Emulation thread reference for stop/start control
     private var emulationThread: Thread? = null
 
@@ -390,7 +390,7 @@ class NestlinApplication : FrameListener, Application() {
             val memoryEditorItem = MenuItem("Memory Editor")
             memoryEditorItem.accelerator = javafx.scene.input.KeyCombination.keyCombination("Ctrl+M")
             memoryEditorItem.setOnAction { handleOpenMemoryEditor() }
-            memoryEditorItem.isDisable = currentRomPath == null
+            memoryEditorItem.isDisable = nestlin.loadedRom == null
             memoryEditorMenuItem = memoryEditorItem
             debugMenu.items.add(memoryEditorItem)
             menuBar.menus.add(debugMenu)
@@ -723,10 +723,10 @@ class NestlinApplication : FrameListener, Application() {
                 // means no special-casing is needed in the engine.
                 val romPathArg = nonFlagParams.firstOrNull()
                 if (romPathArg != null) {
-                    currentRomPath = Paths.get(romPathArg)
-                    load(currentRomPath!!)
+                    val romPath = Paths.get(romPathArg)
+                    load(romPath)
                     powerReset()
-                    loadBatteryRam(currentRomPath!!)
+                    loadBatteryRam(romPath)
                 }
                 // Both calls mutate JavaFX UI nodes, so they need to hop back
                 // to the JavaFX thread (we're inside a `thread { ... }` here). When no
@@ -761,7 +761,7 @@ class NestlinApplication : FrameListener, Application() {
         batteryFlushTimer = java.util.Timer("nestlin-sram-flush", true)
         batteryFlushTimer?.scheduleAtFixedRate(object : java.util.TimerTask() {
             override fun run() {
-                val rom = currentRomPath ?: return
+                val rom = nestlin.loadedRom?.sourcePath ?: return
                 try {
                     nestlin.flushBatteryRamIfDirty(rom)
                 } catch (e: Exception) {
@@ -809,8 +809,7 @@ class NestlinApplication : FrameListener, Application() {
             cancelMovieSession()
             stopEmulation()
             // Flush the previous ROM's SRAM before its mapper is replaced.
-            currentRomPath?.let { nestlin.saveBatteryRam(it) }
-            currentRomPath = romPath
+            nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
             nestlin.load(romPath)
             nestlin.powerReset()
             nestlin.loadBatteryRam(romPath)
@@ -883,7 +882,7 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     private fun handleOpenMemoryEditor() {
-        if (currentRomPath == null) return
+        if (nestlin.loadedRom == null) return
         val existing = memoryEditorWindow
         if (existing != null) {
             existing.show()
@@ -921,7 +920,7 @@ class NestlinApplication : FrameListener, Application() {
 
     /** Grey out the Debug → Memory Editor item when no ROM is loaded. */
     private fun updateDebugMenu() {
-        memoryEditorMenuItem?.isDisable = currentRomPath == null
+        memoryEditorMenuItem?.isDisable = nestlin.loadedRom == null
     }
 
     private fun setScaleMode(mode: ScaleMode) {
@@ -1002,7 +1001,6 @@ class NestlinApplication : FrameListener, Application() {
         // Drop any active movie session — playback/recording is per-ROM.
         cancelMovieSession()
         stopEmulation()
-        currentRomPath = path
         nestlin.load(path)
         nestlin.powerReset()
         clearPauseState()
@@ -1023,7 +1021,7 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     private fun handleSaveState() {
-        if (currentRomPath == null) {
+        if (nestlin.loadedRom == null) {
             showError("No ROM Loaded", "Load a game before saving state.")
             return
         }
@@ -1047,7 +1045,7 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     private fun handleLoadState() {
-        if (currentRomPath == null) {
+        if (nestlin.loadedRom == null) {
             showError("No ROM Loaded", "Load a game before loading state.")
             return
         }
@@ -1085,7 +1083,7 @@ class NestlinApplication : FrameListener, Application() {
      * matches the pixels the user just saw.
      */
     private fun handleSlotSave(slot: Int) {
-        if (currentRomPath == null) return
+        if (nestlin.loadedRom == null) return
         // Snapshot the frame BEFORE pausing emulation: pausing the emulation
         // thread doesn't stop the render thread, but it does mean the
         // animation timer is still pulling from `nextFrame` under
@@ -1114,7 +1112,7 @@ class NestlinApplication : FrameListener, Application() {
      * and move on, no error dialog.
      */
     private fun handleSlotLoad(slot: Int) {
-        if (currentRomPath == null) return
+        if (nestlin.loadedRom == null) return
         performWithEmulationPaused {
             try {
                 val stateBytes = saveStateSlotManager.loadStateBytes(slot)
@@ -1143,7 +1141,7 @@ class NestlinApplication : FrameListener, Application() {
      * every save. Format: "Slot N - 2026-06-06 14:32:15" or "Slot N (empty)".
      */
     private fun updateSlotMenu() {
-        if (currentRomPath == null) {
+        if (nestlin.loadedRom == null) {
             for (n in 1..9) {
                 slotMenuItems[n]?.let {
                     it.text = "Slot $n (no ROM loaded)"
@@ -1177,7 +1175,7 @@ class NestlinApplication : FrameListener, Application() {
         SLOT_KEYS.indexOf(code) + 1
 
     private fun defaultSaveFileName(): String {
-        val romName = currentRomPath?.fileName?.toString()
+        val romName = nestlin.loadedRom?.sourcePath?.fileName?.toString()
             ?.removeSuffix(".nes")?.removeSuffix(".7z") ?: "state"
         return "$romName.nstl"
     }
@@ -1217,7 +1215,7 @@ class NestlinApplication : FrameListener, Application() {
      * buttons so the first captured row matches what the game just saw.
      */
     private fun handleStartRecording() {
-        if (currentRomPath == null) {
+        if (nestlin.loadedRom == null) {
             showError("No ROM Loaded", "Load a game before recording.")
             return
         }
@@ -1231,7 +1229,7 @@ class NestlinApplication : FrameListener, Application() {
         chooser.initialFileName = defaultMovieFileName()
         val file = chooser.showSaveDialog(stage) ?: return
 
-        val rom = currentRomPath!!
+        val rom = nestlin.loadedRom!!.sourcePath
         val romImage = rom.load() ?: run {
             showError("Recording Failed", "Could not load ROM: $rom")
             return
@@ -1322,7 +1320,7 @@ class NestlinApplication : FrameListener, Application() {
      * without any further UI plumbing.
      */
     private fun handlePlayMovie() {
-        if (currentRomPath == null) {
+        if (nestlin.loadedRom == null) {
             showError("No ROM Loaded", "Load a game before playing a movie.")
             return
         }
@@ -1353,7 +1351,7 @@ class NestlinApplication : FrameListener, Application() {
         // sees whatever state the user happened to be in when they hit Ctrl+Shift+P —
         // which won't match the boot state the recording started from, so the replay
         // diverges on frame 1.
-        val rom = currentRomPath!!
+        val rom = nestlin.loadedRom!!.sourcePath
         performWithEmulationPaused {
             resetRomForMovieSession(rom)
         }
@@ -1426,7 +1424,7 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     private fun defaultMovieFileName(): String {
-        val romName = currentRomPath?.fileName?.toString()
+        val romName = nestlin.loadedRom?.sourcePath?.fileName?.toString()
             ?.removeSuffix(".nes")?.removeSuffix(".7z") ?: "movie"
         return "$romName.fm2"
     }
@@ -1502,7 +1500,7 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     private fun handleHardReset() {
-        if (currentRomPath == null) {
+        if (nestlin.loadedRom == null) {
             val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
             alert.title = "No ROM Loaded"
             alert.contentText = "Please load a game first."
@@ -1513,7 +1511,7 @@ class NestlinApplication : FrameListener, Application() {
         // playback doesn't get get out of sync with the new boot state.
         cancelMovieSession()
         stopEmulation()
-        resetRomForMovieSession(currentRomPath!!)
+        resetRomForMovieSession(nestlin.loadedRom!!.sourcePath)
         clearPauseState()
         updateTitle()
         // CRC is unchanged by a hard reset, but refresh the slot menu
@@ -1535,7 +1533,7 @@ class NestlinApplication : FrameListener, Application() {
             cancelMovieSession()
         }
         stopEmulation()
-        currentRomPath?.let { nestlin.saveBatteryRam(it) }
+        nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
         Platform.exit()
     }
 
@@ -1551,7 +1549,7 @@ class NestlinApplication : FrameListener, Application() {
         // wasn't the entry point (e.g. JavaFX runtime tears us down through stop() directly).
         batteryFlushTimer?.cancel()
         batteryFlushTimer = null
-        currentRomPath?.let { nestlin.saveBatteryRam(it) }
+        nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
 
         // Clean up gamepad
         gamepadInput.shutdown()
