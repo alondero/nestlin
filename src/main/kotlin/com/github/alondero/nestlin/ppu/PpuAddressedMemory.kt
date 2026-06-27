@@ -1,10 +1,19 @@
 package com.github.alondero.nestlin.ppu
 
 import com.github.alondero.nestlin.*
+import com.github.alondero.nestlin.cpu.NmiSource
 import java.io.DataInput
 import java.io.DataOutput
 
-class PpuAddressedMemory {
+/**
+ * The PPU's CPU-visible register window ($2000-$2007, mirrored every 8 bytes
+ * through $3FFF). Also acts as the production [NmiSource] for the CPU↔PPU
+ * interrupt seam (issue #190): `setVBlank`/`clearVBlankAtPreRender`/`$2002`
+ * read mutate `nmiOccurred`, and the [NmiSource] adapter surfaces that flag
+ * plus the PPUCTRL bit-7 gate to the `InterruptController` without exposing
+ * the controller implementation detail to the CPU.
+ */
+class PpuAddressedMemory : NmiSource {
     val controller = Control()    // $2000
     val mask = Mask()                // $2001
     val status = Status()                   // $2002
@@ -28,6 +37,20 @@ class PpuAddressedMemory {
     var vBlankDebug = false
     var vBlankReadCounter = 0
     var lastVBlankReadFrame = -1
+
+    // --- NmiSource adapter (issue #190) ---------------------------------------
+    // The controller asks "is an NMI edge pending right now?" via this method
+    // instead of reaching into the PPU's two-field condition (`nmiOccurred &&
+    // controller.generateNmi()`). The combined condition lives here so the
+    // CPU↔PPU interrupt seam has a single source of truth.
+
+    /** True if an NMI edge is pending: PPU vblank set AND PPUCTRL bit 7 set. */
+    override fun nmiPending(): Boolean = nmiOccurred && controller.generateNmi()
+
+    /** Acknowledge the NMI edge — clears the latch (NESdev: edge-triggered). */
+    override fun acknowledgeNmi() {
+        nmiOccurred = false
+    }
 
     // Debug: log every $2002 read with frame number
     var debugLogStatusReads = false

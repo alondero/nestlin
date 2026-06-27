@@ -2,6 +2,8 @@ package com.github.alondero.nestlin.cpu
 
 import com.github.alondero.nestlin.Memory
 import com.github.alondero.nestlin.gamepak.GamePak
+import com.github.alondero.nestlin.testutil.FakeInterruptController
+import com.github.alondero.nestlin.testutil.testRom
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
 import com.natpryce.hamkrest.assertion.assertThat
@@ -16,6 +18,12 @@ import org.junit.jupiter.api.Test
  * spin instruction (saving host cycles), but it must still poll for NMI/IRQ every
  * tick so an interrupt can break the loop — which is exactly how real games sit in
  * `JMP *` waiting for the vblank NMI.
+ *
+ * Issue #190: the NMI-driving test (`nmiBreaksOutOfTheIdleParkAndClearsTheFlag`)
+ * now uses a `FakeInterruptController` and calls `fake.armNmi()` directly. The
+ * previous shape (`cpu.memory.ppuAddressedMemory.nmiOccurred = true`) reached
+ * three layers deep into PPU state to drive a CPU scenario — the fake replaces
+ * that leaky seam.
  */
 class IdleLoopTest {
 
@@ -65,7 +73,11 @@ class IdleLoopTest {
 
     @Test
     fun nmiBreaksOutOfTheIdleParkAndClearsTheFlag() {
-        val cpu = Cpu(Memory.createWithApu().first).apply {
+        // Issue #190: drive the NMI via the FakeInterruptController seam.
+        // No PPU poke needed — the fake's armNmi() is the producer side of the
+        // controller interface, and the Cpu dispatches via pendingInterrupt(idle).
+        val fakeController = FakeInterruptController()
+        val cpu = Cpu(Memory.createWithApu().first, fakeController).apply {
             currentGame = GamePak(spinLoopRom())
             reset()
         }
@@ -74,10 +86,11 @@ class IdleLoopTest {
         repeat(6) { cpu.tick() }
         assertThat(cpu.idle, equalTo(true))
 
-        // Arm an NMI: enable NMI generation (PPUCTRL bit 7) and flag that vblank
-        // occurred, just as the PPU would at scanline 241.
-        cpu.memory[0x2000] = 0x80.toSignedByte()
-        cpu.memory.ppuAddressedMemory.nmiOccurred = true
+        // Arm an NMI edge — the production wiring would set PPU vblank + PPUCTRL
+        // bit 7; the fake just trusts armNmi() and dispatches on the next tick.
+        // Idle=true skips the 1-instruction latency (no in-flight instruction
+        // to finish), so this single tick both arms AND dispatches.
+        fakeController.armNmi()
 
         cpu.tick()
 
@@ -93,27 +106,16 @@ class IdleLoopTest {
      *  - $C010: RTI        (NMI handler)
      *  - reset vector -> $C000, NMI vector -> $C010
      */
-    private fun spinLoopRom(): ByteArray {
-        val header = ByteArray(16)
-        header[0] = 'N'.code.toByte()
-        header[1] = 'E'.code.toByte()
-        header[2] = 'S'.code.toByte()
-        header[3] = 0x1A
-        header[4] = 1 // 1 x 16KB PRG ROM
-        header[5] = 0 // no CHR ROM
-
-        val prg = ByteArray(0x4000)
-        // $C000 maps to PRG offset 0x0000 (16KB ROM mirrored into $8000 and $C000).
-        prg[0x0000] = 0x4C.toByte() // JMP absolute
+    private fun spinLoopRom(): ByteArray = testRom {
+        prgKb = 16
+        chrKb = 0
+        prg[0x0000] = 0x4C.toByte() // JMP $C000
         prg[0x0001] = 0x00.toByte()
-        prg[0x0002] = 0xC0.toByte() // -> $C000
+        prg[0x0002] = 0xC0.toByte()
         prg[0x0010] = 0x40.toByte() // RTI
-        // Vectors live at the top of the 16KB bank.
         prg[0x3FFA] = 0x10.toByte() // NMI vector low  -> $C010
         prg[0x3FFB] = 0xC0.toByte() // NMI vector high
         prg[0x3FFC] = 0x00.toByte() // reset vector low -> $C000
         prg[0x3FFD] = 0xC0.toByte() // reset vector high
-
-        return header + prg
     }
 }

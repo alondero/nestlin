@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin
 
+import com.github.alondero.nestlin.cpu.StallSource
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.gamepak.Mapper
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
@@ -34,12 +35,22 @@ class Memory : DmaPort {
     lateinit var apu: Apu
         private set
 
-    // Will be set by Nestlin after CPU creation. Memory needs this back-reference
-    // so it can halt the CPU for the 513 cycles an OAM DMA takes (NESdev: the CPU
-    // is suspended for the duration of the transfer). Without it, every DMA would
-    // let the CPU "skip ahead" by 513 cycles — a per-frame drift that desyncs games
-    // from Mesen2 in as few as ~5 frames of OAM-DMA-heavy sprite work.
-    var cpu: com.github.alondero.nestlin.cpu.Cpu? = null
+    /**
+     * Set by the CPU during its construction so Memory's `$4014` (OAM DMA)
+     * handler can request a 513-cycle CPU stall. Replaces the previous
+     * `var cpu: Cpu?` back-reference (issue #190) — the interface narrows
+     * the coupling to a single capability ("you may stall this CPU") so
+     * Memory no longer imports or knows about `Cpu`'s internal
+     * `workCyclesLeft` field.
+     *
+     * Why a back-reference at all: the 6502 data-bus is shared, so the CPU
+     * is suspended for the duration of an OAM DMA. Without this halt every
+     * DMA would let the CPU "skip ahead" by 513 cycles — a per-frame drift
+     * that desyncs games from Mesen2 in as few as ~5 frames of
+     * OAM-DMA-heavy sprite work. Micro Machines (mapper 71) was the canary
+     * (diagnosed 2026-06-02).
+     */
+    var stallSource: StallSource? = null
 
     // Mapper for cartridge bank switching (set during readCartridge)
     var mapper: Mapper? = null
@@ -156,7 +167,11 @@ class Memory : DmaPort {
                 // Surface diagnosed against Micro Machines (mapper 71) on
                 // 2026-06-02: the 2-frame CPU-PC drift at frame 270 was the
                 // downstream symptom.
-                cpu?.workCyclesLeft = 513
+                //
+                // Issue #190: the back-reference was narrowed from `cpu: Cpu?`
+                // to `stallSource: StallSource?`. Same behaviour, narrower
+                // coupling — Memory no longer reaches into `workCyclesLeft`.
+                stallSource?.stallFor(513)
             }
             in 0x4000..0x401F -> {
                 apuAddressedMemory[address - 0x4000] = value

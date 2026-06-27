@@ -35,9 +35,12 @@ class MemoryOamDmaTest {
     fun `OAM DMA halts the CPU for 513 cycles`() {
         // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
         // the IRQ-check path reads it on every cpu.tick().
+        //
+        // Issue #190: the `memory.cpu = cpu` back-reference was removed; Cpu's
+        // init block wires `memory.stallSource = this` automatically. The `$4014`
+        // handler now requests the halt through the StallSource interface.
         val (memory, _) = Memory.createWithApu()
         val cpu = Cpu(memory)
-        memory.cpu = cpu
 
         // Fill a CPU RAM page ($0100-$01FF) with a known pattern so we can
         // verify the bytes were copied *and* the CPU halt was applied.
@@ -68,9 +71,10 @@ class MemoryOamDmaTest {
 
     @Test
     fun `multiple DMAs in a row each halt the CPU independently`() {
+        // See note above on issue #190: Cpu.init wires memory.stallSource
+        // automatically — no explicit back-reference needed.
         val (memory, _) = Memory.createWithApu()
         val cpu = Cpu(memory)
-        memory.cpu = cpu
 
         // First DMA: page $02, contents 0..255.
         for (i in 0 until 256) {
