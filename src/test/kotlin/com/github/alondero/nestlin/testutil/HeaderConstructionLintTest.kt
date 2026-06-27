@@ -81,7 +81,6 @@ class HeaderConstructionLintTest {
         private val BASELINE = setOf(
             "com/github/alondero/nestlin/SaveRamTest.kt",
             "com/github/alondero/nestlin/cli/ReplayCommandTest.kt",
-            "com/github/alondero/nestlin/cpu/IdleLoopTest.kt",
             "com/github/alondero/nestlin/movie/MovieRoundTripTest.kt",
             "com/github/alondero/nestlin/gamepak/GamePakTest.kt",
             "com/github/alondero/nestlin/gamepak/Mapper10Test.kt",

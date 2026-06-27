@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.cpu
 
 import com.github.alondero.nestlin.Memory
+import com.github.alondero.nestlin.testutil.FakeInterruptController
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
 import com.natpryce.hamkrest.assertion.assertThat
@@ -116,24 +117,28 @@ class WorkCyclesLeftConsistencyTest {
 
     @Test
     fun nmiDispatchSetsSevenCycles() {
-        val cpu = freshCpu()
+        // Issue #190: drive the NMI via a FakeInterruptController instead of
+        // poking `cpu.memory.ppuAddressedMemory.nmiOccurred = true`. The
+        // Fake honours the same 1-instruction-latency contract as the
+        // production controller, so the timing assertions below are unchanged.
+        val fakeController = FakeInterruptController()
+        val cpu = Cpu(Memory.createWithApu().first, fakeController).apply { reset() }
         // NMI vector -> $0000 (a NOP, so we don't read garbage).
         cpu.memory[0xFFFA] = 0x00.toSignedByte()
         cpu.memory[0xFFFB] = 0x00.toSignedByte()
-        // Enable NMI generation (PPUCTRL bit 7) and mark vblank as occurred,
-        // matching what the PPU would do at scanline 241.
-        cpu.memory[0x2000] = 0x80.toSignedByte()
-        cpu.memory.ppuAddressedMemory.nmiOccurred = true
         // The CPU is parked in a NOP at $0000.
         cpu.registers.programCounter = 0x0000.toSignedShort()
         cpu.memory[0x0000] = 0xEA.toSignedByte()
 
-        // Scheduler timing for NMI dispatch (see Cpu.checkAndHandleNmi):
-        //   tick 1: ready, NMI not armed yet -> arms (returns false), then runs NOP
+        // Arm NMI BEFORE any tick so the next instruction boundary is the
+        // arm boundary. The Cpu is NOT idle (it's about to execute a NOP), so
+        // the controller honours the 1-instruction latency:
+        //   tick 1: ready, NMI not armed yet -> arms (returns null), then runs NOP
         //           (workCyclesLeft becomes 2-1=1 after the post-opcode decrement)
         //   tick 2: not ready (workCyclesLeft=1), just decrements to 0
         //   tick 3: ready, NMI is now armed -> services it (workCyclesLeft=7, then 6)
         // So 3 ticks are needed before the post-decrement 6 is visible.
+        fakeController.armNmi()
         repeat(3) { cpu.tick() }
 
         // 7-cycle NMI service, post-tick decrement leaves 6.

@@ -7,8 +7,27 @@ import java.io.DataInput
 import java.io.DataOutput
 import java.io.File
 
-class Cpu(var memory: Memory)
+class Cpu(
+    var memory: Memory,
+    /**
+     * The interrupt controller — the seam between producers (PPU/APU/mapper)
+     * and the CPU consumer. Issue #190 / ADR-0003.
+     *
+     * Defaults to the production wiring built from [memory] (PpuAddressedMemory
+     * as the NMI source; the current mapper and APU as IRQ sources). Tests
+     * pass a `testutil.FakeInterruptController` to drive interrupt scenarios
+     * without a real PPU.
+     */
+    val interruptController: InterruptController = defaultInterruptController(memory),
+) : StallSource
 {
+    init {
+        // Wire this CPU as the stall source so Memory's $4014 (OAM DMA) handler
+        // can request a 513-cycle halt through the StallSource interface — no
+        // longer reaches into `Cpu.workCyclesLeft` via a back-reference.
+        memory.stallSource = this
+    }
+
     var currentGame: GamePak? = null
     // --- Private backing state ---------------------------------------------------
     // The fields below are intentionally private (issue #23): the only way to read or
@@ -23,15 +42,6 @@ class Cpu(var memory: Memory)
     // require read-only views on Registers/ProcessorStatus, which is a larger,
     // separate refactor.)
     private var _workCyclesLeft = 0
-    // The 6502 services an NMI with ~1 instruction of latency: when the NMI line is
-    // asserted (PPU vblank) the CPU finishes its current instruction (and often issues
-    // one more fetch) before vectoring. We model that by arming the NMI on the first
-    // instruction boundary it is pending and only dispatching on the next one. This is
-    // what lets a "poll $2002 for vblank" loop win the race against an enabled NMI on
-    // real hardware — the in-flight poll reads the just-set flag, and that read clears
-    // the latch, suppressing the NMI for that frame. Camerica/Codemasters titles (Big
-    // Nose, Micro Machines) hang without it. See BigNoseHangTest.
-    private var _nmiArmed = false
     // Diagnostic counters: incremented exactly once per *dispatched* interrupt (the
     // point the vector is taken, not when armed/pending). Deliberately NOT part of
     // save-state serialisation — these are debugging telemetry, not emulation state.
@@ -53,10 +63,6 @@ class Cpu(var memory: Memory)
     var workCyclesLeft: Int
         get() = _workCyclesLeft
         set(value) { _workCyclesLeft = value }
-
-    var nmiArmed: Boolean
-        get() = _nmiArmed
-        set(value) { _nmiArmed = value }
 
     var pageBoundaryFlag: Boolean
         get() = _pageBoundaryFlag
@@ -102,7 +108,6 @@ class Cpu(var memory: Memory)
         _processorStatus.reset()
         _registers.reset()
         _workCyclesLeft = 0
-        _nmiArmed = false
         _nmiCount = 0
         _irqCount = 0
         currentGame?.let {
@@ -145,20 +150,31 @@ class Cpu(var memory: Memory)
         memory.mapper?.tickCpuCycle()
 
         if (readyForNextInstruction()) {
-            // Check for NMI interrupt before executing next instruction
-            if (checkAndHandleNmi()) {
-                // An interrupt redirects the PC, breaking any spin loop the CPU
-                // was parked in.
-                idle = false
-                // NMI was handled, skip regular instruction execution
-                workCyclesLeft--
-                return
-            }
-
-            if (checkAndHandleIrq()) {
-                idle = false
-                workCyclesLeft--
-                return
+            // Ask the controller what (if anything) to dispatch RIGHT NOW.
+            // The controller owns the 1-instruction NMI latency and the NMI>IRQ
+            // ordering — see InterruptController for the contract. Idle is
+            // passed in so a parked CPU (spin loop) skips the latency, which is
+            // what breaks the loop.
+            when (interruptController.pendingInterrupt(idle, processorStatus.interruptDisable)) {
+                InterruptKind.NMI -> {
+                    interruptController.acknowledge(InterruptKind.NMI)
+                    dispatchInterrupt(InterruptKind.NMI, memory[0xFFFA, 0xFFFB])
+                    // An interrupt redirects the PC, breaking any spin loop.
+                    idle = false
+                    workCyclesLeft--
+                    return
+                }
+                InterruptKind.IRQ -> {
+                    interruptController.acknowledge(InterruptKind.IRQ)
+                    dispatchInterrupt(InterruptKind.IRQ, memory[0xFFFE, 0xFFFF])
+                    idle = false
+                    workCyclesLeft--
+                    return
+                }
+                null -> {
+                    // No interrupt pending — fall through to opcode dispatch
+                    // (or stay parked if idle).
+                }
             }
 
             // The CPU has branched/jumped to its own address — a spin loop that
@@ -201,6 +217,43 @@ class Cpu(var memory: Memory)
         if (workCyclesLeft > 0) workCyclesLeft--
     }
 
+    /**
+     * Push PC + status, set the I-flag, load the vector, and set the 7-cycle
+     * cost. Shared by NMI and IRQ dispatch (issue #190 / ADR-0003) — the only
+     * differences are which vector is loaded and which diagnostic counter is
+     * bumped, both of which are the caller's choice.
+     *
+     * Note: the BRK opcode (`Opcodes.kt` `map[0x00]`) intentionally duplicates
+     * most of this body with two differences — it pushes status WITH the B
+     * flag set (the BRK/IRQ discriminator) and increments PC past BRK's
+     * padding byte before pushing. Deduplicating would require parameterising
+     * both, which adds more complexity than the ~10 lines save. Kept separate
+     * by deliberate choice (code review finding, reuse angle).
+     */
+    private fun dispatchInterrupt(kind: InterruptKind, vector: Short) {
+        // Push PC (high byte first, then low byte)
+        val pc = _registers.programCounter.toUnsignedInt()
+        push((pc shr 8).toSignedByte())
+        push((pc and 0xFF).toSignedByte())
+
+        // Push processor status (with B flag clear for interrupts — that bit
+        // distinguishes BRK from IRQ/NMI on the stack).
+        val statusByte = _processorStatus.asByte().toUnsignedInt()
+        val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
+        push(statusForInterrupt)
+
+        // Set interrupt disable flag — the handler re-enables with RTI.
+        _processorStatus.interruptDisable = true
+
+        _registers.programCounter = vector
+        _workCyclesLeft = 7
+
+        when (kind) {
+            InterruptKind.NMI -> incrementNmiCount()
+            InterruptKind.IRQ -> incrementIrqCount()
+        }
+    }
+
     private fun logUndocumentedOpcode(opcodeVal: Int, pc: Short) {
         if (undocumentedOpcodes.add(opcodeVal)) {
             // First time seeing this opcode; buffer the entry for a single bulk
@@ -219,92 +272,30 @@ class Cpu(var memory: Memory)
         file.writeText(perOpcodeText + summary + "\n")
     }
 
-    private fun checkAndHandleNmi(): Boolean {
-        // NMI is edge-triggered: check if NMI occurred and NMI generation is enabled.
-        val nmiPending = memory.ppuAddressedMemory.nmiOccurred && memory.ppuAddressedMemory.controller.generateNmi()
-        if (!nmiPending) {
-            // No (longer any) pending NMI. If it was armed, the latch was cleared within
-            // the 1-instruction latency window — e.g. the program read $2002 (a vblank
-            // poll). That correctly suppresses the NMI for this frame.
-            _nmiArmed = false
-            return false
-        }
-        if (!_nmiArmed && !_idle) {
-            // First boundary at which the NMI is pending: arm it and let one more
-            // instruction execute before vectoring (the 6502's NMI latency). When the
-            // CPU is parked in a spin loop (idle) there is no in-flight instruction to
-            // finish, so skip the latency and service immediately — that is what breaks
-            // the spin, and there is no $2002 poll to race against while parked.
-            _nmiArmed = true
-            return false
-        }
-        // Latency elapsed — service the NMI now.
-        _nmiArmed = false
-        // Clear the NMI flag (edge-triggered, not level-triggered)
-        memory.ppuAddressedMemory.nmiOccurred = false
-
-        // Push PC (high byte first, then low byte)
-        val pc = _registers.programCounter.toUnsignedInt()
-        push((pc shr 8).toSignedByte())
-        push((pc and 0xFF).toSignedByte())
-
-        // Push processor status (with B flag clear for interrupts)
-        val statusByte = _processorStatus.asByte().toUnsignedInt()
-        // Clear bit 4 (B flag) for interrupt context
-        val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
-        push(statusForInterrupt)
-
-        // Set interrupt disable flag
-        _processorStatus.interruptDisable = true
-
-        // Load PC from NMI vector at $FFFA-$FFFB
-        _registers.programCounter = memory[0xFFFA, 0xFFFB]
-
-        // NMI takes 7 cycles
-        _workCyclesLeft = 7
-
-        incrementNmiCount()
-
-        return true
+    /**
+     * StallSource implementation (issue #190). Called by `Memory` when a
+     * `$4014` (OAM DMA) write needs to halt the CPU for 513 cycles. The
+     * scheduler in [tick] decrements `_workCyclesLeft` every tick while
+     * it's positive, suspending instruction fetch — exactly as a real
+     * CPU is stalled for the duration of an OAM DMA.
+     */
+    override fun stallFor(cycles: Int) {
+        _workCyclesLeft = cycles
     }
 
-    private fun checkAndHandleIrq(): Boolean {
-        // NMI has priority over IRQ. While an NMI is armed (pending but waiting out its
-        // 1-instruction latency) it owns the next interrupt-service slot, so an IRQ must
-        // not slip in ahead of it — otherwise the armed boundary would vector to the IRQ
-        // handler first, inverting hardware priority. The IRQ stays pending and is taken
-        // after the NMI.
-        if (_nmiArmed) return false
-        if (_processorStatus.interruptDisable) return false
-        if (!memory.apu.isIrqPending() && memory.mapper?.isIrqPending() != true) return false
-
-        // Push PC (high byte first, then low byte)
-        val pc = _registers.programCounter.toUnsignedInt()
-        push((pc shr 8).toSignedByte())
-        push((pc and 0xFF).toSignedByte())
-
-        // Push processor status (with B flag clear for interrupts)
-        val statusByte = _processorStatus.asByte().toUnsignedInt()
-        val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
-        push(statusForInterrupt)
-
-        // Set interrupt disable flag
-        _processorStatus.interruptDisable = true
-
-        // Load PC from IRQ/BRK vector at $FFFE-$FFFF
-        _registers.programCounter = memory[0xFFFE, 0xFFFF]
-
-        // IRQ takes 7 cycles
-        _workCyclesLeft = 7
-
-        // Acknowledge IRQ from mapper (APU IRQ is cleared elsewhere by the APU)
-        memory.mapper?.acknowledgeIrq()
-
-        incrementIrqCount()
-
-        return true
-    }
-
+    /**
+     * Save state — issue #190 removes the `_nmiArmed` field from the CPU
+     * block (it now lives in [interruptController] as the controller's
+     * own state). The save-state format is bumped to VERSION 4 in
+     * [SaveState]; the new "interrupt controller" sub-block lives
+     * between the CPU and RAM blocks and holds the controller's `nmiArmed`.
+     *
+     * The trailing 4-byte reserved int slot is the pre-existing reservation
+     * for the removed `Interrupt` enum (issue #24) — unrelated to nmiArmed.
+     * VERSION 3 savestates are NOT loadable: the VERSION check at
+     * [SaveState.load] rejects mismatched versions before reaching this
+     * readInt(), so we never need to consume a VERSION 3 byte stream.
+     */
     fun saveState(out: DataOutput) {
         out.writeByte(_registers.stackPointer.toInt())
         out.writeByte(_registers.accumulator.toInt())
@@ -317,9 +308,7 @@ class Cpu(var memory: Memory)
         out.writeInt(_workCyclesLeft)
         out.writeBoolean(_pageBoundaryFlag)
         out.writeBoolean(_idle)
-        out.writeBoolean(_nmiArmed)
-        // Reserved: the old `Interrupt` enum (IRQ_BRK/NMI/RESET) was removed in issue #24.
-        // The 4-byte slot stays in the format so save files made by older builds still load.
+        // Reserved 4-byte int slot — see kdoc above.
         out.writeInt(0)
     }
 
@@ -334,7 +323,7 @@ class Cpu(var memory: Memory)
         _workCyclesLeft = input.readInt()
         _pageBoundaryFlag = input.readBoolean()
         _idle = input.readBoolean()
-        _nmiArmed = input.readBoolean()
+        // nmiArmed moved to interruptController.loadState in VERSION 4.
         // Reserved slot — see saveState.
         input.readInt()
     }

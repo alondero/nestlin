@@ -40,9 +40,11 @@ class MemoryPokeTest {
     fun `poke of 4014 does not trigger OAM DMA`() {
         // Factory (issue #22): keeps the Cpu construction pattern consistent with the
         // other Memory tests; the IRQ-check path on cpu.tick() now needs apu non-null.
+        //
+        // Issue #190: `memory.cpu = cpu` removed; Cpu.init wires
+        // `memory.stallSource = this` automatically.
         val (memory, _) = Memory.createWithApu()
         val cpu = Cpu(memory)
-        memory.cpu = cpu
         // Seed a recognisable page so we'd notice if a DMA copied it into OAM.
         for (i in 0 until 256) memory[0x0100 + i] = i.toSignedByte()
 

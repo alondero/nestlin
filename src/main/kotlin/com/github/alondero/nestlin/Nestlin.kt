@@ -88,8 +88,11 @@ class Nestlin {
         // Memory (for $4000-$401F register dispatch). After this, memory.apu is
         // non-null and stays that way for the lifetime of the Memory instance.
         Memory.createWithApu().also { (m, a) -> memory = m; apu = a }
+        // Cpu's init wires `memory.stallSource = this` automatically — the previous
+        // `memory.cpu = cpu` back-reference is replaced by the StallSource interface
+        // (issue #190). The Cpu constructor also wires the production InterruptController
+        // (PpuAddressedMemory as NMI source; mapper + APU as IRQ sources).
         cpu = Cpu(memory)
-        memory.cpu = cpu
         ppu = Ppu(memory)
 
         // Rewind state machine (issue #189): the buffer + the dispatch closures are wired here;
