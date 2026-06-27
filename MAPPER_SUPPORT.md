@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 65, 66, 69, 153, 206.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 65, 66, 68, 69, 153, 206.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -577,6 +577,42 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   - No PRG RAM
   - Fixed mirroring from iNES header
 - **Notes:** Simple discrete mapper. PRG window at $8000-$FFFF is one 32KB bank. CHR banks are 8KB. The initial implementation decoded PRG as bits 0-2 / CHR as bits 3-4, which corrupted graphics (Gumshoe, SMB+Duck Hunt) and stopped some games booting (Doraemon).
+
+---
+
+## Mapper 68 (Sunsoft-4 — a.k.a. "Sunsoft 2")
+**Status:** Working (Added 2026-06-27, GH #134)
+
+- **Games:** *The Legend of Valkyrie*, *Nangoku Shounen Papuwa-kun*, *Nantettatte!! Baseball*
+- **Silicon:** the Sunsoft-4 IC. Despite the "Sunsoft 2" name sometimes used for this
+  iNES number (and the GitHub issue title), both the nesdev wiki page (INES Mapper 068)
+  and Mesen2's `MapperFactory` map iNES mapper 68 → `Sunsoft4`. No expansion audio
+  (mapper 67 is the Sunsoft-3 with 5B audio; mapper 69 is the Sunsoft FME-7).
+- **Register layout (`addr & 0xF000` decoded):**
+  - `$8000-$8FFF`: 2KB CHR bank 0 → PPU `$0000-$07FF`
+  - `$9000-$9FFF`: 2KB CHR bank 1 → PPU `$0800-$0FFF`
+  - `$A000-$AFFF`: 2KB CHR bank 2 → PPU `$1000-$17FF`
+  - `$B000-$BFFF`: 2KB CHR bank 3 → PPU `$1800-$1FFF`
+  - `$C000-$CFFF`: Nametable CHR reg 0 (active only when `$E000` bit 4 is set)
+  - `$D000-$DFFF`: Nametable CHR reg 1 (active only when `$E000` bit 4 is set)
+  - `$E000-$EFFF`: Mirroring (bits 0-1) + CHR-for-nametable mode (bit 4)
+  - `$F000-$FFFF`: PRG bank 0 (bits 0-2) + external-PRG select (bit 3) + PRG-RAM enable (bit 4)
+- **Mirroring ($E000 bits 0-1):** 0=Vertical, 1=Horizontal, 2=Screen A only, 3=Screen B only.
+- **PRG:** 16KB banks. Page 0 (at `$8000-$BFFF`) is switchable; page 1 (at `$C000-$FFFF`)
+  is fixed to the last 16KB bank on power-on (matches Mesen2 `Sunsoft4::InitMapper`).
+- **External PRG mode** (`$F000` bit 3 = 0, only when PRG > 8 banks): selects an
+  external PRG page 8..(prgPageCount-1) — used by a few larger titles.
+- **PRG-RAM** (`$6000-$7FFF`): 8KB, battery-backed when the iNES header has the battery
+  flag set. Reads return open bus until `$F000` bit 4 is set; writes always accepted
+  (so the licensing-IC timer arms regardless).
+- **Licensing IC** (Namco-style, *Nantettatte!! Baseball* only): any write to
+  `$6000-$7FFF` arms a ~107,520-CPU-cycle countdown during which `$8000-$BFFF`
+  returns open bus. Counts down once per CPU (M2) cycle via the standard
+  `tickCpuCycle()` hook.
+- **Verification:** unit tests in `Mapper68Test.kt` (27 cases) cover register decode,
+  2KB CHR banking, mirroring modes, external PRG, PRG-RAM enable + open bus, licensing
+  timer arm/expiry, and save/load round-trip. The PRG-RAM buffer is exposed via
+  `batteryBackedRam()` so `.sav` persistence follows the same path as Mapper 1/4.
 
 ---
 
