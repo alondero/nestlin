@@ -147,7 +147,15 @@ class NesInterruptController(
             // outcome (Camerica mapper-71 titles depend on it).
             nmiArmed = false
             if (interruptDisable) return null
-            return if (irqSources.any { it.irqPending() }) InterruptKind.IRQ else null
+            // Indexed iteration (not `irqSources.any { ... }`) — this method
+            // is called once per CPU instruction (~500K-1.8M/sec) and the
+            // `any` lambda allocates an iterator on every call. `for (i in
+            // irqSources.indices)` inlines to an index range check with no
+            // allocation. (Code review finding, efficiency angle.)
+            for (i in irqSources.indices) {
+                if (irqSources[i].irqPending()) return InterruptKind.IRQ
+            }
+            return null
         }
         if (!nmiArmed && !idle) {
             nmiArmed = true
@@ -163,7 +171,14 @@ class NesInterruptController(
                 nmiArmed = false
                 nmiSource.acknowledgeNmi()
             }
-            InterruptKind.IRQ -> irqSources.forEach { it.acknowledgeIrq() }
+            InterruptKind.IRQ -> {
+                // Indexed iteration for the same reason as pendingInterrupt —
+                // cheap cold path (~60Hz on IRQ dispatch), but keep the
+                // idiom consistent.
+                for (i in irqSources.indices) {
+                    irqSources[i].acknowledgeIrq()
+                }
+            }
         }
     }
 

@@ -45,10 +45,6 @@ class FakeInterruptController : InterruptController {
     var acknowledgedIrqCount: Int = 0
         private set
 
-    /** The kind the controller last acknowledged via [acknowledge]. */
-    var lastAcknowledged: InterruptKind? = null
-        private set
-
     /** Arms an NMI edge — equivalent to the PPU setting vblank + PPUCTRL bit 7. */
     fun armNmi() { nmiPending = true }
 
@@ -72,7 +68,6 @@ class FakeInterruptController : InterruptController {
         nmiArmed = false
         acknowledgedNmiCount = 0
         acknowledgedIrqCount = 0
-        lastAcknowledged = null
     }
 
     override fun pendingInterrupt(idle: Boolean, interruptDisable: Boolean): InterruptKind? {
@@ -91,7 +86,6 @@ class FakeInterruptController : InterruptController {
     }
 
     override fun acknowledge(kind: InterruptKind) {
-        lastAcknowledged = kind
         when (kind) {
             InterruptKind.NMI -> {
                 nmiPending = false

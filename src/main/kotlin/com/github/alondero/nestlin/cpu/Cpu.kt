@@ -222,6 +222,13 @@ class Cpu(
      * cost. Shared by NMI and IRQ dispatch (issue #190 / ADR-0003) — the only
      * differences are which vector is loaded and which diagnostic counter is
      * bumped, both of which are the caller's choice.
+     *
+     * Note: the BRK opcode (`Opcodes.kt` `map[0x00]`) intentionally duplicates
+     * most of this body with two differences — it pushes status WITH the B
+     * flag set (the BRK/IRQ discriminator) and increments PC past BRK's
+     * padding byte before pushing. Deduplicating would require parameterising
+     * both, which adds more complexity than the ~10 lines save. Kept separate
+     * by deliberate choice (code review finding, reuse angle).
      */
     private fun dispatchInterrupt(kind: InterruptKind, vector: Short) {
         // Push PC (high byte first, then low byte)
@@ -282,6 +289,12 @@ class Cpu(
      * own state). The save-state format is bumped to VERSION 4 in
      * [SaveState]; the new "interrupt controller" sub-block lives
      * between the CPU and RAM blocks and holds the controller's `nmiArmed`.
+     *
+     * The trailing 4-byte reserved int slot is the pre-existing reservation
+     * for the removed `Interrupt` enum (issue #24) — unrelated to nmiArmed.
+     * VERSION 3 savestates are NOT loadable: the VERSION check at
+     * [SaveState.load] rejects mismatched versions before reaching this
+     * readInt(), so we never need to consume a VERSION 3 byte stream.
      */
     fun saveState(out: DataOutput) {
         out.writeByte(_registers.stackPointer.toInt())
@@ -295,11 +308,7 @@ class Cpu(
         out.writeInt(_workCyclesLeft)
         out.writeBoolean(_pageBoundaryFlag)
         out.writeBoolean(_idle)
-        // nmiArmed moved to interruptController.saveState in VERSION 4.
-        // The reserved slot below remains for backward compatibility with
-        // VERSION 3 savestates (the boolean was written here before).
-        // Reserved: the old `Interrupt` enum (IRQ_BRK/NMI/RESET) was removed in issue #24.
-        // The 4-byte slot stays in the format so save files made by older builds still load.
+        // Reserved 4-byte int slot — see kdoc above.
         out.writeInt(0)
     }
 
