@@ -4,7 +4,7 @@ import com.github.alondero.nestlin.Nestlin
 
 /**
  * Real-time movie player. Installs a frame-end latch hook on the PPU that writes the NEXT
- * movie row to `controller.buttons` (via [com.github.alondero.nestlin.Controller.setButtonsLatched])
+ * movie row to `controller.buttons` (via [com.github.alondero.nestlin.Controller.setButtonBitmap])
  * so the game sees the latched value for the upcoming frame.
  *
  * Critically different from the headless [MoviePlayer]: real-time playback keeps throttling
