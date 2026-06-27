@@ -19,18 +19,22 @@ import java.lang.reflect.Modifier
  * adding it. The reflection test below makes that invariant load-bearing; if
  * someone removes the annotation the test fails immediately, regardless of
  * timing, JIT, or how many cores the test runner has.
+ *
+ * As of issue #189 the loop body moved to `RunLoop` (the @Volatile lives there
+ * now); this test follows the move.
  */
 class NestlinThreadSafetyTest {
 
     @Test
     fun `running field is @Volatile for cross-thread visibility`() {
-        val runningField = Nestlin::class.java.getDeclaredField("running")
+        val runningField = com.github.alondero.nestlin.session.RunLoop::class.java
+            .getDeclaredField("running")
         // Field.isVolatile() exists in Java but the Kotlin compiler resolves
         // `isVolatile` to Modifier.isVolatile(int) (a static method) and fails
         // to find the instance method, so we check the modifier bit directly.
         val isVolatile = (runningField.modifiers and Modifier.VOLATILE) != 0
         assertThat(
-            "Nestlin.running must be @Volatile so that stop() called from a " +
+            "RunLoop.running must be @Volatile so that stop() called from a " +
                 "different thread is observed by the emulation thread's " +
                 "while (running) loop. Without it, the JVM memory model " +
                 "permits the emulation thread to cache the read and the " +

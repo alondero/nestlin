@@ -20,14 +20,6 @@ data class EmulatorConfig(
     var speedThrottlingEnabled: Boolean = true,
 
     /**
-     * Target frame rate in frames per second.
-     * NTSC (US/Japan): 60.0988 FPS
-     * PAL (Europe): 50.007 FPS
-     * Default: 60.0 (NTSC approximation)
-     */
-    var targetFps: Double = 60.0,
-
-    /**
      * Pause emulation. When true, the emulation loop short-circuits each
      * iteration without ticking CPU/PPU/APU. Toggled from the UI's Emulation menu.
      */
@@ -37,6 +29,9 @@ data class EmulatorConfig(
      * Manual region override. When null (the default), the region auto-detected
      * from the ROM header/filename is used. Set to force NTSC or PAL regardless of
      * detection — surfaced via the UI's Emulation menu and the `--region` CLI flag.
+     *
+     * Note: this is the user-input knob; the EFFECTIVE region for a loaded session
+     * lives on `Nestlin.regionConfig` (see issue #189).
      */
     var regionOverride: Region? = null,
 
@@ -54,13 +49,6 @@ data class EmulatorConfig(
      */
     var rewindCapacityFrames: Int = 600
 ) {
-    /**
-     * Target time per frame in nanoseconds.
-     * Calculated from targetFps for precise timing.
-     */
-    val targetFrameTimeNanos: Long
-        get() = (1_000_000_000.0 / targetFps).toLong()
-
     companion object {
         private val configDir = File(System.getProperty("user.home"), ".config/nestlin")
         private val recentRomsFile = File(configDir, "recent_roms.json")
