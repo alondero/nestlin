@@ -152,6 +152,7 @@ class GamePak(data: ByteArray, displayName: String = "") {
         64 -> Mapper64(this)
         65 -> Mapper65(this)
         66 -> Mapper66(this)
+        68 -> Mapper68(this)
         69 -> Mapper69(this)
         71 -> Mapper71(this)
         113 -> Mapper113(this)
