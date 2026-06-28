@@ -3,6 +3,9 @@ package com.github.alondero.nestlin
 import com.github.alondero.nestlin.cpu.StallSource
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.gamepak.Mapper
+import com.github.alondero.nestlin.input.InputDevice
+import com.github.alondero.nestlin.input.NoDevice
+import com.github.alondero.nestlin.input.StandardGamepad
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
 import com.github.alondero.nestlin.apu.ApuAddressedMemory
 import com.github.alondero.nestlin.apu.DmaPort
@@ -14,8 +17,73 @@ class Memory : DmaPort {
     val ppuAddressedMemory = PpuAddressedMemory()
     val apuAddressedMemory = ApuAddressedMemory()
 
+    /**
+     * Per-port NES controllers (the $4016/$4017 hardware). Exposed as `val` (never
+     * replaced) so save-state and movie code can hold stable references to them
+     * even when the [port1] / [port2] [InputDevice] is swapped via [setPortType].
+     * [StandardGamepad] wraps the same controller instance regardless of which
+     * device the port currently reports.
+     */
     val controller1 = Controller()
     val controller2 = Controller()
+
+    /**
+     * The [InputDevice] currently plugged into port 1 (the physical socket the
+     * player 1 controller cable goes into). Defaults to a [StandardGamepad]
+     * wrapping [controller1]. Mutable so the Controller Configuration screen
+     * can swap the device type at runtime without disturbing the underlying
+     * controller's button bitmap or shift-register state.
+     */
+    var port1: InputDevice = StandardGamepad(controller1)
+        private set
+
+    /**
+     * The [InputDevice] currently plugged into port 2 (player 2). Defaults to a
+     * [StandardGamepad] wrapping [controller2]. See [port1] for the rationale.
+     */
+    var port2: InputDevice = StandardGamepad(controller2)
+        private set
+
+    /**
+     * What kind of device is in port [index] (0 or 1). Defaults to
+     * [InputDevice.DeviceType.STANDARD_GAMEPAD] on both ports. Persisted in
+     * the save state (v5+).
+     */
+    fun portType(index: Int): InputDevice.DeviceType = when (index) {
+        0 -> portDeviceType(port1)
+        1 -> portDeviceType(port2)
+        else -> throw IllegalArgumentException("Port index must be 0 or 1, got $index")
+    }
+
+    private fun portDeviceType(device: InputDevice): InputDevice.DeviceType = when (device) {
+        is StandardGamepad -> InputDevice.DeviceType.STANDARD_GAMEPAD
+        is com.github.alondero.nestlin.input.Zapper -> InputDevice.DeviceType.ZAPPER
+        else -> InputDevice.DeviceType.NONE // NoDevice and any other future OpenBusOnlyDevice
+    }
+
+    /**
+     * Replace the device in port [index] with one of [type]. The underlying
+     * [controller1] / [controller2] (when applicable) is preserved across the
+     * swap so a standard→none→standard round trip keeps the player's button
+     * state intact. Callers should call this on the emulation thread (or under
+     * a pause) — it's not synchronised.
+     */
+    fun setPortType(index: Int, type: InputDevice.DeviceType) {
+        val newDevice: InputDevice = when (type) {
+            InputDevice.DeviceType.STANDARD_GAMEPAD -> when (index) {
+                0 -> StandardGamepad(controller1)
+                1 -> StandardGamepad(controller2)
+                else -> throw IllegalArgumentException("Port index must be 0 or 1, got $index")
+            }
+            InputDevice.DeviceType.ZAPPER -> com.github.alondero.nestlin.input.Zapper()
+            InputDevice.DeviceType.NONE -> NoDevice()
+        }
+        when (index) {
+            0 -> port1 = newDevice
+            1 -> port2 = newDevice
+            else -> throw IllegalArgumentException("Port index must be 0 or 1, got $index")
+        }
+    }
 
     /**
      * APU back-reference for dispatching $4000-$401F register writes/reads
@@ -135,8 +203,13 @@ class Memory : DmaPort {
             in 0x0000..0x1FFF -> internalRam[address%0x800] = value
             in 0x2000..0x3FFF -> ppuAddressedMemory[address%8] = value
             0x4016 -> {
-                controller1.write(value)
-                controller2.write(value)
+                // The 2A03 has a single strobe signal wired to BOTH controller
+                // ports — one $4016 write must latch both ports' shift registers.
+                // Dispatch through the InputDevice abstraction so a Zapper or
+                // empty port can no-op the strobe without special-casing here.
+                val strobeBit = (value.toInt() and 1) != 0
+                port1.writeStrobe(strobeBit)
+                port2.writeStrobe(strobeBit)
             }
             0x4014 -> {
                 val base = value.toUnsignedInt() shl 8
@@ -194,8 +267,8 @@ class Memory : DmaPort {
         val result: Byte = when (address) {
             in 0x0000..0x1FFF -> internalRam[address % 0x800]
             in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
-            0x4016 -> controller1.read()
-            0x4017 -> controller2.read()
+            0x4016 -> port1.read()
+            0x4017 -> port2.read()
             in 0x4000..0x401F -> apu.handleRegisterRead(address - 0x4000)
             in 0x4020..0xFFFF -> {
                 // Push the current data-bus value into the mapper BEFORE
@@ -241,8 +314,8 @@ class Memory : DmaPort {
     fun peek(address: Int): Byte = when (address) {
         in 0x0000..0x1FFF -> internalRam[address % 0x800]
         in 0x2000..0x3FFF -> ppuAddressedMemory.peek(address % 8)
-        0x4016 -> controller1.peek()
-        0x4017 -> controller2.peek()
+        0x4016 -> port1.peek()
+        0x4017 -> port2.peek()
         in 0x4000..0x401F -> apu.peekRegisterRead(address - 0x4000)
         in 0x4020..0xFFFF -> mapper?.cpuPeek(address) ?: 0
         else -> 0

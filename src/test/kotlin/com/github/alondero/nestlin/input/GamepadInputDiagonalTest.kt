@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test
  */
 class GamepadInputDiagonalTest {
 
-    private val gp = GamepadInput(Controller())
+    private val gp = GamepadInput(listOf(Controller())).bindingFor(Player.ONE)
 
     @Test
     fun `NW press lights both UP and LEFT`() {

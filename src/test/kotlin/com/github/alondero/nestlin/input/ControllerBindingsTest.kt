@@ -222,12 +222,45 @@ class ControllerBindingsTest {
 
     @Test
     fun `fromInputConfig skips unknown button names`() {
-        val config = InputConfig(keyboard = mapOf("Z" to "A", "Q" to "NONSENSE"))
+        val config = InputConfig(
+            keyboard = PlayerKeyBindings(player1 = mapOf("Z" to "A", "Q" to "NONSENSE"))
+        )
 
         val bindings = ControllerBindings.fromInputConfig(config)
 
         assertThat(bindings.keyFor(Button.A), equalTo("Z"))
         // "NONSENSE" is not a real Button, so no binding leaks in.
         assertThat(bindings.keyFor(Button.B), absent())
+    }
+
+    @Test
+    fun `fromInputConfig reads P2 keyboard slot when player parameter is TWO`() {
+        val config = InputConfig(
+            keyboard = PlayerKeyBindings(
+                player1 = mapOf("Z" to "A"),
+                player2 = mapOf("NUMPAD0" to "B"),
+            ),
+        )
+
+        val bindings = ControllerBindings.fromInputConfig(config, Player.TWO)
+
+        // Player 2's NUMPAD0 binding to B comes through; player 1's Z binding doesn't.
+        assertThat(bindings.keyFor(Button.B), equalTo("NUMPAD0"))
+        assertThat(bindings.keyFor(Button.A), absent())
+    }
+
+    @Test
+    fun `toInputConfig writes to the requested player slot, preserving the other`() {
+        val config = InputConfig()
+        val bindings = ControllerBindings.fromInputConfig(config, Player.TWO)
+
+        // Capture the binding for B (must call startListening first), then save.
+        bindings.startListening(Button.B)
+        bindings.captureKey("NUMPAD0")
+        val result = bindings.toInputConfig(config, Player.TWO)
+
+        // P2's map has the new key for B; P1's map is untouched.
+        assertThat(result.keyboard.player2["NUMPAD0"], equalTo("B"))
+        assertThat(result.keyboard.player1, equalTo(config.keyboard.player1))
     }
 }

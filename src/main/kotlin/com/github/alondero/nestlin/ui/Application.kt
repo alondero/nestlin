@@ -605,8 +605,12 @@ class NestlinApplication : FrameListener, Application() {
 
         startBatteryFlushTimer()
 
-        // Initialize gamepad input
-        gamepadInput = GamepadInput(nestlin.getController1(), inputConfig.gamepad)
+        // Initialize gamepad input — both controllers so two connected gamepads
+        // auto-route to P1 and P2 respectively (issue: 2-player support).
+        gamepadInput = GamepadInput(
+            listOf(nestlin.getController1(), nestlin.getController2()),
+            inputConfig.gamepad,
+        )
         gamepadInput.initialize()
 
         // Create default config file for user reference
@@ -878,6 +882,10 @@ class NestlinApplication : FrameListener, Application() {
         if (::gamepadInput.isInitialized) {
             gamepadInput.updateConfig(cfg.gamepad)
         }
+        // Apply the per-port device type — a Zapper plug-in changes which $4016/$4017
+        // reads return open-bus vs standard pad bytes (issue: 2-player support).
+        nestlin.memory.setPortType(0, cfg.ports.port1)
+        nestlin.memory.setPortType(1, cfg.ports.port2)
         println("[APP] Applied new controller configuration")
     }
 
@@ -1716,6 +1724,19 @@ class NestlinApplication : FrameListener, Application() {
             return
         }
 
+        // Resolve which player this keypress targets. P1 wins ties (a key bound in
+        // both maps is routed to P1). Fixes the pre-2-player bug where P2 keystrokes
+        // (numpad, etc.) were silently written to controller1.pendingButtons and
+        // recorded as P1 column in the FM2 movie file.
+        val player = com.github.alondero.nestlin.input.InputConfig.firstPlayerForKey(
+            code, inputConfig.keyboard
+        ) ?: return
+        val controller = when (player) {
+            com.github.alondero.nestlin.input.Player.ONE -> nestlin.getController1()
+            com.github.alondero.nestlin.input.Player.TWO -> nestlin.getController2()
+        }
+        val button = inputConfig.getButtonForKey(code, player) ?: return
+
         // Use configurable keyboard mapping. Routing depends on movie state (issue #123):
         //   - NONE:       write directly to the live pad. Game sees updates within the
         //                 same frame they're typed — the standard NES-accurate behavior.
@@ -1724,8 +1745,6 @@ class NestlinApplication : FrameListener, Application() {
         //   - PLAYING:    drop the input — the latch hook is writing the next movie row
         //                 to the controller, and we don't want a stray keypress to land
         //                 in controller.buttons between latch commits.
-        val controller = nestlin.getController1()
-        val button = inputConfig.getButtonForKey(code) ?: return
         when (movieState) {
             MovieState.NONE ->
                 controller.setButton(button, pressed)

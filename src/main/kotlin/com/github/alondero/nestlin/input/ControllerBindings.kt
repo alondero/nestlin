@@ -38,6 +38,14 @@ class ControllerBindings private constructor(
     /** The gamepad binding bound to [button], or null if unbound. */
     fun padFor(button: Button): GamepadBinding? = gamepad[button]
 
+    /**
+     * The current forward-keyed gamepad map. Exposed so the Controller Configuration
+     * screen's Save flow can merge both player tabs' gamepad rebinds into a single
+     * `GamepadConfig.bindings` map. Read-only — callers must go through [capture] /
+     * [resetToDefaults] to mutate.
+     */
+    val gamepadBindings: Map<Button, GamepadBinding> get() = gamepad
+
     /** Arm the state machine: the next [captureKey]/[capture] binds to [button]. */
     fun startListening(button: Button) {
         listeningFor = button
@@ -96,20 +104,28 @@ class ControllerBindings private constructor(
      * — button indices, axes, and POVs all live in one map. Non-binding fields of [base]
      * (axis deadzone) are preserved via [GamepadConfig.copy]. Empty result preserves
      * [GamepadConfig.defaultBindings] so a freshly-saved default file stays readable.
+     *
+     * [player] selects which slot in [PlayerKeyBindings] the working keyboard map lands
+     * in. The other slot is preserved from [base]. Phase 5's per-player config UI uses
+     * this to save each tab's bindings into the right slot without disturbing the other.
      */
-    fun toInputConfig(base: InputConfig): InputConfig {
+    fun toInputConfig(base: InputConfig, player: Player = Player.ONE): InputConfig {
         val keyboardMap = keyboard.entries.associate { (button, key) -> key to button.name }
         val bindings = gamepad.entries.associate { (button, binding) -> binding.storageKey to button.name }
         val finalBindings = if (bindings.isEmpty()) base.gamepad.bindings else bindings
+        val newKeyboard = when (player) {
+            Player.ONE -> PlayerKeyBindings(player1 = keyboardMap, player2 = base.keyboard.player2)
+            Player.TWO -> PlayerKeyBindings(player1 = base.keyboard.player1, player2 = keyboardMap)
+        }
         return base.copy(
-            keyboard = keyboardMap,
+            keyboard = newKeyboard,
             gamepad = base.gamepad.copy(bindings = finalBindings),
         )
     }
 
     companion object {
         private fun defaultKeyboard(): Map<Button, String> =
-            InputConfig.defaultKeyboardMapping.entries
+            PlayerKeyBindings.defaultPlayer1Keyboard.entries
                 .mapNotNull { (key, name) -> nesButton(name)?.let { it to key } }
                 .toMap()
 
@@ -136,9 +152,16 @@ class ControllerBindings private constructor(
          * keyboard map and reading the single `gamepad.bindings` map. Unknown button names
          * and malformed binding storage keys are skipped defensively. If a hand-edited
          * config bound several inputs to one button, the last one wins (one binding per button).
+         *
+         * [player] selects which player's keyboard slot is inverted into the forward model.
+         * Defaults to [Player.ONE] so the legacy single-tab UI keeps working unchanged.
          */
-        fun fromInputConfig(cfg: InputConfig): ControllerBindings {
-            val keyboard = cfg.keyboard.entries
+        fun fromInputConfig(cfg: InputConfig, player: Player = Player.ONE): ControllerBindings {
+            val keyboardMap = when (player) {
+                Player.ONE -> cfg.keyboard.player1
+                Player.TWO -> cfg.keyboard.player2
+            }
+            val keyboard = keyboardMap.entries
                 .mapNotNull { (key, name) -> nesButton(name)?.let { it to key } }
                 .toMap()
             val gamepad = cfg.gamepad.bindings.entries

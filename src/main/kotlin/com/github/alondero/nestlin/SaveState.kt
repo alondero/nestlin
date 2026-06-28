@@ -11,7 +11,7 @@ import java.io.OutputStream
  * Save state file format ("NSTL"):
  *
  *   magic       4 bytes  "NSTL" (0x4E 0x53 0x54 0x4C)
- *   version     int      currently 4; bump on breaking format change.
+ *   version     int      currently 5; bump on breaking format change.
  *                        Version 2 added a per-mapper version byte inside the
  *                        mapper block (see below) so individual mappers can
  *                        evolve their own field order without invalidating
@@ -20,6 +20,11 @@ import java.io.OutputStream
  *                        NMI latency, issue #88).
  *                        Version 4 moved nmiArmed out of the CPU block into a
  *                        dedicated `interruptController` sub-block. Issue #190.
+ *                        Version 5 added a `ports` sub-block (one length-prefixed
+ *                        UTF-8 string per port) recording which InputDevice is
+ *                        plugged into each controller port. v4 files load with
+ *                        both ports defaulting to STANDARD_GAMEPAD. Issue: 2-player
+ *                        support.
  *   romCrc      long     CRC32 of the loaded ROM at save time
  *   romMapper   int      mapper id (validated on load)
  *   cpu         block    written by Cpu.saveState
@@ -28,6 +33,11 @@ import java.io.OutputStream
  *   ram         2048 b   internal RAM
  *   ppu         block    written by Ppu.saveState
  *   apu         block    written by Apu.saveState
+ *   ports       block    v5+ only. Two length-prefixed UTF-8 strings, one per
+ *                              controller port, holding the
+ *                              [com.github.alondero.nestlin.input.InputDevice.DeviceType.storageKey].
+ *                              Format per entry: 1 byte length + UTF-8 bytes.
+ *                              v4 files load with both ports defaulting to STANDARD_GAMEPAD.
  *   ctrl1/ctrl2 block    Controller.saveState x 2
  *   mapper      length-prefixed blob (4-byte int length + bytes from Mapper.saveState).
  *               Inside the blob, the first byte is the mapper's per-mapper
@@ -41,7 +51,10 @@ import java.io.OutputStream
  */
 object SaveState {
     private const val MAGIC = 0x4E53544C  // "NSTL"
-    const val VERSION = 4
+    const val VERSION = 5
+
+    /** Highest version this code can read. */
+    private const val MIN_SUPPORTED_VERSION = 4
 
     class IncompatibleSaveStateException(message: String) : RuntimeException(message)
 
@@ -60,6 +73,14 @@ object SaveState {
         nestlin.memory.saveRamState(dos)
         nestlin.ppu.saveState(dos)
         nestlin.apu.saveState(dos)
+
+        // v5 ports block: one length-prefixed UTF-8 string per port recording the
+        // InputDevice.DeviceType.storageKey. Length-prefixed (rather than fixed-size
+        // or null-terminated) so future device types like "four-score" can fit
+        // without re-versioning the file format.
+        writeDeviceType(dos, nestlin.memory.portType(0))
+        writeDeviceType(dos, nestlin.memory.portType(1))
+
         nestlin.memory.controller1.saveState(dos)
         nestlin.memory.controller2.saveState(dos)
 
@@ -81,8 +102,8 @@ object SaveState {
             throw IncompatibleSaveStateException("Not a Nestlin save state (bad magic: ${"%08X".format(magic)})")
         }
         val version = dis.readInt()
-        if (version != VERSION) {
-            throw IncompatibleSaveStateException("Unsupported save state version $version (expected $VERSION)")
+        if (version < MIN_SUPPORTED_VERSION || version > VERSION) {
+            throw IncompatibleSaveStateException("Unsupported save state version $version (expected $MIN_SUPPORTED_VERSION..$VERSION)")
         }
         val romCrc = dis.readLong()
         if (romCrc != game.crc.value) {
@@ -103,6 +124,19 @@ object SaveState {
         nestlin.memory.loadRamState(dis)
         nestlin.ppu.loadState(dis)
         nestlin.apu.loadState(dis)
+
+        // v5+ reads the ports block; v4 leaves both ports at their construction-time
+        // default (StandardGamepad). The controller1/controller2 fields are stable
+        // across the swap, so a v4 save loaded into v5 code resumes with both ports
+        // bound to their original Controllers — the same behaviour a v4 save produced
+        // when loaded into v4 code.
+        if (version >= 5) {
+            val port0Type = readDeviceType(dis)
+            val port1Type = readDeviceType(dis)
+            nestlin.memory.setPortType(0, port0Type)
+            nestlin.memory.setPortType(1, port1Type)
+        }
+
         nestlin.memory.controller1.loadState(dis)
         nestlin.memory.controller2.loadState(dis)
 
@@ -114,5 +148,23 @@ object SaveState {
         mapper.loadState(DataInputStream(ByteArrayInputStream(mapperBytes)))
 
         nestlin.memory.syncMirroringFromMapper()
+    }
+
+    /** Write a single port's [InputDevice.DeviceType] in the length-prefixed UTF-8 form. */
+    private fun writeDeviceType(dos: DataOutputStream, type: com.github.alondero.nestlin.input.InputDevice.DeviceType) {
+        val keyBytes = type.storageKey.toByteArray(Charsets.UTF_8)
+        dos.writeByte(keyBytes.size)
+        dos.write(keyBytes)
+    }
+
+    /** Read a single port's [InputDevice.DeviceType]. Unknown keys fall back to STANDARD_GAMEPAD. */
+    private fun readDeviceType(dis: DataInputStream): com.github.alondero.nestlin.input.InputDevice.DeviceType {
+        val len = dis.readUnsignedByte()
+        val bytes = ByteArray(len)
+        dis.readFully(bytes)
+        val key = String(bytes, Charsets.UTF_8)
+        return com.github.alondero.nestlin.input.InputDevice.DeviceType.entries
+            .firstOrNull { it.storageKey == key }
+            ?: com.github.alondero.nestlin.input.InputDevice.DeviceType.STANDARD_GAMEPAD
     }
 }
