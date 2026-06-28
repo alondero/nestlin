@@ -13,7 +13,8 @@ import org.junit.jupiter.api.Test
  */
 class GamepadInputMappingTest {
 
-    private fun gamepad(config: GamepadConfig) = GamepadInput(Controller(), config)
+    private fun gamepad(config: GamepadConfig) =
+        GamepadInput(listOf(Controller()), config).bindingFor(Player.ONE)
 
     @Test
     fun `config remap overrides the built-in default for a conventional index`() {

@@ -106,8 +106,13 @@ class StrobeRegister {
         strobe = input.readBoolean()
     }
 
-    private companion object {
-        /** Open-bus mask returned in bits 5-7 of every $4016/$4017 read. */
+    internal companion object {
+        /**
+         * Open-bus mask returned in bits 5-7 of every $4016/$4017 read. Internal
+         * (not private) so [com.github.alondero.nestlin.input.InputDevice] stubs
+         * that return the open-bus-only byte can reuse the same value rather than
+         * duplicating the literal.
+         */
         const val OPEN_BUS_MASK = 0x40
     }
 }
