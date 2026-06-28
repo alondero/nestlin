@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.cpu
 
 import com.github.alondero.nestlin.*
+import com.github.alondero.nestlin.cpu.opcode.OpcodesRefactor
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.log.Logger
 import java.io.DataInput
@@ -54,7 +55,7 @@ class Cpu(
     private val _processorStatus = ProcessorStatus()
     private var _idle = false
     private var logger: Logger? = null
-    private val opcodes = Opcodes()
+    private val opcodes = OpcodesRefactor
 
     // --- Controlled-access properties (issue #23) --------------------------------
     // Backing fields are private; these properties are the entire public surface for
@@ -200,7 +201,7 @@ class Cpu(
 
             opcodes[opcodeVal]?.also {
                 logger?.cpuTick(initialPC, opcodeVal, this)
-                it.op(this)
+                it.evaluate(this)
             } ?: run {
                 // For test ROMs, throw exception to maintain test compatibility
                 // For regular games, log and treat as 2-cycle NOP
