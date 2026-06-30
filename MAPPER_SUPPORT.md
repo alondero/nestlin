@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 65, 66, 68, 69, 153, 206.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 65, 66, 68, 69, 153, 206, 228.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -909,6 +909,47 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   write to the wrong bank; the 31 original unit tests passed only because they hand-rolled the same
   wrong formula. Lesson: assert mapper decode against the *spec value*, not a magic byte derived
   from the implementation.
+
+## Mapper 228 (Action 52 / Active Enterprises)
+**Status:** Working — boots to the game-selection menu (Added 2026-06-30, GH #140)
+
+- **Games:** *Action 52* (the infamous 52-game multicart) and *Cheetahmen II*.
+- **What makes it unique in Nestlin:** the written *value* contributes only 2 bits;
+  the *address* carries the PRG bank, CHR high nibble, PRG mode and mirroring. It is the
+  only mapper here where the bank-select is encoded in `addr` rather than `value`.
+- **Oracle:** Mesen2's `Core/NES/Mappers/Unlicensed/ActionEnterprises.h` (the nesdev wiki
+  page agrees on the bit layout). The GitHub issue's "chip-3 reads return open bus" prose
+  was self-contradictory — see the PRG note below.
+- **Register decode (`cpuWrite`, $8000-$FFFF):**
+  - `chipSelect = (addr >> 11) & 3` (A11-A12)
+  - `prgPage = ((addr >> 6) & 0x1F) | (chipForIndex << 5)` — 7-bit bank index 0-95
+  - `addr & 0x20` (A5): set → 32KB mode (same 16KB page in both windows); clear →
+    adjacent 16KB pair (`prgBank0 = page & 0xFE`, `prgBank1 = (page & 0xFE) + 1`)
+  - `chrBank = ((addr & 0x0F) << 2) | (value & 0x03)` — 4 bits from A0-A3 + 2 bits from value
+  - mirroring: `addr & 0x2000` (A13) → 1 = Horizontal, 0 = Vertical
+- **PRG — three chips, one hole.** Physically chip 0/1/3 exist (each 512KB); chip 2 is
+  absent. The .nes dump packs the three chips contiguously into 96 × 16KB banks (chip 3's
+  data at banks 64-95, file offset $100010). Mesen remaps `chipSelect 3 → 2` *for indexing*
+  so the third chip is reachable as banks 64-95 (the value real games write). Nestlin keeps
+  that remap **and** flags a literal `chipSelect == 2` write as open bus (a chip-2 *read*
+  returns the data bus, per the wiki/hardware). No real game selects chip 2, so this is
+  invisible to the Mesen2 state-diff yet honours both the wiki and the issue's open-bus
+  requirement — and, unlike the issue's prose, keeps every third-chip game playable.
+- **CHR:** single 8KB window at PPU $0000-$1FFF, 6-bit bank (0-63).
+- **Initial state:** Mesen's `InitMapper`/`Reset` both call `WriteRegister($8000, 0)`
+  (→ prgBank0=0, prgBank1=1, chrBank=0, vertical). Without it the menu hangs on black.
+  Replayed in `Mapper228`'s `init`; Nestlin has no per-mapper reset hook, so the soft-reset
+  replay isn't modelled (unnecessary for cold boot, which is where games depend on it).
+- **No PRG-RAM, no IRQ, no audio expansion.** Reads below $8000 are open bus. The disputed
+  16-bit "RAM" at $4020-$4023 noted on the wiki is not emulated (Nestopia omits it too).
+- **Verification:** `Mapper228Test` (17 cases) covers dispatch, address-only PRG banking
+  across all 96 banks in both modes, the chip-3→third-chip path, chip-2 open bus, address+value
+  CHR banking across all 64 banks, value-bit isolation (only bits 0-1 matter), mirroring bit 13,
+  initial state, sub-$8000 open bus, ignored sub-$8000 writes, and save/load round-trip.
+  `Mapper228RegressionTest` asserts a banking register moves during boot and (`@RequiresMesen2`)
+  byte-compares render output vs Mesen2 at the menu frame. Real-ROM gate: `./gradlew bootcheck`
+  on *Action 52 (USA) (Rev A)* returns **PASS** (rendering on by frame 34, 27.5% non-blank,
+  PRG+CHR banks moving, NMIs firing) — the game-selection menu renders.
 
 ## Adding New Mappers
 
