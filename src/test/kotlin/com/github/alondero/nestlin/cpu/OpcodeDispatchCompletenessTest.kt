@@ -22,25 +22,26 @@ import org.junit.jupiter.api.Test
 class OpcodeDispatchCompletenessTest {
 
     @Test
-    fun `dispatch table covers exactly the 250 currently-mapped opcodes`() {
+    fun `dispatch table covers exactly the 252 currently-mapped opcodes`() {
         val mapped = OpcodesRefactor.map.keys.toSet()
         assertThat(
             "OpcodesRefactor.map size — if this changes, the test was wrong about the baseline",
-            mapped.size, equalTo(250),
+            mapped.size, equalTo(252),
         )
     }
 
     @Test
-    fun `the 6 unmapped opcodes match the expected set`() {
+    fun `the 4 unmapped opcodes match the expected set`() {
         val mapped = OpcodesRefactor.map.keys.toSet()
         val unmapped = (0..0xFF).filter { it !in mapped }.toSet()
-        // The 6 unmapped opcodes, derived empirically from the original
-        // Opcodes.kt init block. If a refactor changes this set, decide
-        // explicitly whether to update the test or the dispatcher.
+        // The 4 unmapped opcodes after issue #207's TAS/SHX/SHY registration
+        // (previously 250 mapped / 6 unmapped; SHY 0x9C and SHX 0x9E were
+        // unregistered but their classes existed). If a refactor changes
+        // this set, decide explicitly whether to update the test or the
+        // dispatcher.
         //   0x0B = AAC (unofficial); 0x2B = AAC; 0x8B = unknown/very unstable
-        //   0x9C = SHY unhooked variant; 0x9E = SHX unhooked variant
         //   0xCB = very unstable SBC+DEC combo
-        val expectedUnmapped = setOf(0x0B, 0x2B, 0x8B, 0x9C, 0x9E, 0xCB)
+        val expectedUnmapped = setOf(0x0B, 0x2B, 0x8B, 0xCB)
         assertThat(unmapped, equalTo(expectedUnmapped))
     }
 
@@ -48,7 +49,7 @@ class OpcodeDispatchCompletenessTest {
     fun `expectedUnmapped constant matches the derived set`() {
         val mapped = OpcodesRefactor.map.keys.toSet()
         val unmapped = (0..0xFF).filter { it !in mapped }.toSet()
-        val expectedUnmapped = setOf(0x0B, 0x2B, 0x8B, 0x9C, 0x9E, 0xCB)
+        val expectedUnmapped = setOf(0x0B, 0x2B, 0x8B, 0xCB)
         assertThat(unmapped, equalTo(expectedUnmapped))
     }
 }

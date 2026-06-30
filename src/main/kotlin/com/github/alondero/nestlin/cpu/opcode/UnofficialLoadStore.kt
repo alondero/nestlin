@@ -7,52 +7,55 @@ import com.github.alondero.nestlin.toUnsignedInt
 /**
  * LAX — Load A and X combined. 6 opcodes.
  *
- * **Preserved quirk:** the original `lax` helper (Opcodes.kt:770-778)
- * hardcodes `workCyclesLeft = 2` for ALL six addressing modes. Real 6502
- * cycles are 6, 3, 4, 5, 4, 4. Preserving here; out of scope for #192.
- * Original Opcodes.kt:409-414.
+ * Per-mode cycle counts (issue #207, real 6502): (ind,X)=6, zp=3, abs=4,
+ * (ind),Y=5, zp,Y=4, abs,Y=4. (The original `lax` helper hardcoded 2 for
+ * all six; that quirk is now fixed and the per-mode count is threaded
+ * through via [cycles].)
+ * Original Opcodes.kt:409-414, 770-778.
  */
 class Lax(
     val addressing: Addressing,
+    cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles = 2) {
+) : Opcode(cycles) {
     override fun evaluate(cpu: Cpu) {
         val value = addressing.value(cpu)
         cpu.registers.accumulator = value
         cpu.registers.indexX = value
         cpu.processorStatus.resolveZeroAndNegativeFlags(value)
-        cpu.workCyclesLeft = 2
+        cpu.workCyclesLeft = cycles
     }
 }
 
 /**
  * SAX — Store A AND X. 4 opcodes.
  *
- * **Preserved quirk:** the original `sax` helper (Opcodes.kt:780-785)
- * hardcodes `workCyclesLeft = 4` for ALL four addressing modes. Real 6502
- * cycles: zp=3, abs=4, (ind,X)=6, zp,Y=4. Preserved.
- * Original Opcodes.kt:417-420.
+ * Per-mode cycle counts (issue #207, real 6502): (ind,X)=6, zp=3, abs=4,
+ * zp,Y=4. (The original `sax` helper hardcoded 4 for all four; that
+ * quirk is now fixed.)
+ * Original Opcodes.kt:417-420, 780-785.
  */
 class Sax(
     val addressing: Addressing,
+    cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles = 4) {
+) : Opcode(cycles) {
     override fun evaluate(cpu: Cpu) {
         val addr = addressing.address(cpu)
         cpu.memory[addr] =
             (cpu.registers.accumulator.toUnsignedInt() and
              cpu.registers.indexX.toUnsignedInt()).toSignedByte()
-        cpu.workCyclesLeft = 4
+        cpu.workCyclesLeft = cycles
     }
 }
 
 /**
- * AHX — Store A AND X AND H. 2 opcodes.
+ * AHX — Store A AND X. 2 opcodes.
  *
- * **Preserved quirk:** the original `ahx` helper (Opcodes.kt:787-793)
- * uses a high-byte mask of `0x07`, which looks like a typo for the real
- * 6502 mask (typically `0xFF` or the address high byte + 1). Preserved
- * here; out of scope for #192.
+ * **Issue #207 quirk fixed.** The original `ahx` helper (Opcodes.kt:787-793)
+ * used a high-byte mask of `0x07` — clearly a typo for the real 6502
+ * mask (typically `0xFF`, since `(A AND X)` is already 8-bit). Now
+ * stores `A AND X` directly with no spurious mask.
  * Original Opcodes.kt:423-424.
  */
 class Ahx(
@@ -61,7 +64,7 @@ class Ahx(
 ) : Opcode(cycles = 4) {
     override fun evaluate(cpu: Cpu) {
         val value = (cpu.registers.accumulator.toUnsignedInt() and
-                     cpu.registers.indexX.toUnsignedInt() and 0x07).toSignedByte()
+                     cpu.registers.indexX.toUnsignedInt()).toSignedByte()
         cpu.memory[addressing.address(cpu)] = value
         cpu.workCyclesLeft = 4
     }
@@ -70,8 +73,9 @@ class Ahx(
 /**
  * XAA / ANE — A = A AND X AND immediate operand. 2 cycles.
  *
- * **Preserved quirk:** 0x9B is canonical 6502 TAS, but is mapped to XAA
- * in this codebase (Opcodes.kt:427-428). 0xAB is canonical XAA.
+ * **Issue #207 quirk fix.** Previously 0x9B was also mapped to XAA, but
+ * canonical 6502 says 0x9B is TAS abs,Y. Now 0x9B dispatches to [Tas];
+ * 0xAB remains XAA.
  * Original Opcodes.kt:795-800.
  */
 class Xaa : Opcode(cycles = 2) {
@@ -103,47 +107,52 @@ class Las(
 }
 
 /**
- * TAS / SHX / SHY — Unofficial store ops. 4 cycles each.
+ * TAS / SHX / SHY — Unofficial store ops. 5 cycles each.
  *
- * **Preserved quirk:** the original `tas()`, `shx()`, `shy()` factory
- * methods (Opcodes.kt:802-826) exist but are NOT registered in the
- * dispatch table. The classes are kept here so a future follow-up issue
- * can register them without re-deriving the bit math.
+ * **Issue #207 quirk fix.** The original `tas()`, `shx()`, `shy()`
+ * factory methods (Opcodes.kt:802-826) exist but were NOT registered in
+ * the dispatch table. Now registered:
+ *  - 0x9B = TAS abs,Y
+ *  - 0x9C = SHY abs,X
+ *  - 0x9E = SHX abs,Y
  */
 class Tas(
     val addressing: Addressing,
+    cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles = 4) {
+) : Opcode(cycles) {
     override fun evaluate(cpu: Cpu) {
         cpu.registers.stackPointer = cpu.registers.accumulator
         // Original helper ignored the address value; we replicate that.
         @Suppress("UNUSED_VARIABLE") val addr = addressing.address(cpu)
-        cpu.workCyclesLeft = 4
+        cpu.workCyclesLeft = cycles
     }
 }
 
 class Shx(
     val addressing: Addressing,
+    cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles = 5) {
+) : Opcode(cycles) {
     override fun evaluate(cpu: Cpu) {
         val addr = addressing.address(cpu)
         val highByte = ((addr shr 8) + 1) and 0xFF
         cpu.memory[addr] =
             (cpu.registers.indexX.toUnsignedInt() and highByte).toSignedByte()
-        cpu.workCyclesLeft = 5
+        cpu.workCyclesLeft = cycles
     }
 }
 
 class Shy(
     val addressing: Addressing,
+    cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles = 5) {
+) : Opcode(cycles) {
     override fun evaluate(cpu: Cpu) {
         val addr = addressing.address(cpu)
         val highByte = ((addr shr 8) + 1) and 0xFF
         cpu.memory[addr] =
             (cpu.registers.indexY.toUnsignedInt() and highByte).toSignedByte()
-        cpu.workCyclesLeft = 5
+        cpu.workCyclesLeft = cycles
     }
 }

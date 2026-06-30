@@ -298,18 +298,15 @@ class OpcodeCycleTableTest {
             rows += OpcodeRow(0xBA, 1, mnemonic = "TSX")
 
             // ===== Inline-implied opcodes (17) ==============================
-            // BRK (7), JSR (6), JMP abs (3), JMP ind (3 — known quirk; real
-            // 6502 is 5 but `jump` helper hardcodes 3), NOP implied (2),
+            // BRK (7), JSR (6), JMP abs (3), JMP ind (5), NOP implied (2),
             // Accumulator shift/rotate (2 each), RTS (6), PLA (4),
             // INY/INY/DEX/DEY (2), PLP (4), RTI (6).
             rows += OpcodeRow(0x00, 6, mnemonic = "BRK")
             rows += OpcodeRow(0x20, 5, listOf(b(0x00), b(0x05)), mnemonic = "JSR")
             rows += OpcodeRow(0x4C, 2, listOf(b(0x00), b(0x05)), mnemonic = "JMP abs")
-            // JMP indirect — KNOWN QUIRK: jump helper sets workCyclesLeft=3
-            // for both abs AND indirect, but real 6502 indirect is 5 cycles.
-            // Preserve until a follow-up fixes the helper.
-            rows += OpcodeRow(0x6C, 2, listOf(b(0x00), b(0x05)),
-                jmpIndirectPointer(), "JMP (ind) [quirk: 3 cycles; real 6502 = 5]")
+            // JMP indirect — real 6502 = 5 cycles (issue #207 fixed).
+            rows += OpcodeRow(0x6C, 4, listOf(b(0x00), b(0x05)),
+                jmpIndirectPointer(), "JMP (ind)")
             rows += OpcodeRow(0xEA, 1, mnemonic = "NOP implied")
             rows += OpcodeRow(0x0A, 1, mnemonic = "ASL A")
             rows += OpcodeRow(0x2A, 1, mnemonic = "ROL A")
@@ -369,59 +366,59 @@ class OpcodeCycleTableTest {
             rows += OpcodeRow(0xDA, 1, mnemonic = "NOP implied")
             rows += OpcodeRow(0xFA, 1, mnemonic = "NOP implied")
 
-            // ===== LAX (6) — KNOWN QUIRK ====================================
-            // The `lax` helper hardcodes workCyclesLeft = 2 for ALL addressing
-            // modes. Real 6502 cycles are 6, 3, 4, 5, 4, 4. Preserve current
-            // behaviour; out of scope to fix in #192.
-            rows += OpcodeRow(0xA3, 1, listOf(b(POINTER_BASE and 0xFF)),
-                indirectXPointer(), "LAX (ind,X) [quirk: 2 cycles; real 6502 = 6]")
-            rows += OpcodeRow(0xA7, 1, listOf(b(0x42)),
-                { /* zp */ }, "LAX zp [quirk: 2 cycles; real 6502 = 3]")
-            rows += OpcodeRow(0xAF, 1, listOf(b(0x00), b(0x05)),
-                { /* abs */ }, "LAX abs [quirk: 2 cycles; real 6502 = 4]")
-            rows += OpcodeRow(0xB3, 1, listOf(b(POINTER_BASE and 0xFF)),
-                indirectYPointer(), "LAX (ind),Y [quirk: 2 cycles; real 6502 = 5]")
-            rows += OpcodeRow(0xB7, 1, listOf(b(0x42)),
-                { it.registers.indexY = 0x00 }, "LAX zp,Y [quirk: 2 cycles; real 6502 = 4]")
-            rows += OpcodeRow(0xBF, 1, listOf(b(0x00), b(0x05)),
-                { it.registers.indexY = 0x00 }, "LAX abs,Y [quirk: 2 cycles; real 6502 = 4]")
+            // ===== LAX (6) — real-6502 cycle counts (issue #207) ===========
+            // (ind,X)=6, zp=3, abs=4, (ind),Y=5, zp,Y=4, abs,Y=4.
+            rows += OpcodeRow(0xA3, 5, listOf(b(POINTER_BASE and 0xFF)),
+                indirectXPointer(), "LAX (ind,X)")
+            rows += OpcodeRow(0xA7, 2, listOf(b(0x42)),
+                { /* zp */ }, "LAX zp")
+            rows += OpcodeRow(0xAF, 3, listOf(b(0x00), b(0x05)),
+                { /* abs */ }, "LAX abs")
+            rows += OpcodeRow(0xB3, 4, listOf(b(POINTER_BASE and 0xFF)),
+                indirectYPointer(), "LAX (ind),Y")
+            rows += OpcodeRow(0xB7, 3, listOf(b(0x42)),
+                { it.registers.indexY = 0x00 }, "LAX zp,Y")
+            rows += OpcodeRow(0xBF, 3, listOf(b(0x00), b(0x05)),
+                { it.registers.indexY = 0x00 }, "LAX abs,Y")
 
-            // ===== SAX (4) — KNOWN QUIRK ====================================
-            // The `sax` helper hardcodes workCyclesLeft = 4 for ALL
-            // addressing modes. Real 6502 cycles: zp=3, abs=4, (ind,X)=6,
-            // zp,Y=4. Preserve current behaviour; out of scope to fix in
-            // #192 (same shape as the LAX=2 quirk above).
-            rows += OpcodeRow(0x83, 3, listOf(b(POINTER_BASE and 0xFF)),
-                indirectXPointer(), "SAX (ind,X) [quirk: 4 cycles; real 6502 = 6]")
-            rows += OpcodeRow(0x87, 3, listOf(b(0x42)),
-                { /* zp */ }, "SAX zp [quirk: 4 cycles; real 6502 = 3]")
+            // ===== SAX (4) — real-6502 cycle counts (issue #207) ===========
+            // (ind,X)=6, zp=3, abs=4, zp,Y=4.
+            rows += OpcodeRow(0x83, 5, listOf(b(POINTER_BASE and 0xFF)),
+                indirectXPointer(), "SAX (ind,X)")
+            rows += OpcodeRow(0x87, 2, listOf(b(0x42)),
+                { /* zp */ }, "SAX zp")
             rows += OpcodeRow(0x8F, 3, listOf(b(0x00), b(0x05)),
-                { /* abs */ }, "SAX abs [quirk: 4 cycles; real 6502 = 4]")
+                { /* abs */ }, "SAX abs")
             rows += OpcodeRow(0x97, 3, listOf(b(0x42)),
-                { it.registers.indexY = 0x00 }, "SAX zp,Y [quirk: 4 cycles; real 6502 = 4]")
+                { it.registers.indexY = 0x00 }, "SAX zp,Y")
 
-            // ===== AHX (2) — KNOWN QUIRK =====================================
-            // `ahx` helper uses mask `0x07` for the high byte (looks like a
-            // typo for `0xFF`). Preserve; out of scope to fix in #192.
+            // ===== AHX (2) — mask fixed in issue #207 =======================
+            // 0x07 mask was a typo; now stores A AND X with no spurious mask.
             rows += OpcodeRow(0x93, 3, listOf(b(POINTER_BASE and 0xFF)),
-                indirectYPointer(), "AHX (ind),Y [quirk: mask=0x07; real 6502 = 0xFF]")
+                indirectYPointer(), "AHX (ind),Y")
             rows += OpcodeRow(0x9F, 3, listOf(b(0x00), b(0x05)),
-                { it.registers.indexY = 0x00 }, "AHX abs,Y [quirk: mask=0x07; real 6502 = 0xFF]")
+                { it.registers.indexY = 0x00 }, "AHX abs,Y")
 
-            // ===== XAA (2) ==================================================
-            // Both 0x9B and 0xAB are mapped to XAA. NESdev canonical says
-            // 0x9B is TAS, 0xAB is XAA. Preserve the current mapping.
-            rows += OpcodeRow(0x9B, 1, mnemonic = "XAA [0x9B canonical=TAS]")
+            // ===== SHX / SHY (issue #207 quirk fix) ========================
+            // 0x9C = SHY abs,X (newly registered); 0x9E = SHX abs,Y (newly
+            // registered). 5 cycles each. Operand is the absolute address.
+            rows += OpcodeRow(0x9C, 4, listOf(b(0x00), b(0x05)),
+                { it.registers.indexX = 0x00 }, "SHY abs,X [issue #207: registered]")
+            rows += OpcodeRow(0x9E, 4, listOf(b(0x00), b(0x05)),
+                { it.registers.indexY = 0x00 }, "SHX abs,Y [issue #207: registered]")
+
+            // ===== XAA / TAS (issue #207 quirk fix) ========================
+            // 0x9B is now TAS abs,Y (5 cycles); 0xAB remains XAA (2 cycles).
+            // 0x9B's operand bytes are the absolute-Y target address.
+            rows += OpcodeRow(0x9B, 4, listOf(b(0x00), b(0x05)),
+                { it.registers.indexY = 0x00 }, "TAS abs,Y")
             rows += OpcodeRow(0xAB, 1, mnemonic = "XAA")
 
             // ===== LAS (1) ==================================================
             rows += OpcodeRow(0xBB, 3, listOf(b(0x00), b(0x05)),
                 { it.registers.indexY = 0x00 }, "LAS abs,Y")
 
-            // ===== DCP (6 unique) ===========================================
-            // 0xE3 and 0xF3 are also ISC entries — see below. The ISC writes
-            // come AFTER the DCP writes in Opcodes.kt:441-451, so the
-            // dispatch table has ISC for both bytes (the silent overwrite).
+            // ===== DCP (7) — issue #207 quirk fix: 0xE3 is DCP, not ISC ==
             rows += OpcodeRow(0xC7, 5, listOf(b(0x42)), mnemonic = "DCP zp")
             rows += OpcodeRow(0xD7, 5, listOf(b(0x42)),
                 { it.registers.indexX = 0x00 }, "DCP zp,X")
@@ -432,10 +429,10 @@ class OpcodeCycleTableTest {
                 { it.registers.indexY = 0x00 }, "DCP zp,Y")
             rows += OpcodeRow(0xD3, 5, listOf(b(POINTER_BASE and 0xFF)),
                 indirectXPointer(), "DCP (ind,X)")
+            rows += OpcodeRow(0xE3, 5, listOf(b(POINTER_BASE and 0xFF)),
+                indirectXPointer(), "DCP (ind,X) [issue #207: 0xE3 is DCP]")
 
-            // ===== ISC (7 — including the 0xE3/0xF3 silent overwrite) =======
-            // 0xE3 and 0xF3 are mapped to ISC (the ISC assignment overwrites
-            // the earlier DCP assignment in Opcodes.kt:441,442,450,451).
+            // ===== ISC (6) — 0xF3 stays ISC; 0xE3 moved to DCP =============
             rows += OpcodeRow(0xE7, 5, listOf(b(0x42)), mnemonic = "ISC zp")
             rows += OpcodeRow(0xF7, 5, listOf(b(0x42)),
                 { it.registers.indexX = 0x00 }, "ISC zp,X")
@@ -444,10 +441,8 @@ class OpcodeCycleTableTest {
                 { it.registers.indexX = 0x00 }, "ISC abs,X")
             rows += OpcodeRow(0xFB, 5, listOf(b(0x42)),
                 { it.registers.indexY = 0x00 }, "ISC zp,Y")
-            rows += OpcodeRow(0xE3, 5, listOf(b(POINTER_BASE and 0xFF)),
-                indirectXPointer(), "ISC (ind,X) [0xE3: ISC wins over DCP]")
             rows += OpcodeRow(0xF3, 5, listOf(b(POINTER_BASE and 0xFF)),
-                indirectYPointer(), "ISC (ind),Y [0xF3: ISC wins over DCP]")
+                indirectYPointer(), "ISC (ind),Y")
 
             // ===== RLA (7) ==================================================
             rows += OpcodeRow(0x27, 4, listOf(b(0x42)), mnemonic = "RLA zp")
@@ -509,22 +504,23 @@ class OpcodeCycleTableTest {
             rows += OpcodeRow(0x4B, 1, listOf(b(0x00)), mnemonic = "ALR #imm")
             rows += OpcodeRow(0x6B, 1, listOf(b(0x00)), mnemonic = "ARR #imm")
 
-            // ===== KIL (13) =================================================
-            // Does NOT actually halt — consumes 2 cycles and advances PC by
-            // one byte per tick. Preserve; out of scope to make a true halt.
-            rows += OpcodeRow(0x02, 1, mnemonic = "KIL [quirk: doesn't halt]")
-            rows += OpcodeRow(0x12, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0x22, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0x32, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0x42, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0x52, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0x62, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0x72, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0x92, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0xB2, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0xC3, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0xD2, 1, mnemonic = "KIL")
-            rows += OpcodeRow(0xF2, 1, mnemonic = "KIL")
+            // ===== KIL (13) — issue #207 quirk fix: now actually halts ====
+            // KIL sets cpu.idle = true; Cpu.tick() then skips opcode dispatch
+            // and PPU/APU keep advancing. The post-tick `workCyclesLeft` is
+            // 0 because we never set it (the tick decrements 0→0, no-op).
+            rows += OpcodeRow(0x02, 0, mnemonic = "KIL [issue #207: now halts CPU]")
+            rows += OpcodeRow(0x12, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0x22, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0x32, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0x42, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0x52, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0x62, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0x72, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0x92, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0xB2, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0xC3, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0xD2, 0, mnemonic = "KIL")
+            rows += OpcodeRow(0xF2, 0, mnemonic = "KIL")
 
             // ===== Sanity: every row's opcode must actually be mapped =======
             // This catches typos in the table — if a row's byte isn't in the

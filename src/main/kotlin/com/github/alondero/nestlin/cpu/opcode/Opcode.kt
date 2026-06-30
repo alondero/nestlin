@@ -32,11 +32,12 @@ import com.github.alondero.nestlin.toUnsignedInt
  * 2-cycle instruction leaves `workCyclesLeft == 1` after one tick — see
  * [OpcodeCycleTableTest] for the regression bar.
  *
- * **Preserved quirks.** Several opcodes carry intentional deviations from
- * real 6502 behaviour (LAX hardcodes 2 cycles, SAX hardcodes 4, JMP
- * indirect uses 3 instead of 5, AHX mask is 0x07). Each carries an inline
- * comment referencing the original `Opcodes.kt` line and a TODO for a
- * follow-up issue.
+ * **Preserved quirks (issue #207).** Several opcodes still carry
+ * intentional deviations from real 6502 behaviour; the ones that survived
+ * the #207 cleanup are documented inline in the relevant subclass.
+ * Fixed in #207: LAX/SAX per-mode cycle counts, JMP indirect cycle
+ * count, AHX mask, 0x9B dispatch (now TAS), 0xE3 dispatch (now DCP),
+ * SHY/SHX registration, KIL halt behaviour, Absolute address masking.
  */
 sealed class Opcode(val cycles: Int) {
     /**
