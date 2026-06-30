@@ -107,16 +107,18 @@ class AudioPipelineTest {
 
     @Test
     fun `write to 4000 through Memory actually configures the APU pulse channel`() {
-        // Regression for issue #22: pre-factory, `Memory` had a nullable Apu and
-        // `apu?.handleRegisterWrite(...)` was a silent no-op when unwired, so a
-        // test that built `Memory()` + `Apu(memory)` WITHOUT setting `memory.apu = apu`
-        // (or the AudioPipelineTest pre-#22) wrote to `$4000` and saw the byte land
-        // in `Memory.apuAddressedMemory`, but the pulse channel driver never ran
-        // and `getAudioSamples()` returned all-zero buffers. Now the factory always
-        // wires the pair, so writing `$4000` through Memory MUST configure pulse1
-        // and the channel output MUST go non-zero. If anyone re-introduces a
-        // nullable Apu field (or accidentally restores `apu?.`), this test fails
-        // fast with a zero-output assertion.
+        // Regression for issue #22: pre-factory, `Memory` had a nullable Apu
+        // and `apu?.handleRegisterWrite(...)` was a silent no-op when unwired.
+        // A test that built `Memory()` + `Apu(memory)` WITHOUT setting
+        // `memory.apu = apu` wrote to `$4000`, saw the byte land in a
+        // Memory-side mirror of the APU register file, but the pulse channel
+        // driver never ran and `getAudioSamples()` returned all-zero buffers.
+        // The factory now always wires the pair, so writing `$4000` through
+        // Memory MUST configure pulse1 and the channel output MUST go non-zero.
+        // If anyone re-introduces a nullable Apu field (or accidentally
+        // restores `apu?.`), this test fails fast with a zero-output
+        // assertion. (Issue #195 later removed that redundant Memory-side
+        // mirror; the regression story stands regardless.)
         val (memory, apu) = Memory.createWithApu()
 
         // Enable pulse1 BEFORE the $4003 write so the length counter actually loads.
