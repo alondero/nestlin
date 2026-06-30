@@ -3,7 +3,6 @@ package com.github.alondero.nestlin
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.gamepak.Mapper
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
-import com.github.alondero.nestlin.apu.ApuAddressedMemory
 import com.github.alondero.nestlin.apu.DmaPort
 import java.io.DataInput
 import java.io.DataOutput
@@ -11,7 +10,6 @@ import java.io.DataOutput
 class Memory : DmaPort {
     private val internalRam = ByteArray(0x800)
     val ppuAddressedMemory = PpuAddressedMemory()
-    val apuAddressedMemory = ApuAddressedMemory()
 
     val controller1 = Controller()
     val controller2 = Controller()
@@ -158,10 +156,7 @@ class Memory : DmaPort {
                 // downstream symptom.
                 cpu?.workCyclesLeft = 513
             }
-            in 0x4000..0x401F -> {
-                apuAddressedMemory[address - 0x4000] = value
-                apu.handleRegisterWrite(address - 0x4000, value)
-            }
+            in 0x4000..0x401F -> apu.handleRegisterWrite(address - 0x4000, value)
             in 0x4020..0xFFFF -> {
                 mapper?.cpuWrite(address, value)
                 mapper?.let { applyMirroringFromMapper(it) }  // sync mirroring after each write
@@ -271,9 +266,17 @@ class Memory : DmaPort {
         return (addr2 + addr1).toSignedShort()
     }
 
+    /**
+     * Wipe CPU RAM and PPU addressable memory to a post-RESET state. The APU's
+     * `$4000-$401F` register file is **not** touched here — [Apu] owns its own
+     * private register store ([Apu.apuMemory]) and resets it via its own
+     * lifecycle (load-state + per-frame work). A previous version of this
+     * method also reset a now-removed Memory-side mirror of the APU registers
+     * (issue #195); that mirror was an orphan from the pre-#22 nullable-`apu`
+     * design and had no readers, so it was deleted.
+     */
     fun clear() {
         internalRam.fill(0xFF.toSignedByte())
-        apuAddressedMemory.reset()
         ppuAddressedMemory.reset()
     }
 
