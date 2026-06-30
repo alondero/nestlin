@@ -2,7 +2,6 @@ package com.github.alondero.nestlin.compare
 
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 
 /**
  * Shared driver for invoking Mesen2 in GUI mode with a generated Lua script.
@@ -11,28 +10,30 @@ import java.nio.file.Paths
  *
  * Requires a display attached AND I/O access enabled once interactively
  * (Script → Settings → Script Window → Restrictions → Allow access to I/O
- * and OS functions). See .claude/skills/mesen/SKILL.md for the full setup.
+ * and OS functions). See `.claude/skills/mesen/SKILL.md` for the full setup.
+ *
+ * ## Scope
+ *
+ * This object owns the **one-off GUI invocation path** for tests that need
+ * their own ad-hoc Lua (AkiraMesen2OracleTest's FM2-input variant, plus
+ * any future diagnostic dumps). The cross-emulator regression suite
+ * (`Mesen2StateCapturer`, `Mesen2ReferenceRunner`) no longer goes through
+ * here — it uses `Mesen2Session` (issue #61) which keeps a Mesen2
+ * process long-running per ROM.
+ *
+ * Path resolution delegates to [Mesen2Session.mesen2Path] so the four
+ * independent call sites (`Mesen2Process.mesen2Path`,
+ * `Mesen2StateCapturer.getMesen2Path`, `Mesen2ReferenceRunner.getMesen2Path`,
+ * `Mesen2ProcessInstance`) all agree on which binary to launch.
  */
 object Mesen2Process {
 
-    private const val ENV_VAR = "MESEN2_PATH"
-    private const val SYS_PROP = "mesen2.path"
     private val ARGS = listOf("--doNotSaveSettings")
 
-    // Tried in order when MESEN2_PATH / mesen2.path are unset:
-    // absolute parent path makes worktrees zero-config on Adam's machine;
-    // relative fallback works for other contributors running from project root.
-    private val DEFAULT_CANDIDATES = listOf(
-        Paths.get("X:/src/nestlin/tools/Mesen2/Mesen.exe"),
-        Paths.get("tools/Mesen2/Mesen.exe")
-    )
+    /** Resolved Mesen2 executable path. Delegates to [Mesen2Session.mesen2Path]. */
+    fun mesen2Path(): Path = Mesen2Session.mesen2Path()
 
-    fun mesen2Path(): Path {
-        val override = System.getenv(ENV_VAR) ?: System.getProperty(SYS_PROP)
-        if (override != null) return Paths.get(override)
-        return DEFAULT_CANDIDATES.firstOrNull { it.toFile().exists() } ?: DEFAULT_CANDIDATES.first()
-    }
-
+    /** True if Mesen2 is available at the resolved path. */
     fun isAvailable(): Boolean = mesen2Path().toFile().exists()
 
     /**
@@ -43,7 +44,7 @@ object Mesen2Process {
      *
      * Both script and rom paths are passed as absolute strings, because
      * `ProcessBuilder.directory(mesenDir)` re-roots cwd into the Mesen
-     * install folder — relative paths would resolve under tools/Mesen2/
+     * install folder — relative paths would resolve under `tools/Mesen2/`
      * and silently fail to load.
      */
     fun runScript(lua: String, romPath: Path, scriptName: String): Path {
