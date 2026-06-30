@@ -158,6 +158,7 @@ class GamePak(data: ByteArray, displayName: String = "") {
         113 -> Mapper113(this)
         153 -> Mapper153(this)
         206 -> Mapper206(this)
+        228 -> Mapper228(this)
         else -> throw UnsupportedOperationException("Mapper ${header.mapper} not implemented")
     }
 
