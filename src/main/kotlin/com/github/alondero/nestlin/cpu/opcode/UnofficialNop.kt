@@ -58,17 +58,18 @@ class NopImm : Opcode(cycles = 2) {
 /**
  * KIL — unofficial "halt" opcode (13 variants).
  *
- * **Preserved quirk:** the original `kil` helper (Opcodes.kt:828-833) does
- * NOT actually halt the CPU — it just consumes 2 cycles and advances PC
- * by one byte (the KIL opcode itself). So a stream of KIL bytes walks
- * through them one per 2 cycles indefinitely. Preserving here; making a
- * true halt is out of scope for #192.
+ * **Issue #207 quirk fix.** The original `kil` helper (Opcodes.kt:828-833)
+ * did NOT actually halt the CPU — it just consumed 2 cycles and either
+ * walked the PC through a stream of KIL bytes or (in the sealed-class
+ * port) just sat in a 2-cycle loop. Real 6502 behaviour freezes the
+ * CPU until RESET. Now we set [Cpu.idle] — the existing parking
+ * mechanism in [Cpu.tick] skips opcode dispatch but still ticks
+ * PPU/APU and the [InterruptController] (so NMI/IRQ can still wake
+ * the CPU; RESET is the only thing that can recover a true KIL).
  */
 class Kil : Opcode(cycles = 2) {
     override val mnemonic = "KIL"
     override fun evaluate(cpu: Cpu) {
-        // No-op: don't advance PC, but set workCyclesLeft so the scheduler
-        // decrements normally. Mirrors the original behaviour.
-        cpu.workCyclesLeft = 2
+        cpu.idle = true
     }
 }

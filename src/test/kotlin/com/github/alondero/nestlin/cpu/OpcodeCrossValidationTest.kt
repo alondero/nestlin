@@ -23,11 +23,13 @@ import org.junit.jupiter.api.Test
 class OpcodeCrossValidationTest {
 
     @Test
-    fun `new dispatcher covers the canonical 250-byte set`() {
+    fun `new dispatcher covers the canonical 252-byte set`() {
         // After Phase 3 the new dispatcher IS the production dispatcher.
         // This is a sanity check that the byte set matches the baseline
-        // locked in by OpcodeDispatchCompletenessTest.
-        assertThat(OpcodesRefactor.map.size, equalTo(250))
+        // locked in by OpcodeDispatchCompletenessTest. Issue #207
+        // registered SHY (0x9C) and SHX (0x9E), bringing the count from
+        // 250 to 252.
+        assertThat(OpcodesRefactor.map.size, equalTo(252))
     }
 
     @Test

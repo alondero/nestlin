@@ -20,21 +20,23 @@ import com.github.alondero.nestlin.toUnsignedInt
 object OpcodesRefactor {
 
     /**
-     * The dispatch table: 250 mapped opcodes (6 unmapped: 0x0B, 0x2B,
-     * 0x8B, 0x9C, 0x9E, 0xCB). See [com.github.alondero.nestlin.cpu.OpcodeDispatchCompletenessTest]
+     * The dispatch table: 252 mapped opcodes (4 unmapped: 0x0B, 0x2B,
+     * 0x8B, 0xCB). See [com.github.alondero.nestlin.cpu.OpcodeDispatchCompletenessTest]
      * for the regression bar.
      *
-     * **Cycle-count quirk preservation.** Several opcodes carry intentional
-     * deviations from real 6502 behaviour, marked with `[quirk: ...]`
-     * inline comments in the Opcodes.kt source:
-     *  - LAX hardcodes 2 cycles (real: 6/3/4/5/4/4)
-     *  - SAX hardcodes 4 cycles (real: 6/3/4/4)
-     *  - JMP indirect uses 3 cycles (real: 5)
-     *  - AHX mask is 0x07 (looks like a typo)
-     *  - 0x9B is XAA (canonical: TAS)
-     *  - 0xE3/0xF3 are ISC, not DCP (silent overwrite)
-     *  - KIL doesn't actually halt
-     * Each quirk is preserved by the [OpcodeCycleTableTest] baseline.
+     * **Quirks fixed in issue #207.** The following were preserved as
+     * known anomalies by the #192 sealed-class refactor; #207 fixed them:
+     *  - LAX now uses per-mode cycle counts (real: 6/3/4/5/4/4)
+     *  - SAX now uses per-mode cycle counts (real: 6/3/4/4)
+     *  - JMP indirect uses 5 cycles (real 6502; was 3)
+     *  - AHX mask is now A AND X (the old `and 0x07` was a typo)
+     *  - 0x9B is now TAS abs,Y (was XAA)
+     *  - 0xE3 is now DCP (ind,X) (was ISC, silent overwrite of DCP)
+     *  - 0x9C (SHY) and 0x9E (SHX) are now registered
+     *  - KIL now actually halts the CPU
+     *  - [Absolute.address] now masks to 16 bits
+     * See [Issue207QuirkFixesTest] for behaviour-level regressions and
+     * [OpcodeCycleTableTest] for cycle-count regressions.
      */
     val map: Map<Int, Opcode> = buildMap {
         // ===== Branch (8) =================================================
@@ -259,49 +261,55 @@ object OpcodesRefactor {
         // (6 NOP implied)
         listOf(0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA).forEach { put(it, NopImplied()) }
 
-        // ===== LAX (6) — quirky cycle counts ==============================
-        put(0xA3, Lax(IndirectX, "LAX (ind,X)"))
-        put(0xA7, Lax(ZeroPage(), "LAX zp"))
-        put(0xAF, Lax(Absolute(), "LAX abs"))
-        put(0xB3, Lax(IndirectY, "LAX (ind),Y"))
-        put(0xB7, Lax(ZeroPage(y = true), "LAX zp,Y"))
-        put(0xBF, Lax(Absolute(y = true), "LAX abs,Y"))
+        // ===== LAX (6) — real-6502 cycle counts (issue #207) ===============
+        put(0xA3, Lax(IndirectX, 6, "LAX (ind,X)"))
+        put(0xA7, Lax(ZeroPage(), 3, "LAX zp"))
+        put(0xAF, Lax(Absolute(), 4, "LAX abs"))
+        put(0xB3, Lax(IndirectY, 5, "LAX (ind),Y"))
+        put(0xB7, Lax(ZeroPage(y = true), 4, "LAX zp,Y"))
+        put(0xBF, Lax(Absolute(y = true), 4, "LAX abs,Y"))
 
-        // ===== SAX (4) — quirky cycle counts ==============================
-        put(0x83, Sax(IndirectX, "SAX (ind,X)"))
-        put(0x87, Sax(ZeroPage(), "SAX zp"))
-        put(0x8F, Sax(Absolute(), "SAX abs"))
-        put(0x97, Sax(ZeroPage(y = true), "SAX zp,Y"))
+        // ===== SAX (4) — real-6502 cycle counts (issue #207) ===============
+        put(0x83, Sax(IndirectX, 6, "SAX (ind,X)"))
+        put(0x87, Sax(ZeroPage(), 3, "SAX zp"))
+        put(0x8F, Sax(Absolute(), 4, "SAX abs"))
+        put(0x97, Sax(ZeroPage(y = true), 4, "SAX zp,Y"))
 
-        // ===== AHX (2) — quirky mask ======================================
+        // ===== AHX (2) — issue #207 quirk fixed: mask now A AND X =======
         put(0x93, Ahx(IndirectY, "AHX (ind),Y"))
         put(0x9F, Ahx(Absolute(y = true), "AHX abs,Y"))
 
-        // ===== XAA (2) — canonical 0x9B should be TAS ====================
-        put(0x9B, Xaa())
+        // ===== SHX / SHY (issue #207 quirk fix) =========================
+        // 0x9C = SHY abs,X (was unmapped), 0x9E = SHX abs,Y (was unmapped).
+        // Classes existed in UnofficialLoadStore.kt but were not registered.
+        put(0x9C, Shy(Absolute(x = true), 5, "SHY abs,X"))
+        put(0x9E, Shx(Absolute(y = true), 5, "SHX abs,Y"))
+
+        // ===== XAA / TAS (issue #207 quirk fix) =========================
+        // Canonical 6502: 0x9B = TAS abs,Y, 0xAB = XAA. Previously both
+        // were XAA (no operand fetch); now 0x9B dispatches to TAS.
+        put(0x9B, Tas(Absolute(y = true), 5, "TAS abs,Y"))
         put(0xAB, Xaa())
 
         // ===== LAS (1) ====================================================
         put(0xBB, Las(Absolute(y = true), "LAS abs,Y"))
 
-        // ===== DCP (6 unique) — 0xE3/0xF3 are ISC, see below ==============
+        // ===== DCP (7) — issue #207 quirk fix: 0xE3 is DCP, not ISC =====
         put(0xC7, Dcp(ZeroPage(), "DCP zp"))
         put(0xD7, Dcp(ZeroPage(x = true), "DCP zp,X"))
         put(0xCF, Dcp(Absolute(), "DCP abs"))
         put(0xDF, Dcp(Absolute(x = true), "DCP abs,X"))
         put(0xDB, Dcp(ZeroPage(y = true), "DCP zp,Y"))
         put(0xD3, Dcp(IndirectX, "DCP (ind,X)"))
+        put(0xE3, Dcp(IndirectX, "DCP (ind,X)"))
 
-        // ===== ISC (7) — including 0xE3/0xF3 silent overwrite ============
+        // ===== ISC (6) — 0xF3 stays ISC; 0xE3 moved to DCP ==============
         put(0xE7, Isc(ZeroPage(), "ISC zp"))
         put(0xF7, Isc(ZeroPage(x = true), "ISC zp,X"))
         put(0xEF, Isc(Absolute(), "ISC abs"))
         put(0xFF, Isc(Absolute(x = true), "ISC abs,X"))
         put(0xFB, Isc(ZeroPage(y = true), "ISC zp,Y"))
-        put(0xE3, Isc(IndirectX, "ISC (ind,X)"))
-        put(0xF3, Isc(IndirectY, "ISC (ind),Y"))
-        // ↑ Original Opcodes.kt:441,442,450,451 maps 0xE3/0xF3 first to
-        // DCP then overwrites with ISC. Preserved here.
+        put(0xF3, Isc(IndirectY, "ISC (ind),Y)"))
 
         // ===== RLA (7) ====================================================
         put(0x27, Rla(ZeroPage(), "RLA zp"))

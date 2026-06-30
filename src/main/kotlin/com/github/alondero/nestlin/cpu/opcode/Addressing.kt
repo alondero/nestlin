@@ -78,35 +78,32 @@ data class ZeroPage(val x: Boolean = false, val y: Boolean = false) : Addressing
 
 /**
  * Absolute addressing: operand is a 16-bit address following the opcode.
- * Optionally indexed by X or Y (added in 16-bit space).
+ * Optionally indexed by X or Y (added in 16-bit space, then masked to
+ * 16 bits — real-6502 behaviour).
  * Cycles: abs=4, abs,X=4 (+1 on page cross), abs,Y=4 (+1 on page cross).
  * Page-cross +1 cycle is out of scope here (issue #172).
  *
- * **Preserved asymmetry:** the original `absolute()` (value-returning)
+ * **Issue #207 quirk fix.** The original `absolute()` (value-returning)
  * masked the indexed address to 16 bits, but `absoluteAdr()`
- * (address-returning) did not. Read-Modify-Write opcodes that need both
- * the read value and the write address must keep this distinction or
- * they diverge from the original — `Memory.get(addr)` silently returns 0
- * for any address > 0xFFFF, which would corrupt the writeback phase. We
- * preserve that quirk by computing the address once and exposing the
- * masked / unmasked variants via [effectiveAddress] / [address].
+ * (address-returning) did not. Read-Modify-Write opcodes that needed
+ * both the read value and the write address then relied on the unmasked
+ * address silently exceeding $FFFF and being dropped by `Memory.get` /
+ * `set` (out-of-range returns 0 / no-op). Real 6502 wraps to low
+ * memory. Now [address] consistently masks to 16 bits, matching
+ * hardware and aligning with [value].
  */
 data class Absolute(val x: Boolean = false, val y: Boolean = false) : Addressing() {
     override val isIndexed: Boolean get() = x || y
 
-    override fun value(cpu: Cpu): Byte = cpu.memory[effectiveAddress(cpu)]
+    override fun value(cpu: Cpu): Byte = cpu.memory[address(cpu)]
 
     override fun address(cpu: Cpu): Int {
-        // PRESERVED QUIRK: do NOT mask to 16 bits here. See class kdoc.
         val base = cpu.readShortAtPC().toUnsignedInt()
-        return if (x) base + cpu.registers.indexX.toUnsignedInt()
-               else if (y) base + cpu.registers.indexY.toUnsignedInt()
-               else base
+        val raw = if (x) base + cpu.registers.indexX.toUnsignedInt()
+                  else if (y) base + cpu.registers.indexY.toUnsignedInt()
+                  else base
+        return raw and 0xFFFF
     }
-
-    /** Masked-to-16-bits variant used by [value]. Equals [address] with
-     *  `and 0xFFFF` applied. */
-    private fun effectiveAddress(cpu: Cpu): Int = address(cpu) and 0xFFFF
 }
 
 /**

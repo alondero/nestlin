@@ -37,10 +37,11 @@ class Dcp(
 /**
  * ISC — INC then SBC. 6/6 cycles for all addressing modes (preserved).
  *
- * **Preserved quirk:** in the original dispatcher, `0xE3` and `0xF3` are
- * first assigned to DCP, then overwritten by ISC (Opcodes.kt:441, 442,
- * 450, 451). The ISC writes come last and win. Preserved here — the
- * dispatch table registers ISC for these bytes, not DCP.
+ * **Issue #207 quirk fix.** In the original dispatcher, `0xE3` and
+ * `0xF3` were both assigned to ISC (0xE3 had a DCP put-then-ISC-overwrite
+ * pattern at Opcodes.kt:441, 442, 450, 451). Canonical 6502 says 0xE3 is
+ * DCP, 0xF3 is ISC. Now `0xE3` dispatches to [Dcp] and only `0xF3`
+ * dispatches here.
  * Original Opcodes.kt:859-874.
  */
 class Isc(

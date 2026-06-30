@@ -29,11 +29,10 @@ class Jump(
 
 /**
  * JMP indirect (0x6C) — jump to the 16-bit address stored at a 16-bit
- * pointer. 5 cycles on real 6502; the previous implementation hardcoded
- * 3 cycles via the `jump` helper.
+ * pointer. 5 cycles on real 6502.
  *
- * **Preserved quirk.** The 3-cycle count is preserved (issue #192 is a
- * structural refactor; fixing this cycle count is out of scope).
+ * **Issue #207 quirk fixed.** Earlier dispatcher used 3 cycles (the
+ * `jump` helper hardcoded it). Now threads the real-6502 count of 5.
  *
  * **The 6502 page-boundary bug.** When the indirect pointer straddles a
  * page boundary (e.g., `$10FF` -> `$10FF, $1100`), the 6502 reads the
@@ -45,7 +44,7 @@ class Jump(
  */
 class JumpIndirect(
     override val mnemonic: String,
-) : Opcode(cycles = 3) {
+) : Opcode(cycles = 5) {
     override fun evaluate(cpu: Cpu) {
         val pcBefore = cpu.registers.programCounter
         val ptr = cpu.readShortAtPC().toUnsignedInt()
@@ -58,7 +57,7 @@ class JumpIndirect(
         if (cpu.registers.programCounter == (pcBefore - 1).toSignedShort()) {
             cpu.idle = true
         }
-        cpu.workCyclesLeft = 3
+        cpu.workCyclesLeft = 5
     }
 }
 
