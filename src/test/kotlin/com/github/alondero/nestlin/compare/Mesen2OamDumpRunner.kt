@@ -2,23 +2,25 @@ package com.github.alondero.nestlin.compare
 
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 
 /**
  * Drives Mesen2 in GUI mode to dump OAM at a list of frames so we can
  * compare against Nestlin OAM byte-for-byte.
  *
- * Defaults to MESEN2_PATH env var, falls back to tools/Mesen2/Mesen.exe.
- * (NOT tools/Mesen — that is Mesen v1 and has no Lua support.)
+ * Path resolution delegates to [Mesen2Session.mesen2Path] (see [mesen2Path]),
+ * so this runner uses the same canonical chain as the rest of the compare lane.
  */
 object Mesen2OamDumpRunner {
     private val MESEN_ARGS = listOf("--testRunner", "--doNotSaveSettings")
 
-    fun mesen2Path(): Path {
-        val env = System.getenv("MESEN2_PATH")
-        if (env != null) return Paths.get(env)
-        return Paths.get("tools/Mesen2/Mesen.exe")
-    }
+    /**
+     * Delegates to [Mesen2Session.mesen2Path] so this runner honours the same
+     * canonical resolution chain (`MESEN2_PATH` env → `mesen2.path` property →
+     * absolute parent path → relative fallback) as the rest of the lane. It
+     * previously had its own env-only lookup, which made [isAvailable]'s
+     * skip-not-fail semantics subtly inconsistent (issue #214 fix 4).
+     */
+    fun mesen2Path(): Path = Mesen2Session.mesen2Path()
 
     fun isAvailable(): Boolean = mesen2Path().toFile().exists()
 
