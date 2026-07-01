@@ -54,11 +54,20 @@ class Mesen2ProcessInstance internal constructor(
     private val cmdFile: Path = sessionDir.resolve("cmd.txt")
     private val cmdTmpFile: Path = sessionDir.resolve("cmd.txt.tmp")
     private val doneFile: Path = sessionDir.resolve("done.txt")
+    // Mesen2's stderr (Lua parse/runtime errors) is redirected here so a hung
+    // boot can surface the actual cause in the exception, not just a timeout
+    // message pointing nowhere (issue #214 fix 5).
+    private val stderrFile: Path = sessionDir.resolve("mesen_stderr.log")
 
-    // Mesen2 script data folder is <mesen_dir>/LuaScriptData/<script_basename>/
-    // The script is named `session_server.lua`, so basename is `session_server`.
+    // Mesen2 names its per-script data folder <mesen_dir>/LuaScriptData/<script_basename>/,
+    // where <script_basename> is the Lua file's name without extension. Both the
+    // script filename and this dir are parameterised by ROM basename so two
+    // concurrent instances for different ROMs never clobber each other's
+    // state.json (issue #214 fix 2).
+    private val scriptBaseName: String = scriptBaseName(rom)
+    private val scriptFileName: String = "$scriptBaseName.lua"
     private val scriptDataDir: Path = Mesen2Session.mesen2Path().parent
-        .resolve("LuaScriptData").resolve("session_server")
+        .resolve("LuaScriptData").resolve(scriptBaseName)
     private val stateJsonPath: Path = scriptDataDir.resolve("state.json")
 
     private val process: Process
@@ -68,18 +77,21 @@ class Mesen2ProcessInstance internal constructor(
 
     init {
         val mesen = Mesen2Session.mesen2Path()
-        Files.writeString(sessionDir.resolve("session_server.lua"), serverScript())
+        Files.writeString(sessionDir.resolve(scriptFileName), serverScript())
 
         val absoluteRom = rom.toAbsolutePath()
         process = ProcessBuilder(
             mesen.toString(),
             "--testRunner",
             "--doNotSaveSettings",
-            sessionDir.resolve("session_server.lua").toAbsolutePath().toString(),
+            sessionDir.resolve(scriptFileName).toAbsolutePath().toString(),
             absoluteRom.toString()
         ).apply {
             directory(mesen.parent.toFile())
-            redirectError(ProcessBuilder.Redirect.INHERIT)
+            // Capture stderr to a file (not INHERIT) so waitForMarker can quote
+            // the last few lines — a Lua parse error would otherwise vanish into
+            // the console and leave only a bare timeout message (issue #214 fix 5).
+            redirectError(ProcessBuilder.Redirect.to(stderrFile.toFile()))
             redirectOutput(ProcessBuilder.Redirect.INHERIT)
         }.start()
 
@@ -124,16 +136,34 @@ class Mesen2ProcessInstance internal constructor(
     }
 
     /**
-     * Send `QUIT` to Lua, wait up to 5s for the process to exit, then
-     * `destroyForcibly()` if it didn't. Idempotent.
+     * True while the underlying process is still running and [close] has not
+     * been called. [Mesen2Session.forRom] uses this to evict a dead instance
+     * from the pool and boot a fresh one, restoring the self-healing behaviour
+     * of the old per-capture-boot model (issue #214 fix 1).
      */
-    fun close() {
+    fun isAlive(): Boolean = !closed && process.isAlive
+
+    /**
+     * Shut the instance down. Idempotent.
+     *
+     * When [force] is true (the JVM-shutdown-hook path) the process is killed
+     * immediately with no graceful QUIT — a dozen sessions each waiting on a
+     * QUIT round-trip would blow the shutdown-hook budget and Gradle would
+     * force-terminate the hook anyway (issue #214 fix 6). Explicit `@AfterAll`
+     * callers leave [force] false to give Lua a chance to `emu.stop` cleanly;
+     * the graceful wait is capped at 2s and falls back to a forcible kill.
+     */
+    fun close(force: Boolean = false) {
         lock.withLock {
             if (closed) return
             closed = true
             runCatching {
+                if (force) {
+                    process.destroyForcibly()
+                    return@runCatching
+                }
                 sendCommand("QUIT -1")
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                if (!process.waitFor(2, TimeUnit.SECONDS)) {
                     process.destroyForcibly()
                 }
             }
@@ -146,7 +176,7 @@ class Mesen2ProcessInstance internal constructor(
         if (!process.isAlive) {
             throw Mesen2ExecutionException(
                 "Mesen2 process for $rom died (exit code ${process.exitValue()}). " +
-                "Check test output for the Lua error."
+                "Check test output for the Lua error.${stderrTailSuffix()}"
             )
         }
     }
@@ -179,7 +209,8 @@ class Mesen2ProcessInstance internal constructor(
             if (!process.isAlive) {
                 throw Mesen2ExecutionException(
                     "Mesen2 process for $rom died while waiting for $expectedPrefix " +
-                    "(exit ${process.exitValue()}). Last done.txt contents: $lastSeen"
+                    "(exit ${process.exitValue()}). Last done.txt contents: $lastSeen" +
+                    stderrTailSuffix()
                 )
             }
             if (Files.exists(doneFile)) {
@@ -196,8 +227,24 @@ class Mesen2ProcessInstance internal constructor(
         }
         throw Mesen2ExecutionException(
             "Mesen2 timed out waiting for $expectedPrefix on $rom after ${timeoutMs}ms. " +
-            "Last done.txt contents: ${if (lastSeen.isEmpty()) "<none>" else lastSeen}"
+            "Last done.txt contents: ${if (lastSeen.isEmpty()) "<none>" else lastSeen}" +
+            stderrTailSuffix()
         )
+    }
+
+    /**
+     * The last few lines of Mesen2's stderr, formatted for appending to an
+     * exception message. Empty string when stderr is empty or unreadable — a
+     * Lua *parse* error lands here (Mesen2 prints it and exits), which is
+     * exactly the case a bare "timed out waiting for READY" hid before
+     * (issue #214 fix 5).
+     */
+    private fun stderrTailSuffix(maxLines: Int = 8): String {
+        val lines = runCatching { Files.readAllLines(stderrFile) }.getOrDefault(emptyList())
+            .filter { it.isNotBlank() }
+        if (lines.isEmpty()) return ""
+        return "\nMesen2 stderr (last ${minOf(maxLines, lines.size)} lines):\n" +
+            lines.takeLast(maxLines).joinToString("\n")
     }
 
     private fun matchesMarker(seen: String, expectedSeq: Long, expectedPrefix: String): Boolean {
@@ -321,7 +368,9 @@ local function writeState()
 
     local fullPath = emu.getScriptDataFolder() .. "/state.json"
     local f = io.open(fullPath, "w")
-    if f then f:write(json); f:close() end
+    if not f then error("could not open " .. fullPath .. " for write") end
+    f:write(json)
+    f:close()
 end
 
 local function writeScreenshot(outpath)
@@ -419,5 +468,17 @@ writeMarker("READY")
 """.trimIndent()
             .replace("@@ABS_CMD@@", absCmd)
             .replace("@@ABS_DONE@@", absDone)
+    }
+
+    companion object {
+        /**
+         * Derive the Lua script basename (and thus Mesen2's per-script
+         * `LuaScriptData/<basename>/` folder) from the ROM path. Two concurrent
+         * instances for different ROMs must land in different folders or they
+         * clobber each other's `state.json` (issue #214 fix 2). Non-alphanumeric
+         * characters are collapsed to `_` so the basename is filesystem-safe.
+         */
+        internal fun scriptBaseName(rom: Path): String =
+            "session_server_" + rom.fileName.toString().replace(Regex("[^a-zA-Z0-9]"), "_")
     }
 }

@@ -61,7 +61,7 @@ object Mesen2Session {
         // and Mesen2 processes get a chance to quit cleanly. `close()` itself
         // forces termination if the QUIT command doesn't return within 5s.
         Runtime.getRuntime().addShutdownHook(Thread {
-            closeAll()
+            closeAll(force = true)
         })
     }
 
@@ -117,19 +117,37 @@ object Mesen2Session {
             throw Mesen2NotFoundException(message)
         }
         val abs = rom.toAbsolutePath()
-        return sessions.computeIfAbsent(abs) { Mesen2ProcessInstance(it) }
+        // Loop so a dead cached instance is evicted and re-booted rather than
+        // handed back forever. Before the per-ROM pool every capture spawned a
+        // fresh process, so a mid-suite crash (native crash, OOM, Lua server
+        // error) was self-healing; restore that here (issue #214 fix 1).
+        // Bounded in practice: each iteration either returns a live instance or
+        // boots a fresh one (a failed boot throws out of computeIfAbsent, which
+        // never caches, so it does not spin).
+        while (true) {
+            val instance = sessions.computeIfAbsent(abs) { Mesen2ProcessInstance(it) }
+            if (instance.isAlive()) return instance
+            // remove(key, value) only evicts if this exact dead instance is
+            // still mapped — a concurrent boot's replacement is left intact.
+            if (sessions.remove(abs, instance)) {
+                runCatching { instance.close(force = true) }
+            }
+        }
     }
 
     /**
      * Tears down all live Mesen2 sessions. Idempotent. Called automatically
-     * on JVM exit via the shutdown hook; safe to invoke manually from
-     * `@AfterAll` lifecycle methods if a test wants eager cleanup.
+     * on JVM exit via the shutdown hook (with [force] = true, so a dozen
+     * sessions don't each burn the graceful-QUIT budget — see
+     * [Mesen2ProcessInstance.close]); safe to invoke manually from `@AfterAll`
+     * lifecycle methods (leaving [force] false) if a test wants eager,
+     * graceful cleanup.
      */
-    fun closeAll() {
+    fun closeAll(force: Boolean = false) {
         val snapshot = sessions.values.toList()
         sessions.clear()
         for (instance in snapshot) {
-            runCatching { instance.close() }
+            runCatching { instance.close(force) }
         }
     }
 }

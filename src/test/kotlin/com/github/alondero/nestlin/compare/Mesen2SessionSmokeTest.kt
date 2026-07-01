@@ -57,4 +57,31 @@ class Mesen2SessionSmokeTest {
                 "(${first.ppu.frameCount}) — emulator ran backwards or RESET semantics broke"
         }
     }
+
+    /**
+     * Issue #214 fix 1: a dead cached instance must be evicted and re-booted,
+     * not handed back forever. Before the per-ROM pool, every capture spawned a
+     * fresh process so a mid-suite crash self-healed; this pins that the pool
+     * preserves that property.
+     *
+     * We simulate the crash by force-closing the instance (equivalent to a
+     * native crash: `process.isAlive` goes false), then assert the next
+     * `forRom` returns a *different*, live instance that still captures state.
+     */
+    @Test
+    fun forRomReplacesADeadInstance() {
+        val rom = Paths.get("testroms/nestest.nes")
+
+        val dead = Mesen2Session.forRom(rom)
+        dead.close(force = true)
+        check(!dead.isAlive()) { "instance should be dead after force close" }
+
+        val fresh = Mesen2Session.forRom(rom)
+        check(fresh !== dead) { "forRom handed back the dead instance instead of re-booting" }
+        check(fresh.isAlive()) { "re-booted instance should be alive" }
+
+        // The re-booted instance must actually work, not just exist.
+        val state = fresh.runToAndCaptureState(60)
+        check(state.cpu.pc != 0) { "re-booted instance produced an all-zero snapshot" }
+    }
 }
