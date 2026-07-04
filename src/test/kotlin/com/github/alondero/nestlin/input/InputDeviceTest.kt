@@ -36,13 +36,15 @@ class InputDeviceTest {
     }
 
     @Test
-    fun `Zapper returns open-bus-only byte on read and peek`() {
+    fun `Zapper idle read reports open-bus plus dark-light bit`() {
         val zapper: InputDevice = Zapper()
 
-        // No buttons pressed — there's nothing to latch, but the open-bus mask
-        // is the canonical "device idle" return value.
-        assertThat(zapper.read(), equalTo(0x40.toByte()))
-        assertThat(zapper.peek(), equalTo(0x40.toByte()))
+        // A default Zapper sits on port 2 with no trigger and no light provider.
+        // "No light detected" sets D3 (0x08) — real hardware polarity (nesdev:
+        // "Light sensed: 0 detected, 1 not detected") and the Mesen2 oracle. OR'd
+        // with the open-bus mask that's 0x48. See ZapperTest for the full table.
+        assertThat(zapper.read(), equalTo(0x48.toByte()))
+        assertThat(zapper.peek(), equalTo(0x48.toByte()))
     }
 
     @Test
@@ -54,8 +56,8 @@ class InputDeviceTest {
         zapper.writeStrobe(true)
         zapper.writeStrobe(false)
 
-        // Reads still return open-bus-only.
-        assertThat(zapper.read(), equalTo(0x40.toByte()))
+        // Reads are un-latched samples of the live providers, unaffected by strobe.
+        assertThat(zapper.read(), equalTo(0x48.toByte()))
     }
 
     @Test
@@ -129,12 +131,13 @@ class InputDeviceTest {
     }
 
     @Test
-    fun `Memory 0x4017 read returns open-bus-only after port 2 is set to Zapper`() {
+    fun `Memory 0x4017 read reports Zapper idle byte after port 2 is set to Zapper`() {
         val memory = Memory()
         memory.setPortType(1, InputDevice.DeviceType.ZAPPER)
 
+        // Default providers (no trigger, no light detected) → open-bus + dark bit.
         repeat(8) {
-            assertThat(memory[0x4017], equalTo(0x40.toByte()))
+            assertThat(memory[0x4017], equalTo(0x48.toByte()))
         }
     }
 

@@ -8,6 +8,7 @@ import com.github.alondero.nestlin.apu.AudioResampler
 import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.input.GamepadInput
 import com.github.alondero.nestlin.input.InputConfig
+import com.github.alondero.nestlin.input.InputDevice
 import com.github.alondero.nestlin.movie.Fm2Format
 import com.github.alondero.nestlin.movie.Movie
 import com.github.alondero.nestlin.movie.MovieLivePlayer
@@ -133,6 +134,146 @@ class NestlinApplication : FrameListener, Application() {
     private val frameBufferLock = Any()
     // Native-resolution RGB buffer. Upscaling is handled by ImageView.fitWidth/Height, not by replication.
     private var nextFrame = ByteArray(RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3)
+
+    // --- Zapper light-gun input state ---
+    // Written on the JavaFX thread (mouse handlers / focus listener), read on the
+    // emulation thread when a plugged Zapper polls $4017 — hence @Volatile.
+    @Volatile private var zapperTriggerDown = false
+    @Volatile private var windowFocused = true
+    // Aim, already mapped to a PPU pixel (mapping needs the live canvas size, only
+    // valid to read on the FX thread). Packed as (x shl 8) or y into ONE volatile so
+    // the light sampler never reads a torn half-updated coordinate; -1 = off-canvas.
+    @Volatile private var zapperAim = -1
+    // Last canvas-local cursor position (FX thread only), kept so the reticle can be
+    // re-placed when the canvas moves under it (window resize fires no mouse event).
+    private var lastPointerCanvasX = -1.0
+    private var lastPointerCanvasY = -1.0
+
+    // Whether a Zapper is plugged into either port. Drives the aim reticle and the
+    // "hide the OS cursor over the game so the reticle is the only pointer" behaviour.
+    // UI-thread only.
+    private var zapperActive = false
+    // Aim reticle overlay: a crisp scene-graph node — like the other indicators —
+    // pinned to the canvas at the current aim pixel. Its local origin is the top-left
+    // of a [ZAPPER_CROSSHAIR_SIZE]-box whose centre is the aim point.
+    private val zapperCrosshair: javafx.scene.Group = buildZapperCrosshair()
+
+    /**
+     * True when the pixel the cursor is over is "bright" — a lit target sprite.
+     * Threshold is R+G+B > 384 (of 765), which cleanly separates a game's white
+     * detection boxes from the blanked/dark backdrop it flashes them against.
+     *
+     * Reads the PPU's LIVE frame (via [Ppu.aimBrightness]) rather than the published
+     * [nextFrame]: the light gun must see the frame currently being drawn, or hit
+     * detection lags a frame behind the aim during the fast blank-then-flash sequence.
+     * This runs on the emulation thread (the $4017 read path), same as the PPU, so it
+     * needs no frame-buffer lock.
+     */
+    private fun zapperLightSample(): Boolean {
+        val aim = zapperAim
+        if (aim < 0) return false
+        val px = (aim shr 8) and 0xFF
+        val py = aim and 0xFF
+        return nestlin.ppu.aimBrightness(px, py) > ZAPPER_BRIGHTNESS_THRESHOLD
+    }
+
+    /**
+     * Point the Zapper at a canvas-local mouse coordinate: map it to a PPU pixel for
+     * the light sampler AND move the reticle. Both are driven from the same coordinate
+     * so the visible aim and the sampled pixel can never disagree. Must run on the FX
+     * thread ([canvas] size is read live). Off-canvas coordinates clear the aim (-1)
+     * and hide the reticle.
+     */
+    private fun updateZapperPointer(canvasX: Double, canvasY: Double) {
+        val w = canvas.width
+        val h = canvas.height
+        val onCanvas = w > 0.0 && h > 0.0 &&
+            canvasX >= 0.0 && canvasY >= 0.0 && canvasX < w && canvasY < h
+        if (!onCanvas) {
+            zapperAim = -1
+            lastPointerCanvasX = -1.0
+            lastPointerCanvasY = -1.0
+            zapperCrosshair.isVisible = false
+            return
+        }
+        val px = ((canvasX / w) * RESOLUTION_WIDTH).toInt().coerceIn(0, RESOLUTION_WIDTH - 1)
+        val py = ((canvasY / h) * RESOLUTION_HEIGHT).toInt().coerceIn(0, RESOLUTION_HEIGHT - 1)
+        zapperAim = (px shl 8) or py
+        lastPointerCanvasX = canvasX
+        lastPointerCanvasY = canvasY
+        positionZapperCrosshair(canvasX, canvasY)
+    }
+
+    /**
+     * Build the aim reticle: a ring with four ticks forming a gapped `+`. Drawn in a
+     * local coordinate box [0, [ZAPPER_CROSSHAIR_SIZE]] with the centre at
+     * ([ZAPPER_CROSSHAIR_CENTER], [ZAPPER_CROSSHAIR_CENTER]) so positioning is just
+     * "translate to (aim − centre)". Mouse-transparent so it never steals the canvas
+     * mouse handlers; starts hidden.
+     */
+    private fun buildZapperCrosshair(): javafx.scene.Group {
+        val red = javafx.scene.paint.Color.web("#FF3030")
+        val c = ZAPPER_CROSSHAIR_CENTER
+        fun tick(sx: Double, sy: Double, ex: Double, ey: Double) =
+            javafx.scene.shape.Line(sx, sy, ex, ey).apply {
+                stroke = red
+                strokeWidth = 1.5
+            }
+        val ring = javafx.scene.shape.Circle(c, c, 7.0).apply {
+            fill = javafx.scene.paint.Color.TRANSPARENT
+            stroke = red
+            strokeWidth = 1.5
+        }
+        return javafx.scene.Group(
+            ring,
+            tick(c, c - 11.0, c, c - 5.0),
+            tick(c, c + 5.0, c, c + 11.0),
+            tick(c - 11.0, c, c - 5.0, c),
+            tick(c + 5.0, c, c + 11.0, c),
+        ).apply {
+            isMouseTransparent = true
+            isVisible = false
+        }
+    }
+
+    /**
+     * Place the reticle over the canvas at a canvas-local coordinate. Maps canvas-local
+     * → holder coordinates via the canvas group's bounds (which already account for
+     * letterboxing/centring at any scale), then offsets by the reticle centre so the
+     * ring lands on the aim point. Hidden when no Zapper is plugged.
+     */
+    private fun positionZapperCrosshair(canvasX: Double, canvasY: Double) {
+        if (!zapperActive) {
+            zapperCrosshair.isVisible = false
+            return
+        }
+        val b = canvasGroup.boundsInParent
+        zapperCrosshair.translateX = b.minX + canvasX - ZAPPER_CROSSHAIR_CENTER
+        zapperCrosshair.translateY = b.minY + canvasY - ZAPPER_CROSSHAIR_CENTER
+        zapperCrosshair.isVisible = true
+    }
+
+    /**
+     * Re-place the reticle after the canvas has moved beneath a stationary cursor
+     * (a window resize/scale change fires no mouse event). Uses the last canvas-local
+     * cursor position; a no-op when the cursor is off-canvas or no Zapper is plugged.
+     */
+    private fun refreshZapperCrosshair() {
+        if (!zapperActive || lastPointerCanvasX < 0.0) return
+        positionZapperCrosshair(lastPointerCanvasX, lastPointerCanvasY)
+    }
+
+    /**
+     * Recompute [zapperActive] from the current port selection and apply the
+     * "hide the OS cursor over the game" behaviour. Called at startup and whenever
+     * the controller configuration is applied.
+     */
+    private fun updateZapperActive() {
+        zapperActive = inputConfig.ports.port1 == InputDevice.DeviceType.ZAPPER ||
+            inputConfig.ports.port2 == InputDevice.DeviceType.ZAPPER
+        canvas.cursor = if (zapperActive) javafx.scene.Cursor.NONE else javafx.scene.Cursor.DEFAULT
+        if (!zapperActive) zapperCrosshair.isVisible = false
+    }
 
     private var displayConfig = DisplayConfig.load()
     private val scaleMenuItems = mutableMapOf<ScaleMode, javafx.scene.control.RadioMenuItem>()
@@ -485,6 +626,54 @@ class NestlinApplication : FrameListener, Application() {
                 // Reset hover state on transition so the menu isn't stuck visible.
                 if (!nowFs) mouseNearTopProperty.set(false)
             }
+
+            // --- Zapper light-gun wiring ---
+            // The trigger is mouse-left-held while the game window is focused; the light
+            // sense reads the frame buffer at the cursor. Mouse handlers live on the canvas
+            // so event.x/event.y are already canvas-local (pre-scale), which is what
+            // updateZapperPointer maps to a PPU pixel. These run whether or not a Zapper is
+            // actually plugged — the providers are only consulted when Memory holds one.
+            canvas.setOnMousePressed { e ->
+                // Update the aim before raising the trigger so a reader on the emulation
+                // thread never sees "trigger high" paired with the previous aim pixel.
+                updateZapperPointer(e.x, e.y)
+                if (e.button == javafx.scene.input.MouseButton.PRIMARY) zapperTriggerDown = true
+            }
+            canvas.setOnMouseReleased { e ->
+                if (e.button == javafx.scene.input.MouseButton.PRIMARY) zapperTriggerDown = false
+            }
+            canvas.setOnMouseMoved { e -> updateZapperPointer(e.x, e.y) }
+            canvas.setOnMouseDragged { e -> updateZapperPointer(e.x, e.y) }
+            canvas.setOnMouseExited {
+                zapperAim = -1
+                lastPointerCanvasX = -1.0
+                lastPointerCanvasY = -1.0
+                zapperCrosshair.isVisible = false
+            }
+            // Reticle overlay, pinned top-left so its translateX/Y are plain holder
+            // coordinates (positionZapperCrosshair does the canvas→holder mapping).
+            canvasHolder.children.add(zapperCrosshair)
+            StackPane.setAlignment(zapperCrosshair, javafx.geometry.Pos.TOP_LEFT)
+            // Re-place the reticle when the canvas moves under a stationary cursor
+            // (window resize / scale change fires no mouse event).
+            canvasGroup.boundsInParentProperty().addListener { _, _, _ -> refreshZapperCrosshair() }
+            stage.focusedProperty().addListener { _, _, focused ->
+                windowFocused = focused
+                // Dropping focus releases the trigger so a click that moved focus away
+                // (e.g. to the config window) doesn't leave the trigger stuck high.
+                if (!focused) zapperTriggerDown = false
+            }
+            // Install the providers once; the plugged Zapper (if any) reads them live.
+            nestlin.memory.setZapperProviders(
+                trigger = { zapperTriggerDown && windowFocused },
+                light = { zapperLightSample() },
+            )
+            // Apply the saved per-port device selection at boot. The config-window save
+            // is the only other path that calls setPortType, so without this a saved
+            // Zapper selection wouldn't take effect until the user re-opened the config.
+            nestlin.memory.setPortType(0, inputConfig.ports.port1)
+            nestlin.memory.setPortType(1, inputConfig.ports.port2)
+            updateZapperActive()
 
             scene.setOnKeyPressed { event ->
                 when {
@@ -886,6 +1075,8 @@ class NestlinApplication : FrameListener, Application() {
         // reads return open-bus vs standard pad bytes (issue: 2-player support).
         nestlin.memory.setPortType(0, cfg.ports.port1)
         nestlin.memory.setPortType(1, cfg.ports.port2)
+        // Refresh the aim reticle / cursor-hide state for the new port selection.
+        updateZapperActive()
         println("[APP] Applied new controller configuration")
     }
 
@@ -1790,6 +1981,15 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     companion object {
+        // Zapper light-sense brightness cutoff: a pixel counts as "bright"
+        // (lit target) when R+G+B exceeds this, out of a 765 max. 384 (~half) cleanly
+        // separates a white target from the dark backdrop games flash it against.
+        private const val ZAPPER_BRIGHTNESS_THRESHOLD = 384
+
+        // Aim reticle geometry: a SIZE-box whose centre is the aim point.
+        private const val ZAPPER_CROSSHAIR_SIZE = 24.0
+        private const val ZAPPER_CROSSHAIR_CENTER = ZAPPER_CROSSHAIR_SIZE / 2.0
+
         // The 9 F-keys that map to save state slots. Order matters: index 0
         // corresponds to slot 1 (F1), index 8 to slot 9 (F9). Used by
         // isSlotKey() / slotNumberFromKey() to keep the F1..F9 → 1..9 mapping

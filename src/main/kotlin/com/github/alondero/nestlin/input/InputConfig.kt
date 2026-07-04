@@ -35,13 +35,13 @@ data class InputConfig(
 
         /**
          * Device types the user can actually choose from in the controller configuration
-         * screen. Zapper is reserved in the enum for forward compatibility but not yet
-         * listed here — its semantics are stubbed in [InputDevice] and the working
-         * implementation lands in a future PR.
+         * screen. Zapper is wired end-to-end — trigger on mouse-left, light
+         * sense sampled from the frame buffer at the cursor — so it is offered here.
          */
         val SUPPORTED_DEVICE_TYPES: List<com.github.alondero.nestlin.input.InputDevice.DeviceType> =
             listOf(
                 com.github.alondero.nestlin.input.InputDevice.DeviceType.STANDARD_GAMEPAD,
+                com.github.alondero.nestlin.input.InputDevice.DeviceType.ZAPPER,
                 com.github.alondero.nestlin.input.InputDevice.DeviceType.NONE,
             )
         // The production config location. Tests pass their own @TempDir so the round-trip

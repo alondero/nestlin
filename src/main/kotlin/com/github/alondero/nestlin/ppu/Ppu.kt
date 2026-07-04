@@ -10,6 +10,17 @@ const val RESOLUTION_HEIGHT = 240
 
 const val POST_RENDER_SCANLINE = 240
 
+/**
+ * Whether the raster beam has finished drawing row [targetY] this frame, given it
+ * is currently on [beamScanline]. The [Frame] buffer is reused across
+ * frames, so a row the beam has not yet redrawn still holds the *previous* frame's
+ * colour — the Zapper light sensor must treat such a pixel as "not yet lit" or it
+ * reads phantom light (e.g. last frame's bright sky) during a game's blank-then-flash
+ * hit-detection sequence. A row counts as drawn once the beam has moved strictly past
+ * it (including the whole vblank period, where beamScanline >= 241 > any visible row).
+ */
+internal fun beamHasDrawnRow(targetY: Int, beamScanline: Int): Boolean = beamScanline > targetY
+
 class Ppu(var memory: Memory) {
 
     private var cycle = 0
@@ -20,6 +31,29 @@ class Ppu(var memory: Memory) {
     // Mesen2's emu.getState() exposes ppu.scanline/ppu.cycle. Not used by emulation.
     val currentScanline: Int get() = scanline
     val currentCycle: Int get() = cycle
+
+    /**
+     * Sum of the R+G+B channels (0..765) of the pixel the light gun is aimed at,
+     * read from the LIVE frame the PPU is *currently* drawing. This is
+     * what the Zapper light sensor samples on a `$4017` read: reading the in-progress
+     * frame (not the last published one) removes a full frame of lag, which is what
+     * decouples a game's hit from where the player is actually aiming during its fast
+     * blank-then-flash detection sequence.
+     *
+     * Returns 0 ("dark") for a row the beam has not yet drawn this frame (see
+     * [beamHasDrawnRow] — the reused [Frame] would otherwise hand back the previous
+     * frame's colour). Off-screen coordinates return -1.
+     *
+     * Runs on the emulation thread (the `$4017` read path), the same thread that
+     * writes [frame], so no synchronisation is needed. (The Memory Editor's peek path
+     * may call it from the UI thread; a torn read there only mis-colours a debug view.)
+     */
+    fun aimBrightness(x: Int, y: Int): Int {
+        if (x < 0 || y < 0 || x >= RESOLUTION_WIDTH || y >= RESOLUTION_HEIGHT) return -1
+        if (!beamHasDrawnRow(y, scanline)) return 0
+        val rgb = frame[x, y]
+        return ((rgb shr 16) and 0xFF) + ((rgb shr 8) and 0xFF) + (rgb and 0xFF)
+    }
 
     // Active timing region. NTSC has 262 scanlines (pre-render at 261); PAL has
     // 312 (pre-render at 311). VBlank still begins at scanline 241 dot 1 for both;
