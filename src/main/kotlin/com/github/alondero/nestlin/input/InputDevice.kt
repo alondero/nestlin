@@ -139,13 +139,61 @@ abstract class OpenBusOnlyDevice : InputDevice {
 }
 
 /**
- * Zapper light gun — stub. The actual trigger-bit / light-sense semantics
- * (trigger = `$4017` D4; light sense = `$4017` D3; `$4016` reads always return
- * 0 for the zapper bits) are a future PR. For now, reads return the open-bus
- * mask (`0x40`) so a Zapper-plugged port behaves like an empty port from the
- * game's perspective.
+ * NES Zapper light gun. The Zapper does not speak the standard
+ * pad's shift-register protocol; instead each `$4017` read reports two live
+ * signals in the low bits, with the high bits floating to the open-bus mask:
+ *
+ * ```
+ *  $4017 read:  OB OB OB  T   L  0  0  0
+ *               D7 D6 D5  D4  D3 D2 D1 D0
+ * ```
+ *
+ *  - **D4 (trigger, `0x10`):** 1 while the trigger is held, 0 otherwise.
+ *  - **D3 (light sense, `0x08`):** **0 when a bright pixel is detected**, **1 when
+ *    dark**. Note the polarity — a lit target reads the bit as *clear*. This
+ *    matches real hardware (nesdev "Light sensed: 0 detected, 1 not detected")
+ *    and the Mesen2 oracle (`Zapper.h`: `(IsLightFound() ? 0 : 0x08)`). The
+ *    issue #209 prose had this inverted; the hardware-correct polarity is what
+ *    makes Duck Hunt's hit detection work, so we follow the oracle. See
+ *    [ZapperTest] for the four trigger/light truth-table cases.
+ *  - **D2-D0:** always 0 (no serial data on a plain NES Zapper).
+ *
+ * The Zapper is conventionally wired to **port 2** (`$4017`) only. A Zapper
+ * placed on port 1 ([isPort2] = false) reads back 0 — games never expect a
+ * light gun there, and this keeps a mis-configured UI selection inert rather
+ * than feeding a game phantom port-1 light data.
+ *
+ * There is no strobe/latch: [writeStrobe] is a no-op (inherited from
+ * [OpenBusOnlyDevice]) and reads are un-latched samples of the live providers,
+ * so [read] and [peek] are identical — [peek] is safe for the Memory Editor.
+ *
+ * @param triggerProvider returns true while the trigger is held (mouse-left held
+ *   over the focused game window). Defaults to always-released so a
+ *   directly-constructed Zapper (tests, headless) needs no wiring.
+ * @param lightSensor returns true when the pixel currently aimed at is **bright**
+ *   (a lit target). Defaults to always-dark, which is the hardware-correct
+ *   idle reading when the gun points away from any lit sprite.
+ * @param isPort2 whether this Zapper is plugged into port 2 (`$4017`). Defaults
+ *   to true; [Memory.setPortType] passes `index == 1`.
  */
-class Zapper : OpenBusOnlyDevice()
+class Zapper(
+    private val triggerProvider: () -> Boolean = { false },
+    private val lightSensor: () -> Boolean = { false },
+    private val isPort2: Boolean = true,
+) : OpenBusOnlyDevice() {
+
+    override fun read(): Byte = if (isPort2) {
+        val trigger = if (triggerProvider()) 0x10 else 0x00        // D4: high while trigger held
+        val light = if (lightSensor()) 0x00 else 0x08              // D3: clear when bright, set when dark
+        (StrobeRegister.OPEN_BUS_MASK or trigger or light).toByte()
+    } else {
+        // Zapper is conventionally on port 2 only; a port-1 Zapper reads 0.
+        0
+    }
+
+    // No latched state: peek is an alias for read.
+    override fun peek(): Byte = read()
+}
 
 /**
  * Nothing is plugged into this port. Reads return the open-bus mask so the

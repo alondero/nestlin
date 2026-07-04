@@ -31,16 +31,49 @@ class Memory : DmaPort {
      * wrapping [controller1]. Mutable so the Controller Configuration screen
      * can swap the device type at runtime without disturbing the underlying
      * controller's button bitmap or shift-register state.
+     *
+     * `@Volatile`: [setPortType] may run on the JavaFX thread (config-screen save)
+     * while the emulation thread reads this on every `$4016` access, so the swapped
+     * reference must be published safely. The device objects are immutable in their
+     * wiring, so a volatile reference swap is sufficient.
      */
+    @Volatile
     var port1: InputDevice = StandardGamepad(controller1)
         private set
 
     /**
      * The [InputDevice] currently plugged into port 2 (player 2). Defaults to a
-     * [StandardGamepad] wrapping [controller2]. See [port1] for the rationale.
+     * [StandardGamepad] wrapping [controller2]. See [port1] for the rationale
+     * (including why this is `@Volatile`).
      */
+    @Volatile
     var port2: InputDevice = StandardGamepad(controller2)
         private set
+
+    /**
+     * Live input providers for a plugged [com.github.alondero.nestlin.input.Zapper].
+     * [zapperTrigger] returns true while the trigger is held; [zapperLight] returns
+     * true when the aimed-at pixel is bright. Default to "no trigger / dark" so a
+     * headless or test [Memory] constructs a functional (idle) Zapper with no UI
+     * wiring. The UI installs real providers via [setZapperProviders]; because a
+     * plugged Zapper reads these fields through indirection on every poll, a later
+     * install is picked up without re-plugging the port. `@Volatile` so that later
+     * install is visible to the emulation thread.
+     */
+    @Volatile
+    private var zapperTrigger: () -> Boolean = { false }
+    @Volatile
+    private var zapperLight: () -> Boolean = { false }
+
+    /**
+     * Install the [com.github.alondero.nestlin.input.Zapper] input providers. Called
+     * once by the UI at startup; [trigger] maps to mouse-left-held over the focused
+     * window and [light] to a brightness sample of the frame buffer at the cursor.
+     */
+    fun setZapperProviders(trigger: () -> Boolean, light: () -> Boolean) {
+        zapperTrigger = trigger
+        zapperLight = light
+    }
 
     /**
      * What kind of device is in port [index] (0 or 1). Defaults to
@@ -73,7 +106,16 @@ class Memory : DmaPort {
                 1 -> StandardGamepad(controller2)
                 else -> throw IllegalArgumentException("Port index must be 0 or 1, got $index")
             }
-            InputDevice.DeviceType.ZAPPER -> com.github.alondero.nestlin.input.Zapper()
+            // The Zapper forwards to the current [zapperTrigger] / [zapperLight] fields
+            // on every read (not a snapshot at construction), so re-installing providers
+            // via [setZapperProviders] after a Zapper is already plugged is reflected
+            // immediately without re-plugging. isPort2 = true for $4017 (index 1); a
+            // port-1 Zapper reads 0 (see [Zapper]).
+            InputDevice.DeviceType.ZAPPER -> com.github.alondero.nestlin.input.Zapper(
+                triggerProvider = { zapperTrigger() },
+                lightSensor = { zapperLight() },
+                isPort2 = index == 1,
+            )
             InputDevice.DeviceType.NONE -> NoDevice()
         }
         when (index) {

@@ -112,8 +112,10 @@ class SaveStateMigrationTest {
             powerReset()
             SaveState.load(this, Files.newInputStream(savePath))
 
-            // Port 0 is a Zapper stub — $4016 reads return 0x40 (open-bus only).
-            assertThat(memory[0x4016], equalTo(0x40.toByte()))
+            // Port 0 holds a Zapper. The Zapper is conventionally a port-2 ($4017)
+            // device, so a port-0 (index 0, isPort2 = false) Zapper reads back 0 —
+            // games never expect a light gun on port 1 (issue #209).
+            assertThat(memory[0x4016], equalTo(0.toByte()))
 
             // Port 1 (StandardGamepad) restored its A-pressed state — read A's
             // bit after a strobe to confirm.

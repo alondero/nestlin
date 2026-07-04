@@ -194,8 +194,7 @@ class ControllerConfigWindow(
         private val legendLabels = HashMap<Button, Label>()
 
         init {
-            // Device-type dropdown: NONE / STANDARD_GAMEPAD (ZAPPER reserved in the
-            // enum but not yet listed — its working semantics land in a future PR).
+            // Device-type dropdown: NONE / STANDARD_GAMEPAD / ZAPPER.
             val supportedTypes = InputConfig.SUPPORTED_DEVICE_TYPES
             deviceTypeChoice = ChoiceBox<InputDevice.DeviceType>().apply {
                 items = javafx.collections.FXCollections.observableArrayList(supportedTypes)
