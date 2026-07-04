@@ -108,11 +108,6 @@ class ControllerConfigWindow(
     /** Tab content (one PlayerConfigPane per player). */
     private val player1Pane: PlayerConfigPane
     private val player2Pane: PlayerConfigPane
-    private val promptLabel = Label().apply {
-        font = Font.font(13.0)
-        isWrapText = true
-        padding = Insets(2.0, 6.0, 6.0, 6.0)
-    }
 
     init {
         stage.title = "Configure Controls"
@@ -123,7 +118,7 @@ class ControllerConfigWindow(
             tabs.add(Tab("Player 1", player1Pane.root).apply { isClosable = false })
             tabs.add(Tab("Player 2", player2Pane.root).apply { isClosable = false })
         }
-        val root = VBox(promptLabel, tabs, buildButtonBar())
+        val root = VBox(tabs, buildButtonBar())
         root.padding = Insets(6.0)
         val scene = Scene(root)
         // Capture-phase filter: a key pressed while listening must be intercepted before a
@@ -182,11 +177,6 @@ class ControllerConfigWindow(
         initialDeviceType: InputDevice.DeviceType,
     ) {
         val root: Pane
-        private val promptLabel = Label().apply {
-            font = Font.font(13.0)
-            isWrapText = true
-            padding = Insets(2.0, 6.0, 6.0, 6.0)
-        }
         private var bindings = initialBindings
         private val deviceTypeChoice: ChoiceBox<InputDevice.DeviceType>
 
@@ -327,11 +317,6 @@ class ControllerConfigWindow(
             hotspotNodes.forEach { (button, node) ->
                 node.style = if (button == listening) listeningHotspotStyle else idleHotspotStyle
             }
-            promptLabel.text = if (listening != null) {
-                "Press a key, gamepad button, stick direction, or D-pad for ${displayName(listening)}…  (Esc to cancel)"
-            } else {
-                "Click a button on the controller, then press a key, gamepad button, stick direction, or D-pad to bind it."
-            }
         }
 
         private fun legendText(button: Button): String = "${displayName(button).padEnd(6)} → ${bindingText(button)}"
@@ -408,19 +393,11 @@ class ControllerConfigWindow(
         // (a user who set port 2 to Zapper probably wants to keep that choice).
         player1Pane.reload(ControllerBindings.defaults(), ports.port1)
         player2Pane.reload(ControllerBindings.defaults(), ports.port2)
-        promptLabel.text = "Reset to defaults — press Save to keep."
     }
 
     private fun refresh() {
         player1Pane.refresh()
         player2Pane.refresh()
-        promptLabel.text = if (player1Pane.listeningFor != null ||
-            player2Pane.listeningFor != null
-        ) {
-            "Press a key, gamepad button, stick direction, or D-pad for the highlighted button…  (Esc to cancel)"
-        } else {
-            "Click a button on either controller, then press a key, gamepad button, stick direction, or D-pad to bind it."
-        }
     }
 
     private fun displayName(button: Button): String = when (button) {
