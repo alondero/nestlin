@@ -208,6 +208,58 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
 
 ---
 
+## Mapper 18 (Jaleco SS880006)
+**Status:** Working (Added 2026-07-09, issue #135)
+
+- **Games:** *Jajamaru Gekimaden — Maboroshi no Kinmajou* (the localized name is
+  *Magical Kid's Adventure* / *Nephrite*), *Ninja Jajamaru — Ginga Daisakuen*,
+  *Pizza Pop!*, and *Toukon Club*.
+- **Spec source:** Mesen2's `Core/NES/Mappers/Jaleco/JalecoSs88006.h` is the
+  oracle. The [nesdev wiki page](https://www.nesdev.org/wiki/INES_Mapper_018)
+  describes the chip as "resembling a scrambled VRC4" — the scattered
+  `addr & 0xF003` register decode (even-address / odd-address nibbles) is
+  the chip's defining trait.
+- **Spec gotcha vs. issue text:** the GitHub issue #135 register-layout
+  description ("16KB PRG, 8KB CHR, no IRQ, no PRG-RAM, hardware-fixed
+  mirroring") is **incorrect** — it reflects a simplified mental model.
+  The actual chip uses 8KB PRG, 1KB CHR, has an IRQ counter with
+  configurable width (16/12/8/4-bit), a software-controlled mirroring
+  register at `$F002`, and optional 8KB PRG-RAM on games that wire it.
+  The current Nestlin implementation follows the Mesen2 model precisely;
+  PRG-RAM support can be added later when a game that needs it is
+  exercised end-to-end (the NO-INTRO Jajamaru Gekimaden dump has iNES
+  byte 8 = 0, so no PRG-RAM is allocated today).
+- **Geometry:**
+  - **PRG:** 3 × 8KB switchable banks at `$8000-$DFFF`; the last 8KB
+    bank at `$E000-$FFFF` is fixed.
+  - **CHR:** 8 × 1KB switchable banks at `$0000-$1FFF`.
+- **Register map (selected by `addr & 0xF003`, data `D0-D3` is the nibble):**
+  - `$8000`/`$8001`: PRG bank 0 (`$8000-$9FFF`) — even = low 4 bits, odd = high 4.
+  - `$8002`/`$8003`: PRG bank 1 (`$A000-$BFFF`).
+  - `$9000`/`$9001`: PRG bank 2 (`$C000-$DFFF`).
+  - `$A000..$D003`: the 8 CHR banks, ordered the same way (2 registers per
+    1KB window: `$A000/$A001` is bank 0, `$A002/$A003` is bank 1, then
+    `$B000..`, `$C000..`, `$D000..` for banks 2-7).
+  - `$E000..E003`: IRQ reload nibbles `[3:0]` / `[7:4]` / `[11:8]` / `[15:12]`.
+  - `$F000`: reload IRQ counter from the 4-nibble latch + ACK.
+  - `$F001`: bit 0 = IRQ enable; bits 1-3 select counter width —
+    `%1xx`=4-bit, `%01x`=8-bit, `%001`=12-bit, otherwise 16-bit.
+  - `$F002`: mirroring (0=Horiz, 1=Vert, 2=1ScA, 3=1ScB).
+  - `$F003`: expansion audio (µPD7755C — NOT implemented).
+- **IRQ:** clocked every CPU cycle (NOT PPU A12 edges). The IRQ fires on
+  the cycle the masked counter transitions from 1 to 0 (Mesen's
+  `if(--counter == 0)` semantics). `$F000` reloads from the 4-nibble latch
+  AND clears the pending IRQ; `$F001` writes also clear it (per Mesen).
+- **Quirks:**
+  - No bus conflicts on register writes (unlike VRC chips).
+  - Some SS88006-based cartridges include a µPD7755C/µPD7756C ADPCM
+    audio decoder, accessed through `$F003`; not implemented in Nestlin.
+  - The chip's PRG-RAM window (`$6000-$7FFF`, where present on NES 2.0
+    dumps) is not exposed by this implementation since the games verified
+    so far (iNES byte-8 = 0) do not allocate it. To add PRG-RAM later,
+    handle the `WorkRamSize` header field and expose via
+    `batteryBackedRam()`/`batteryDirty` (see Mapper 16/19 for the pattern).
+
 ## Mapper 33 (Taito TC0190 / TC0350)
 **Status:** Working (Added 2026-06-07, issue #131)
 
