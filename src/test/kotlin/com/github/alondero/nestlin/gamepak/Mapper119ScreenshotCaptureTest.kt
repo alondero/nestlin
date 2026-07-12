@@ -11,16 +11,14 @@ import java.nio.file.Paths
  * Capture side-by-side Nestlin vs Mesen2 screenshots of the two MMC6 ROMs
  * in the project library for PR #136 evidence.
  *
- * The PNGs land under `build/reports/mapper119-screenshots/`:
- *  - `pin-bot-nestlin-frame120.png`
- *  - `pin-bot-mesen2-frame120.png`
- *  - `high-speed-nestlin-frame120.png`
- *  - `high-speed-mesen2-frame120.png`
+ * The PNGs land under `build/reports/screenshot-diffs/<slug>-frame-<n>/`
+ * AND a flat mirror at `build/reports/mapper119-screenshots/`.
  *
- * Frame 120 was chosen because it is past the boot stall (the bootcheck
- * 120-frame test showed both games rendering by frames 15-20, and PRG/CHR
- * banks are stable by 120). Both emulators run from a cold power-on with
- * no controller input.
+ * 3 frames per ROM are captured so the reviewer can see the animation
+ * phase difference between the two emulators (see KDoc on
+ * [com.github.alondero.nestlin.compare.Mapper119RegressionTest] for the
+ * ~60-frame boot-phase offset). Both emulators reach the title screen
+ * by frame 60 and run from a cold power-on with no controller input.
  *
  * Lane membership + Mesen2 availability are gated by [RequiresMesen2]:
  * excluded from `./gradlew test`, included by `testMesenComparison`. This
@@ -37,10 +35,10 @@ class Mapper119ScreenshotCaptureTest {
         "Pin-Bot (USA)" to Paths.get("S:/Media/Nintendo NES/Games/Pin-Bot (USA).nes"),
         "High Speed (USA)" to Paths.get("S:/Media/Nintendo NES/Games/High Speed (USA).nes")
     )
-    // Multiple frames so reviewers can pick the cleanest comparison. Both
-    // emulators reach the title screen by frame 60; the boot animation
-    // differs in length so frame 120 / 180 / 240 catch both at varying
-    // points in the credits/title loop.
+    // Capture 3 frames per ROM so reviewers can see the animation phase
+    // difference. Both emulators reach the title screen by frame 60; the
+    // boot animation cycles through CHR-bank states, so frames 120/180/240
+    // catch different phases.
     private val frames = listOf(120, 180, 240)
     // Two output trees:
     //   - build/reports/screenshot-diffs/<slug>-frame-<n>/{nestlin,mesen2}.png

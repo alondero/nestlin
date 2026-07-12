@@ -997,7 +997,7 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   policy (proven on RAMBO-1, VRC4, Mapper 65, Mapper 68, Mapper 18), we mirror
   Mesen's behaviour. A real game reading those addresses sees whatever PRG bank is
   mapped at `$C000-$DFFF`/`$E000-$FFFF`.
-- **Verification:** `Mapper119Test` (16 cases) covers WRAM enable/disable, the four
+- **Verification:** `Mapper119Test` (15 cases) covers WRAM enable/disable, the four
   per-bank R/W control bits independently, the `$6000-$6FFF` open-bus, the inherited
   MMC3 PRG/CHR banking, the inherited scanline IRQ, save-state round-trip, and the
   `MapperStateSnapshot` exposing `wrRamEnabled`/`wrRamControl`. Real-ROM gate:
@@ -1005,6 +1005,19 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   **PASS** (rendering enabled by frames 15–20, ~20–22 % non-blank, PRG+CHR banks
   moving, NMIs firing ~108 times in 120 frames). *Metal Storm (USA)* (which is
   mapper 4 plain in this dump) continues to boot via `Mapper4` unchanged.
+- **Known limitation — ~60-frame boot-phase offset.** Both Pin-Bot and High Speed
+  show a ~60-frame (≈1 second NTSC) animation-phase offset between Nestlin and
+  Mesen2: at any given frame number, one emulator is at one phase of the title-
+  screen animation cycle and the other is at the next phase. The mapper is
+  correct — the text DOES render in Nestlin, just on a different frame than
+  Mesen2. IRQ/NMI fire counts are normal in both emulators (NMI ~1/frame,
+  irqCount=0 in both — these games don't use the scanline IRQ), so the
+  offset is from the project-wide CPU-cycle-accounting difference (Nestlin's
+  `getInstructionCount()` vs Mesen2's M2 cycle count, scanline-261 vs
+  scanline-240 capture offset). Same class of divergence documented for
+  Mapper 18 / Jaleco SS880006. Doesn't block real-game playability, but
+  reviewers eyeballing the per-frame PNGs will see "Nestlin frame N = Mesen2
+  frame N±60" for the title animation cycle.
 
 ## Mapper 228 (Action 52 / Active Enterprises)
 **Status:** Working — boots to the game-selection menu (Added 2026-06-30, GH #140)
