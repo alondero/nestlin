@@ -128,7 +128,7 @@ testroms/                    # nestest.nes is the only ROM in git
 - CPU: all 151 opcodes including unofficial; `GoldenLogTest` is the regression bar.
 - PPU: full background + sprite rendering, sprite-0 hit, 8x16 sprites, A12 edge to mapper.
 - APU: 5 channels (Pulse×2, Triangle, Noise, DMC), PAL/NTSC tables, mixer.
-- Mappers: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 19, 24, 26, 33, 34, 64, 66, 68, 69, 153, 206, 228.** Details + per-mapper game coverage in `MAPPER_SUPPORT.md`.
+- Mappers: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 19, 24, 26, 33, 34, 64, 65, 66, 68, 69, 113, 119, 153, 206, 228.** Details + per-mapper game coverage in `MAPPER_SUPPORT.md`.
 - Region: NTSC + PAL auto-detect (iNES header → NO-INTRO filename → user override).
 - Save state (`.nstl`, F5/F8 + menu) and save RAM (`.sav`, FCEUX-compatible).
 - Battery RAM persistence for mappers 1/4/5 (mappers with `$6000-$7FFF` PRG-RAM).
