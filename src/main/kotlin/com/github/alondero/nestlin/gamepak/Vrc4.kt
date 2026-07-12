@@ -58,17 +58,22 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
     override fun batteryBackedRam(): ByteArray? = prgRam
 
     // PRG: two switchable 8KB banks. prg0 lands at $8000 or $C000 depending on
-    // prgSwapMode; prg1 always lands at $A000.
-    private var prg0 = 0
-    private var prg1 = 0
+    // prgSwapMode; prg1 always lands at $A000. `protected` so the stripped-down
+    // VRC2 subclass (Mapper22) can drive the same fields through its own
+    // (different) cpuWrite decode without inheriting VRC4's IRQ / swap-mode /
+    // WRAM-enable handling at $9002 / $Fxxx.
+    protected var prg0 = 0
+    protected var prg1 = 0
     private var prgSwapMode = false
 
     // CHR: eight 1KB banks, each with a 9-bit bank number assembled from a
     // 4-bit low nibble (even sub) and a 5-bit high nibble (odd sub).
     protected val chrBanks = IntArray(8)
 
-    // Mirroring override from $9000-$9001. -1 = use header default.
-    private var mirroringMode: Int = -1
+    // Mirroring override from $9000-$9001. -1 = use header default. `protected`
+    // so VRC2 subclasses can mask bit 1 (VRC2 only supports V/H mirroring) in
+    // their own currentMirroring override.
+    protected var mirroringMode: Int = -1
 
     // VRC IRQ state.
     private var irqLatch = 0          // 8-bit reload value
@@ -152,7 +157,7 @@ abstract class Vrc4(protected val gamePak: GamePak) : Mapper {
         }
     }
 
-    private fun writeChr(group: Int, sub: Int, v: Int) {
+    protected fun writeChr(group: Int, sub: Int, v: Int) {
         // Each $B/$C/$D/$E group hosts two 1KB CHR registers; sub picks which
         // register and whether we're writing the 4-bit low nibble or the 5-bit
         // high nibble of that register's 9-bit bank index.
