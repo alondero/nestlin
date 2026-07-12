@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34, 64, 65, 66, 68, 69, 153, 206, 228.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33, 34, 64, 65, 66, 68, 69, 153, 206, 228.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -385,6 +385,31 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 24, 26, 33, 34,
   `build/reports/state-diffs/kaijuu-monogatari-frame-60/`. The ROM
   is resolved from the canonical NO-INTRO path on Adam's machine,
   override with `NESTLIN_KAIJUU_MONOGATARI_ROM`.
+
+---
+
+## Mapper 22 (Konami VRC2a)
+**Status:** Working (Added 2026-07-12, issue #137)
+
+- **Games:** *TwinBee 3 - Poko Poko Daimaou (Japan)* is the only VRC2a title in the local NO-INTRO library and the regression oracle for this mapper. Other known VRC2a games include *Takeshi no Chōsenjō*, *Wai Wai World 2*, and several other late-1980s Konami / Famicom titles — none of which are locally available. Note: the GitHub issue text mentions "Akumajō Special: Boku Dracula-kun" as a VRC2a game, but in practice that title's iNES header is **mapper 23 (VRC4)**, not 22 — the issue spec was wrong on this point.
+- **Spec source:** the nesdev wiki (INES Mapper 022) plus Mesen2's `Core/NES/Mappers/Konami/VRC2_4.h` oracle. The chip is the VRC2 — a stripped-down VRC4 with the same register address map but a smaller feature set. Where the GitHub issue text disagrees with the wiki + Mesen2 source, the wiki/Mesen2 wins (the issue's "no CHR banking" and "no mirroring" claims were both wrong).
+- **Address-pin decode:** identical to VRC4b / Mapper 25 — CPU A1 → sub-bit 0, CPU A0 → sub-bit 1. `$x000` → sub 0, `$x001` → sub 2, `$x002` → sub 1, `$x003` → sub 3.
+- **PRG geometry:**
+  - `$8000-$9FFF` — switchable 8KB bank via `$8000` (5-bit).
+  - `$A000-$BFFF` — switchable 8KB bank via `$A000` (5-bit).
+  - `$C000-$DFFF` — **fixed** to the second-to-last 8KB bank. (VRC2 has no `$9002` swap-mode register; the only way for `$C000` to see `prg0` is the VRC4 swap mode, which VRC2 doesn't expose.)
+  - `$E000-$FFFF` — **fixed** to the last 8KB bank (reset / NMI / IRQ vectors).
+- **CHR geometry:** eight independent 1KB banks at `$0000-$1FFF`, each selected via the VRC4-style low+high nibble protocol (`$B000-$B003` for windows 0-1, `$C000-$C003` for windows 2-3, etc.). **VRC2a quirk:** the chip only wires 7 of the 9 stored CHR-select bits — the effective page index is the stored 9-bit value right-shifted by 1 (Mesen2's `if (_variant == VRC2a) page >>= 1`). A 0KB-CHR dump gets 8KB of writable CHR-RAM (same fallback as Mapper 2 / 3 / 11 / 71).
+- **Mirroring:** `$9000` / `$9001` write **bit 0** selects Vertical (0) or Horizontal (1). The VRC2 silicon ties bit 1 to a no-op (VRC4's 1-screen-lower / 1-screen-upper modes aren't exposed), so any value with bit 1 set collapses to V or H per bit 0. The header drives the initial state until the game writes `$9000` for the first time.
+- **No IRQ counter.** `$F000-$F003` writes are silently dropped; `tickCpuCycle` is a no-op; `isIrqPending` always returns false. The VRC2 chip literally has no IRQ device (VRC4 added one).
+- **No WRAM.** `$6000-$7FFF` reads return the 6502 open-bus value (`dataBus`); writes are accepted and discarded. The VRC2 silicon has only a 1-bit latch at `$6000-$6FFF` that no commercial cartridge wires up (PCB 351618 ties the EEPROM data pin to ground). `batteryBackedRam()` returns `null` so the Save RAM layer doesn't allocate an unused `.sav` file.
+- **No `$9002` swap-mode / WRAM-enable register.** Writes to `$9002` / `$9003` are silently dropped — the chip has no register there at all.
+- **Implementation:** `Mapper22` is a thin subclass of the existing `Vrc4` base class. It overrides `decodeSubRegister` (the VRC4b swap), `cpuRead` (open-bus for `$6000-$7FFF`), `cpuWrite` (drops `$6000`, `$9002-$9003`, and `$Fxxx` writes; bit-masks `$9000`/$9001` mirroring to V/H), `currentMirroring` (collapses bit-1 VRC4 modes to V/H; preserves the `-1` header-fallback sentinel), `ppuRead` (applies the `>> 1` CHR shift), `tickCpuCycle` (no-op), `isIrqPending` (false), `batteryBackedRam` (null), and `dataBus` (so `$6000-$7FFF` reads actually return open bus in tests). The Vrc4 base class's `prg0`, `prg1`, `mirroringMode` fields and `writeChr` helper were promoted from `private` to `protected` for this purpose.
+- **Save state:** inherits VRC4's version-2 format — round-trip works because the VRC2a-specific state is a strict subset of VRC4's.
+- **Verification:**
+  - `Mapper22Test` (22 cases) covers dispatch from the iNES header, default PRG state (banks 0/0/second-to-last/last), `prg0`/`prg1` switching via the VRC4b address layout, $9002 swap-mode and WRAM-enable bits being no-ops, $6000-$7FFF open-bus read + dropped writes + null `batteryBackedRam`, $9000 V/H mirroring + bit-1-ignored collapse + header fallback, $Fxxx IRQ non-firing even after 10K CPU cycles, all 8 CHR windows with the `>> 1` shift quirk, CHR high-nibble before the shift, CHR-RAM fallback for 0-CHR dumps, save/load round-trip, version-byte rejection, and a swap-correctness assertion that proves `$B001` (sub 2) targets `chr1` and not `chr0` (a VRC4a decode would clobber chr0 here).
+  - `Mapper22RegressionTest` (`@RequiresMesen2`, in the `mesen` lane) — boots TwinBee 3 on the real ROM, asserts (1) `prg0` actually pages during boot (the "did the mapper do anything" guard), and (2) Nestlin's CHR banks are byte-identical to Mesen2's at frame 60.
+  - **Real-ROM boot gate:** `./gradlew bootcheck -Prom="S:/Media/Nintendo NES/Games/TwinBee 3 - Poko Poko Daimaou (Japan) (Translated En).nes" -Pframes=120` returns **PASS** (rendering on by frame 8, 56% non-blank, 4 distinct PRG states, 3 distinct CHR states, 118 NMIs fired, 0 IRQs — exactly what a chip-without-IRQ should show).
 
 ---
 
