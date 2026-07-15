@@ -118,6 +118,39 @@ class Mapper153Test {
         assertThat(mapper.currentMirroring(), equalTo(Mapper.MirroringMode.ONE_SCREEN_UPPER))
     }
 
+    // ---- CHR-RAM board (Famicom Jump II) ----
+
+    @Test
+    fun `header with 0 CHR allocates writable 8KB CHR-RAM`() {
+        val mapper = Mapper153(createTestGamePak(prg16k = 4, chr8k = 0))
+        // Zero-initialised RAM; writes stick and read back.
+        assertThat(mapper.ppuRead(0x0123).toUnsignedInt(), equalTo(0))
+        mapper.ppuWrite(0x0123, 0x5A.toSignedByte())
+        assertThat(mapper.ppuRead(0x0123).toUnsignedInt(), equalTo(0x5A))
+        // A high address in the second half of CHR-RAM too.
+        mapper.ppuWrite(0x1FFF, 0xA5.toSignedByte())
+        assertThat(mapper.ppuRead(0x1FFF).toUnsignedInt(), equalTo(0xA5))
+    }
+
+    // ---- 512KB PRG: CHR-register bit 0 is PRG A18 ----
+
+    @Test
+    fun `512KB PRG uses CHR-register bit 0 as PRG A18 for the switchable window`() {
+        val mapper = Mapper153(createTestGamePak(prg16k = 32, chr8k = 0))  // 512KB, CHR-RAM
+        mapper.cpuWrite(0x6008, 0x02.toSignedByte())   // reg 8 -> low bank 2
+        assertThat("lower half", mapper.cpuRead(0x8000).toUnsignedInt(), equalTo(2))
+        mapper.cpuWrite(0x6000, 0x01.toSignedByte())   // reg 0 bit 0 latches PRG A18 = 1
+        assertThat("upper half", mapper.cpuRead(0x8000).toUnsignedInt(), equalTo(16 + 2))
+    }
+
+    @Test
+    fun `512KB PRG fixes C000 to the last 16KB of the current 256KB half`() {
+        val mapper = Mapper153(createTestGamePak(prg16k = 32, chr8k = 0))
+        assertThat("lower half fixed", mapper.cpuRead(0xC000).toUnsignedInt(), equalTo(15))
+        mapper.cpuWrite(0x6000, 0x01.toSignedByte())   // PRG A18 = 1
+        assertThat("upper half fixed", mapper.cpuRead(0xC000).toUnsignedInt(), equalTo(31))
+    }
+
     // ---- IRQ: 16-bit counter, decremented per CPU cycle ----
 
     @Test

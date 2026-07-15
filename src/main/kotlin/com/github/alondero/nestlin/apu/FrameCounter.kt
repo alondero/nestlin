@@ -24,15 +24,27 @@ class FrameCounter {
 
     data class Result(val quarterFrame: Boolean, val halfFrame: Boolean, val irq: Boolean)
 
-    fun tick(cpuCycles: Int): Result {
+    /**
+     * Advance the frame sequencer by one CPU cycle and return the clocks it emits.
+     *
+     * The comparison is made against [cyclesSinceReset] — the sequencer's *own*
+     * cycle reference — NOT an absolute CPU-cycle counter. This is what makes a
+     * `$4017` write restart the sequence cleanly (see [write4017]): the standard
+     * per-frame re-sync idiom resets [cyclesSinceReset] to 0, so the next quarter
+     * clock lands 7457 cycles *after the write* instead of dumping every
+     * already-passed step at once.
+     */
+    fun tick(): Result {
         var quarterFrameClock = false
         var halfFrameClock = false
         var irq = false
 
+        cyclesSinceReset++
+
         val sequence = if (mode == Mode.FOUR_STEP) fourStepSequence else fiveStepSequence
 
         // Check each step in the sequence and fire if we've reached that cycle
-        while (step < sequence.size && cpuCycles >= sequence[step]) {
+        while (step < sequence.size && cyclesSinceReset >= sequence[step]) {
             when (step) {
                 0 -> {
                     // Step 0: Quarter frame (envelope & linear counter)
@@ -48,11 +60,17 @@ class FrameCounter {
                     quarterFrameClock = true
                 }
                 3 -> {
-                    // Step 3: End of frame (quarter & half frame)
-                    quarterFrameClock = true
-                    halfFrameClock = true
-                    if (mode == Mode.FOUR_STEP && !irqInhibit) {
-                        irq = true
+                    // Step 3: In 4-step mode this is the end of frame (quarter +
+                    // half + frame IRQ). In 5-step mode this slot is EMPTY — the
+                    // quarter+half moves to step 4. Firing here in 5-step mode
+                    // over-clocks envelopes/length by 25-50% (nesdev APU Frame
+                    // Counter).
+                    if (mode == Mode.FOUR_STEP) {
+                        quarterFrameClock = true
+                        halfFrameClock = true
+                        if (!irqInhibit) {
+                            irq = true
+                        }
                     }
                 }
                 4 -> {
@@ -65,9 +83,9 @@ class FrameCounter {
         }
 
         // Reset at end of sequence
-        val maxCycles = maxCycles()
-        if (cpuCycles >= maxCycles) {
+        if (cyclesSinceReset >= maxCycles()) {
             step = 0
+            cyclesSinceReset = 0
         }
 
         return Result(quarterFrameClock, halfFrameClock, irq)

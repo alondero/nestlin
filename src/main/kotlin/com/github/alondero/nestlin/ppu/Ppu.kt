@@ -564,9 +564,13 @@ class Ppu(var memory: Memory) {
             var finalPalette = 0
             var usedBackground = false
 
-            // Extract background pixel
+            // Extract background pixel. Honor PPUMASK background-enable (bit 3):
+            // with the background layer disabled it outputs the backdrop for every
+            // pixel, independent of the sprite-enable bit. Also honor the left-8px
+            // background clip (bit 1).
+            val showBackground = memory.ppuAddressedMemory.mask.showBackground()
             val showBgLeft = memory.ppuAddressedMemory.mask.backgroundInLeftmost8px()
-            val pixelValueVisible = if (x < 8 && !showBgLeft) 0 else pixelValue
+            val pixelValueVisible = if (!showBackground || (x < 8 && !showBgLeft)) 0 else pixelValue
 
             val paletteAddr = if (pixelValueVisible == 0) {
                 0x3F00  // Universal background color
@@ -580,9 +584,13 @@ class Ppu(var memory: Memory) {
 
 
 
-            // Check sprites (in order, first non-transparent sprite wins)
+            // Check sprites (in order, first non-transparent sprite wins). Honor
+            // PPUMASK sprite-enable (bit 4): with sprites disabled, no sprite pixel
+            // composites AND — because sprite-0 hit detection lives inside this loop
+            // and requires an opaque background pixel (`usedBackground`) — the hit
+            // correctly needs BOTH layers enabled (nesdev PPU sprite-0 hit).
             val showSpritesLeft = memory.ppuAddressedMemory.mask.spritesInLeftmost8px()
-            for (sprite in activeSpriteBuffer) {
+            if (memory.ppuAddressedMemory.mask.showSprites()) for (sprite in activeSpriteBuffer) {
                 // Skip if clipping leftmost 8px
                 val pixelX = cycle - 1
                 if (pixelX < 8 && !showSpritesLeft) continue
