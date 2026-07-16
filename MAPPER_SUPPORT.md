@@ -987,6 +987,63 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33,
   wrong formula. Lesson: assert mapper decode against the *spec value*, not a magic byte derived
   from the implementation.
 
+## Mapper 119 (Nintendo MMC6 / MMC3C variant)
+**Status:** Working (Added 2026-07-12, GH #136)
+
+- **Games:** *Metal Storm*, *StarTropics II — Zoda's Revenge*, *Burai Fighter*,
+  *High Speed*, *Pin-Bot*, *Mighty Bomb Jack*, *Power Blade 2*, *Tetra Star: The Fighter*.
+  About 8 known titles.
+- **What it is:** an MMC3 derivative with a 1 KB on-board work-RAM block instead of the
+  MMC3 8 KB `$6000-$7FFF` PRG-RAM. PRG banking, CHR banking, and scanline IRQ are
+  bit-identical to MMC3 — we subclass `Mapper4` and only override the WRAM path.
+- **iNES 1.0 vs NES 2.0:** iNES 1.0 dumps of MMC6 titles ship with mapper number
+  `119`. NES 2.0 dumps ship as mapper `4` with **submapper 1** (`Header.submapper` is
+  the high nibble of NES 2.0 byte 8). Both paths must work: this `Mapper119` class
+  handles the iNES-1.0 / mapper-119 dump form; the NES-2.0 / mapper-4 submapper-1 form
+  is already routed through `Mapper4` and inherits the standard MMC3 WRAM behaviour —
+  which is **wrong** for MMC6 (it would give an 8 KB PRG-RAM at `$6000-$7FFF` when
+  real hardware exposes 1 KB at `$7000-$73FF`). NES-2.0-with-submapper dispatch into
+  Mapper119 is a follow-up if any pure NES-2.0 MMC6 dump turns up broken; current
+  iNES-1.0 dumps of Metal Storm are mapper 4 plain (no submapper field), so the
+  existing `Mapper4` path covers them.
+- **Work-RAM layout** (the whole reason for the chip):
+  | Bank | Address      | `$A001` read bit | `$A001` write bit |
+  |------|--------------|------------------|-------------------|
+  | 0    | `$7000-$71FF`| bit 5            | bit 4             |
+  | 1    | `$7200-$73FF`| bit 7            | bit 6             |
+  The whole 1 KB is gated by **bit 5 of `$8000`** (W enable). When that bit is clear,
+  reads return 0 and writes are discarded. **No PRG-RAM at `$6000-$6FFF`** — that
+  range is open bus on real hardware.
+- **Why the IRQ-register read-as-status behaviour is NOT modelled:** the GH #136
+  issue text described reads of `$C000/$C001/$E000/$E001` as "returning the IRQ
+  counter byte" — Mesen2's `MMC3.h` (the project's reference oracle) does not
+  implement this. Its `BaseMapper::ReadRegister` defaults to `0` and the address
+  falls through to the mapped PRG bank. Per the project's "Mesen wins" oracle
+  policy (proven on RAMBO-1, VRC4, Mapper 65, Mapper 68, Mapper 18), we mirror
+  Mesen's behaviour. A real game reading those addresses sees whatever PRG bank is
+  mapped at `$C000-$DFFF`/`$E000-$FFFF`.
+- **Verification:** `Mapper119Test` (15 cases) covers WRAM enable/disable, the four
+  per-bank R/W control bits independently, the `$6000-$6FFF` open-bus, the inherited
+  MMC3 PRG/CHR banking, the inherited scanline IRQ, save-state round-trip, and the
+  `MapperStateSnapshot` exposing `wrRamEnabled`/`wrRamControl`. Real-ROM gate:
+  `./gradlew bootcheck` on *Pin-Bot (USA)* and *High Speed (USA)* both return
+  **PASS** (rendering enabled by frames 15–20, ~20–22 % non-blank, PRG+CHR banks
+  moving, NMIs firing ~108 times in 120 frames). *Metal Storm (USA)* (which is
+  mapper 4 plain in this dump) continues to boot via `Mapper4` unchanged.
+- **Known limitation — ~60-frame boot-phase offset.** Both Pin-Bot and High Speed
+  show a ~60-frame (≈1 second NTSC) animation-phase offset between Nestlin and
+  Mesen2: at any given frame number, one emulator is at one phase of the title-
+  screen animation cycle and the other is at the next phase. The mapper is
+  correct — the text DOES render in Nestlin, just on a different frame than
+  Mesen2. IRQ/NMI fire counts are normal in both emulators (NMI ~1/frame,
+  irqCount=0 in both — these games don't use the scanline IRQ), so the
+  offset is from the project-wide CPU-cycle-accounting difference (Nestlin's
+  `getInstructionCount()` vs Mesen2's M2 cycle count, scanline-261 vs
+  scanline-240 capture offset). Same class of divergence documented for
+  Mapper 18 / Jaleco SS880006. Doesn't block real-game playability, but
+  reviewers eyeballing the per-frame PNGs will see "Nestlin frame N = Mesen2
+  frame N±60" for the title animation cycle.
+
 ## Mapper 228 (Action 52 / Active Enterprises)
 **Status:** Working — boots to the game-selection menu (Added 2026-06-30, GH #140)
 
