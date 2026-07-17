@@ -181,8 +181,7 @@ class Ppu(var memory: Memory) {
             // drawn before, so a mid-frame forced-blank window (e.g. Micro Machines'
             // title-screen palette swap) leaves a frozen "band" of stale tiles.
             // Issue #88 follow-up.
-            val backdropIndex = memory.ppuAddressedMemory.ppuInternalMemory[backdropPaletteAddress()].toUnsignedInt()
-            frame[cycle - 1, scanline] = NesPalette.getRgb(backdropIndex)
+            frame[cycle - 1, scanline] = resolveColor(backdropPaletteAddress())
         }
 
         // VBlank is set at scanline 241, NES dot 1 == Nestlin cycle 0.
@@ -219,6 +218,30 @@ class Ppu(var memory: Memory) {
     }
 
     private fun rendering() = with (memory.ppuAddressedMemory.mask) { showBackground() || showSprites() }
+
+    /**
+     * Final colour for the palette entry at [paletteAddr], with PPUMASK bit 0
+     * (greyscale — masks the index to the grey column $x0) and bits 5-7 (colour
+     * emphasis) applied. Every pixel the PPU emits goes through here so the two
+     * display modifiers affect background, sprites and forced-blank backdrop alike.
+     */
+    private fun resolveColor(paletteAddr: Int): Int {
+        val mask = memory.ppuAddressedMemory.mask
+        var index = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
+        if (mask.greyscale()) index = index and 0x30
+        return NesPalette.getRgb(index, emphasisBits(mask))
+    }
+
+    /**
+     * The 3-bit emphasis field from PPUMASK. On PAL machines the red and green
+     * emphasis bits are swapped relative to NTSC (2C07 wiring difference).
+     */
+    private fun emphasisBits(mask: Mask): Int {
+        val bits = (mask.register.toUnsignedInt() shr 5) and 0x07
+        return if (region == Region.PAL) {
+            (bits and 0x4) or ((bits and 0x1) shl 1) or ((bits and 0x2) shr 1)
+        } else bits
+    }
 
     /**
      * The palette address whose colour the PPU emits for a visible pixel while rendering
@@ -303,11 +326,19 @@ class Ppu(var memory: Memory) {
         val spriteHeight = if (spriteSize == Control.SpriteSize.X_8_16) 16 else 8
 
         for (i in 0 until 64) {
-            if (secondaryOam.size >= 8) break
             val s = oam.getSprite(i)
             val y = s.y
             // NES Y semantics: sprite at Y appears at scanlines Y+1 through Y+spriteHeight
             if (target > y && target <= y + spriteHeight) {
+                if (secondaryOam.size >= 8) {
+                    // A 9th in-range sprite sets PPUSTATUS bit 5 (sprite overflow),
+                    // cleared at pre-render dot 1 alongside the other status flags.
+                    // (The hardware's buggy diagonal-scan false positives/negatives
+                    // are not modelled — only the documented >8-real-sprites case.)
+                    memory.ppuAddressedMemory.status.register =
+                        memory.ppuAddressedMemory.status.register.setBit(5)
+                    break
+                }
                 val tileYOffset = target - y - 1
                 val tileY = if (s.verticalFlip) (spriteHeight - 1) - tileYOffset else tileYOffset
                 secondaryOam.add(SecondaryOamEntry(s, tileY))
@@ -564,9 +595,12 @@ class Ppu(var memory: Memory) {
             var finalPalette = 0
             var usedBackground = false
 
-            // Extract background pixel
+            // Extract background pixel. PPUMASK bit 3 gates the background layer
+            // on its own (independent of bit 4) — a disabled background renders
+            // as pixel value 0 (the backdrop) even while sprites are showing.
+            val showBg = memory.ppuAddressedMemory.mask.showBackground()
             val showBgLeft = memory.ppuAddressedMemory.mask.backgroundInLeftmost8px()
-            val pixelValueVisible = if (x < 8 && !showBgLeft) 0 else pixelValue
+            val pixelValueVisible = if (!showBg || (x < 8 && !showBgLeft)) 0 else pixelValue
 
             val paletteAddr = if (pixelValueVisible == 0) {
                 0x3F00  // Universal background color
@@ -575,14 +609,14 @@ class Ppu(var memory: Memory) {
                 0x3F00 + (paletteIndex shl 2) + pixelValueVisible
             }
 
-            val bgNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[paletteAddr].toUnsignedInt()
-            var rgbColor = NesPalette.getRgb(bgNesColorIndex)
+            var rgbColor = resolveColor(paletteAddr)
 
-
-
-            // Check sprites (in order, first non-transparent sprite wins)
+            // Check sprites (in order, first non-transparent sprite wins).
+            // PPUMASK bit 4 gates the sprite layer on its own: with sprites
+            // disabled, no sprite pixels and no sprite-0 hit.
+            val showSprites = memory.ppuAddressedMemory.mask.showSprites()
             val showSpritesLeft = memory.ppuAddressedMemory.mask.spritesInLeftmost8px()
-            for (sprite in activeSpriteBuffer) {
+            if (showSprites) for (sprite in activeSpriteBuffer) {
                 // Skip if clipping leftmost 8px
                 val pixelX = cycle - 1
                 if (pixelX < 8 && !showSpritesLeft) continue
@@ -629,9 +663,7 @@ class Ppu(var memory: Memory) {
             // Look up final color
             if (finalPixel != 0) {
                 // Sprite pixel is visible
-                val spritePaletteAddr = 0x3F10 + (finalPalette shl 2) + finalPixel
-                val spriteNesColorIndex = memory.ppuAddressedMemory.ppuInternalMemory[spritePaletteAddr].toUnsignedInt()
-                rgbColor = NesPalette.getRgb(spriteNesColorIndex)
+                rgbColor = resolveColor(0x3F10 + (finalPalette shl 2) + finalPixel)
             }
 
             frame[x, scanline] = rgbColor

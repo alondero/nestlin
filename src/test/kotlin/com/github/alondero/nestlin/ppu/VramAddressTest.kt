@@ -103,4 +103,17 @@ class VramAddressTest {
         assertThat(addr.coarseXScroll, equalTo(31))
         assertThat(addr.coarseYScroll, equalTo(31)) // all 5 bits set
     }
+
+    @Test
+    fun `first $2006 write clears fine Y bit 2`() {
+        val addr = VramAddress()
+        // A $2005 second write can set fineY up to 7 (bit 2 set)...
+        addr.fineYScroll = 7
+
+        // ...but the first $2006 write only carries fineY bits 0-1 and hardware
+        // forces bit 14 of t (fineY bit 2) to ZERO. Writing $00 must fully clear fineY.
+        addr.setUpper7Bits(0x00)
+
+        assertThat(addr.fineYScroll, equalTo(0))
+    }
 }
