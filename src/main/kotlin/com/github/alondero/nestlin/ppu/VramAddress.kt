@@ -23,7 +23,10 @@ class VramAddress {
     var fineYScroll = 0 // 3 bits so maximum value is 7 - wraps to coarseY if overflows
 
     fun setUpper7Bits(bits: Byte) {
-        fineYScroll = (fineYScroll and 0x04) or ((bits.toUnsignedInt() shr 4) and 0x03)
+        // Hardware forces bit 14 of t (fine Y bit 2) to ZERO on the first $2006
+        // write — only fine Y bits 0-1 arrive in the written byte. Preserving a
+        // stale bit 2 from an earlier $2005 write offsets rendering by 4 rows.
+        fineYScroll = (bits.toUnsignedInt() shr 4) and 0x03
         horizontalNameTable = bits.isBitSet(2)
         verticalNameTable = bits.isBitSet(3)
         coarseYScroll = (coarseYScroll and 0x07) or ((bits.toUnsignedInt() and 0x03) shl 3)

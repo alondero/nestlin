@@ -194,15 +194,19 @@ class PpuAddressedMemory : NmiSource {
             6 -> address
             else /*7*/ -> {
                 val vramAddr = vRamAddress.asAddress() and 0x3FFF
-                val result = data
-                data = ppuInternalMemory[vramAddr]
-                vRamAddress.increment(controller.vramAddressIncrement())
-
-                // Palette reads are not buffered, they return immediately.
-                // However, they still update the buffer with mirrored nametable data (handled above).
+                val result: Byte
                 if (vramAddr >= 0x3F00) {
-                    return data
+                    // Palette reads are not buffered — the entry returns immediately.
+                    // The read buffer is still refilled, but with the NAMETABLE byte
+                    // that sits "underneath" the palette (addr - $1000, the $2Fxx
+                    // mirror), exactly as the real PPU's VRAM fetch does.
+                    result = ppuInternalMemory[vramAddr]
+                    data = ppuInternalMemory[vramAddr - 0x1000]
+                } else {
+                    result = data
+                    data = ppuInternalMemory[vramAddr]
                 }
+                vRamAddress.increment(controller.vramAddressIncrement())
                 result
             }
         }

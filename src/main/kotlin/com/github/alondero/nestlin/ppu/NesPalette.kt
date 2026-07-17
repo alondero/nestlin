@@ -19,8 +19,39 @@ object NesPalette {
     )
 
     /**
+     * Attenuation applied to the two NON-emphasized channels per set emphasis bit —
+     * the standard emulator approximation of the PPU's analog de-emphasis circuit
+     * (the emphasized channel itself is left at full level).
+     */
+    private const val EMPHASIS_ATTENUATION = 0.746
+
+    /**
+     * Precomputed [emphasis 0-7][palette index 0-63] → RGB. Emphasis bit 0 = red,
+     * bit 1 = green, bit 2 = blue (NTSC layout — the PAL red/green swap is the
+     * caller's job, see `Ppu.emphasisBits`). Table lookup keeps the per-pixel cost
+     * at one array index instead of per-pixel floating point.
+     */
+    private val emphasisTable = Array(8) { emphasis ->
+        IntArray(64) { index ->
+            val rgb = colors[index]
+            if (emphasis == 0) rgb else {
+                var r = ((rgb shr 16) and 0xFF).toDouble()
+                var g = ((rgb shr 8) and 0xFF).toDouble()
+                var b = (rgb and 0xFF).toDouble()
+                if (emphasis and 0x1 != 0) { g *= EMPHASIS_ATTENUATION; b *= EMPHASIS_ATTENUATION }
+                if (emphasis and 0x2 != 0) { r *= EMPHASIS_ATTENUATION; b *= EMPHASIS_ATTENUATION }
+                if (emphasis and 0x4 != 0) { r *= EMPHASIS_ATTENUATION; g *= EMPHASIS_ATTENUATION }
+                (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
+            }
+        }
+    }
+
+    /**
      * Get RGB color for a given NES palette index (0-63).
      * Index is masked to 6 bits to handle mirroring.
      */
     fun getRgb(index: Int): Int = colors[index and 0x3F]
+
+    /** RGB for [index] under the given 3-bit colour-emphasis field (PPUMASK bits 5-7). */
+    fun getRgb(index: Int, emphasis: Int): Int = emphasisTable[emphasis and 0x7][index and 0x3F]
 }

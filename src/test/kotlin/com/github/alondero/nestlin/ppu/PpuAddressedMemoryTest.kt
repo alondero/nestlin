@@ -115,13 +115,15 @@ class PpuAddressedMemoryTest {
     }
 
     @Test
-    fun `setUpper7Bits preserves fine Y high bit`() {
+    fun `setUpper7Bits clears fine Y high bit`() {
         addressedMemory.tempVRamAddress.fineYScroll = 0b100
 
-        // High byte write should update fineY low bits but preserve bit 2.
+        // First $2006 write: t bit 14 (fine Y bit 2) is forced to ZERO on hardware
+        // (the "t: X...... ........ = 0" line in the NESdev register table above) —
+        // only fine Y bits 0-1 arrive in the written byte.
         addressedMemory[6] = 0b00110000.toSignedByte()
 
-        assertThat(addressedMemory.tempVRamAddress.fineYScroll, equalTo(0b111))
+        assertThat(addressedMemory.tempVRamAddress.fineYScroll, equalTo(0b011))
     }
 
     @Test
