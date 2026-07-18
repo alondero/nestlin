@@ -130,10 +130,9 @@ class Mapper228(private val gamePak: GamePak) : Mapper {
         if (address < 0x8000) return dataBus
         // Physically-absent chip 2 selected: open bus (no game does this).
         if (prgOpenBus) return dataBus
-        // Defensive: a malformed 0-PRG dump (iNES byte 4 = 0) leaves programRom
-        // empty and would make the `% programRom.size` below divide by zero.
-        // Mirrors ppuRead's `chrRom.isEmpty()` guard — open bus is the safe read.
-        if (programRom.isEmpty()) return dataBus
+        // programRom is guaranteed non-empty here: GH #212 pushed the 0-PRG
+        // rejection into GamePak.requireValidHeader, so the BadHeaderException
+        // fires before any mapper (us included) is ever constructed.
         return if (address and 0x4000 == 0) {
             // $8000-$BFFF
             programRom[(prgBank0 * 0x4000 + (address - 0x8000)) % programRom.size]

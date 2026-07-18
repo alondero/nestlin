@@ -109,6 +109,19 @@ class GamePak(data: ByteArray, displayName: String = "") {
         // value the user sees in the header. The numbers are bytes 4 and 5.
         val prgBanks = data[4].toUnsignedInt()
         val chrBanks = data[5].toUnsignedInt()
+        // GH #212: a malformed 0-PRG dump (iNES byte 4 = 0) leaves programRom
+        // empty, and every mapper's `x % programRom.size` would then divide by
+        // zero. Reject it here so the bad ROM never reaches the mapper layer —
+        // patching each of the ~15 affected mappers individually was the old
+        // approach and falls over every time a new mapper is added. The iNES
+        // spec requires at least one 16KB PRG bank — there must be SOMETHING
+        // mapped at the CPU's $8000-$FFFF for any code to run.
+        if (prgBanks == 0) {
+            throw BadHeaderException(
+                "Header declares 0 PRG banks (iNES byte 4 = 0); every NES cartridge must have " +
+                    "at least one 16KB PRG bank mapped at 0x8000-0xFFFF"
+            )
+        }
         val declaredPrgBytes = prgBanks.toLong() * PRG_BANK_BYTES
         val declaredChrBytes = chrBanks.toLong() * CHR_BANK_BYTES
         val availableForPrg = data.size - INES_HEADER_SIZE
