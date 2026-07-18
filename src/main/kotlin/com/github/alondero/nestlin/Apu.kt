@@ -90,8 +90,11 @@ class Apu(private val dmaPort: DmaPort) {
     fun tick() {
         cpuCycleCounter++
 
-        // Check frame counter sequencing (~7,457 cycles per quarter frame)
-        val frameResult = frameCounter.tick(cpuCycleCounter)
+        // Check frame counter sequencing (~7,457 cycles per quarter frame).
+        // The frame counter owns its own cycle reference (reset on $4017 writes),
+        // so it is driven purely by the per-cycle tick, not the free-running
+        // cpuCycleCounter below (which survives for the APU-clock /2 divider).
+        val frameResult = frameCounter.tick()
 
         if (frameResult.quarterFrame) clockQuarterFrame()
 
@@ -249,10 +252,11 @@ class Apu(private val dmaPort: DmaPort) {
      * Side-effect-free read of an APU register (issue #168, Memory Editor).
      *
      * `$4015` is the only APU register with a read side effect: [handleStatusRead]
-     * clears the frame-counter IRQ and the DMC IRQ. [peekRegisterRead] computes the
-     * identical status byte but leaves both IRQ flags pending, so a debug viewer
-     * polling `$4015` can never swallow an interrupt the game is waiting on. Every
-     * other register is plain backing storage, read straight from [apuMemory].
+     * clears the frame-counter IRQ (the DMC IRQ is acknowledged by a *write*, not a
+     * read). [peekRegisterRead] computes the identical status byte but leaves the
+     * frame IRQ flag pending, so a debug viewer polling `$4015` can never swallow an
+     * interrupt the game is waiting on. Every other register is plain backing
+     * storage, read straight from [apuMemory].
      */
     fun peekRegisterRead(address: Int): Byte = when (address) {
         0x15 -> peekStatusRead()
@@ -275,6 +279,10 @@ class Apu(private val dmaPort: DmaPort) {
 
     private fun handleStatusWrite(value: Byte) {
         apuMemory.status = value
+
+        // Writing $4015 clears the DMC interrupt flag (nesdev APU $4015). This is
+        // the correct ack path for a DMC IRQ — reading $4015 must NOT clear it.
+        dmc.clearIrq()
 
         // Enable/disable channels based on register bits
         if (!value.isBitSet(0)) {
@@ -318,9 +326,10 @@ class Apu(private val dmaPort: DmaPort) {
         if (frameIrq) status = status.setBit(6)
         if (dmc.irqPending) status = status.setBit(7)
 
-        // Reading $4015 clears IRQ flags
+        // Reading $4015 clears ONLY the frame interrupt flag. The DMC interrupt
+        // flag is explicitly NOT cleared by a read — it is acknowledged by a
+        // write to $4015 (see handleStatusWrite). nesdev APU $4015.
         frameIrq = false
-        dmc.clearIrq()
 
         return status
     }
