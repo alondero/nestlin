@@ -24,6 +24,11 @@ data class MapperStateSnapshot(
         if (banks != other.banks) return false
         if (registers != other.registers) return false
         if (irqState != other.irqState) return false
+        // ByteArray needs content comparison, not the reference identity that
+        // Kotlin's === would use. contentEquals on a nullable receiver treats
+        // two nulls as equal and one-null-one-non-null as unequal (issue #99).
+        if (!chrRam.contentEquals(other.chrRam)) return false
+        if (!prgRam.contentEquals(other.prgRam)) return false
 
         return true
     }
@@ -34,6 +39,8 @@ data class MapperStateSnapshot(
         result = 31 * result + banks.hashCode()
         result = 31 * result + registers.hashCode()
         result = 31 * result + (irqState?.hashCode() ?: 0)
+        result = 31 * result + (chrRam?.contentHashCode() ?: 0)
+        result = 31 * result + (prgRam?.contentHashCode() ?: 0)
         return result
     }
 }
