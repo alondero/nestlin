@@ -51,9 +51,12 @@ class MovieLivePlayer(
         framesDriven++
         if (nextRow < movie.length) {
             val row = movie.inputs[nextRow]
+            // Order matches MoviePlayer.replayInto: commands fire FIRST so the upcoming
+            // frame's first NMI sees post-reset state, then the latched input is the
+            // thing the game polls.
+            row.applyCommands(nestlin)
             nestlin.getController1().setButtonBitmap(row.controller1)
             nestlin.getController2().setButtonBitmap(row.controller2)
-            // TODO: honour row.commands (soft/hard reset) once a real movie needs mid-run resets.
             nextRow++
         }
     }
@@ -72,6 +75,8 @@ class MovieLivePlayer(
         // would do, but in the same thread as start()).
         val row0 = movie.inputs.firstOrNull()
         if (row0 != null) {
+            // Same order as the latch hook: commands first, then input latch.
+            row0.applyCommands(nestlin)
             nestlin.getController1().setButtonBitmap(row0.controller1)
             nestlin.getController2().setButtonBitmap(row0.controller2)
             nextRow = 1

@@ -198,6 +198,26 @@ class Nestlin {
     }
 
     /**
+     * Soft reset: equivalent to pressing the NES RESET button. The CPU is redirected to
+     * its RESET vector and registers are zeroed, but **internal RAM ($0000-$07FF) and
+     * PPU registers are preserved** — the RESET line on real hardware does NOT
+     * power-cycle the work RAM or the PPU's latched state.
+     *
+     * Used by the FM2 movie replayer when a row's `commands` field has bit 0 set
+     * (issue #125). The companion [powerReset] is what gets called for bit 1 (the
+     * power-cycle case), and it goes through [Cpu.reset] which DOES clear RAM via
+     * [com.github.alondero.nestlin.Memory.clear].
+     *
+     * Implementation note: we deliberately do NOT touch the rewind buffer. A soft reset
+     * is a transition within the same session (the user can still rewind across it
+     * to inspect what was happening before the RESET button was pressed), unlike a
+     * power-cycle which [powerReset] treats as a brand-new boot timeline.
+     */
+    fun softReset() {
+        cpu.softReset()
+    }
+
+    /**
      * Engage or disengage rewind scrubbing (issue #52). Called from the UI thread on
      * hold/release of the Backspace key. While active and [EmulatorConfig.rewindEnabled], the
      * emulation loop walks backward through the rewind buffer at ~3× real-time, re-rendering each

@@ -40,12 +40,21 @@ class MoviePlayer {
     /**
      * Replay [movie] into an already-booted [nestlin]. Each row's input is applied *before* its
      * frame is stepped, matching FM2's "input latched once per frame" model.
+     *
+     * Per-row ordering (issue #125):
+     *
+     *   1. Apply any `commands` bits the row carries via [MovieInput.applyCommands] —
+     *      soft reset (bit 0) → [Nestlin.softReset], hard reset (bit 1) → [Nestlin.powerReset].
+     *      Doing this BEFORE latching the input matches FCEUX's "reset fires, then the
+     *      game's first NMI polls the new pad" semantics.
+     *   2. Latch the row's input onto the two controller ports.
+     *   3. Step one frame.
      */
     fun replayInto(nestlin: Nestlin, movie: Movie) {
         for (input in movie.inputs) {
+            input.applyCommands(nestlin)
             nestlin.getController1().setButtonBitmap(input.controller1)
             nestlin.getController2().setButtonBitmap(input.controller2)
-            // TODO: honour input.commands (soft/hard reset) once a real movie needs mid-run resets.
             nestlin.runOneFrame()
         }
     }
