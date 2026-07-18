@@ -162,6 +162,10 @@ object ReplayCommand {
     private fun replayInto(nestlin: Nestlin, movie: Movie, frameLimit: Int?) {
         val rows = if (frameLimit != null) movie.inputs.take(frameLimit) else movie.inputs
         for (input in rows) {
+            // Same per-row ordering as MoviePlayer.replayInto (issue #125): commands
+            // first via the shared MovieInput.applyCommands helper, then latch input,
+            // then step one frame.
+            input.applyCommands(nestlin)
             nestlin.getController1().setButtonBitmap(input.controller1)
             nestlin.getController2().setButtonBitmap(input.controller2)
             nestlin.runOneFrame()

@@ -106,6 +106,28 @@ class Cpu(
 
     fun reset() {
         memory.clear()
+        resetCpuState()
+    }
+
+    /**
+     * Soft reset — equivalent to pressing the NES RESET button (issue #125). The CPU
+     * is redirected to its RESET vector and registers are zeroed, but **internal RAM
+     * ($0000-$07FF) and PPU registers are preserved** — the RESET line on real hardware
+     * does NOT power-cycle the work RAM or the PPU's latched state.
+     *
+     * Contrast with [reset] (the power-cycle / "hard reset" path), which calls
+     * [com.github.alondero.nestlin.Memory.clear] to wipe RAM and reset the PPU.
+     */
+    fun softReset() {
+        resetCpuState()
+    }
+
+    /**
+     * Reset the CPU's own state (registers, processor status, cycle counters, PC from
+     * the RESET vector). Shared by [reset] (full power-cycle, which clears RAM first)
+     * and [softReset] (RESET button, which preserves RAM).
+     */
+    private fun resetCpuState() {
         _processorStatus.reset()
         _registers.reset()
         _workCyclesLeft = 0
