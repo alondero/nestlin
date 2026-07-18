@@ -51,15 +51,44 @@ class ZapperTest {
     }
 
     @Test
-    fun `peek matches read for every trigger and light combination`() {
-        // The Zapper has no latched state, so the Memory Editor's side-effect-free
-        // peek must return exactly what read would.
+    fun `peek always reports the light bit as dark regardless of the light sensor`() {
+        // Peek is the Memory Editor's side-effect-free read (issue #219): it must
+        // report the live trigger bit (a @Volatile Boolean, safe off-thread) but
+        // MUST NOT sample the live PPU frame — that's racy when read from the
+        // JavaFX thread. The light bit is therefore always 'dark' (D3 set),
+        // independent of what `lightSensor()` would have returned. Pin all four
+        // (trigger, bright) combos so the approximation can't drift back toward
+        // an alias for read().
         for (trigger in listOf(false, true)) {
             for (bright in listOf(false, true)) {
                 val z = zapper(trigger, bright)
-                assertThat(z.peek(), equalTo(z.read()))
+                val expected = if (trigger) 0x58.toByte() else 0x48.toByte()
+                assertThat(z.peek(), equalTo(expected))
             }
         }
+    }
+
+    @Test
+    fun `peek differs from read when aimed at a bright pixel`() {
+        // Pins the divergence: when the trigger is held AND a bright pixel is
+        // visible, read() clears the light bit (0x50) but peek() reports the
+        // safe 'dark' approximation (0x58). This is the concrete shape of the
+        // approximation — the bug we're fixing showed up here as a flickering
+        // debug-viewer value; the fix shows up here as a stable 0x58.
+        val z = zapper(trigger = true, bright = true)
+        assertThat(z.read(), equalTo(0x50.toByte()))
+        assertThat(z.peek(), equalTo(0x58.toByte()))
+    }
+
+    @Test
+    fun `peek tracks the live trigger bit across provider changes`() {
+        // The trigger sample is read from a @Volatile Boolean, so peek must
+        // reflect provider changes between polls — only the light bit is fixed.
+        var trigger = false
+        val z = Zapper(triggerProvider = { trigger }, lightSensor = { true /* bright */ })
+        assertThat(z.peek(), equalTo(0x48.toByte()))   // trigger off → 0x48
+        trigger = true
+        assertThat(z.peek(), equalTo(0x58.toByte()))   // trigger on  → 0x58 (light bit stays 'dark')
     }
 
     @Test

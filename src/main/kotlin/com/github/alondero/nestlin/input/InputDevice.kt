@@ -105,20 +105,9 @@ class StandardGamepad(val controller: Controller) : InputDevice {
  * protocol: every read/peek returns the open-bus mask (`0x40`); the strobe
  * signal is a no-op; save/load have no per-device state yet.
  *
- * Both [Zapper] (light gun stub) and [NoDevice] (nothing plugged in) extend
- * this — they currently behave identically from the CPU's perspective. When
- * the Zapper semantics land (trigger bit on `$4017` D4, light sense on `$4017`
- * D3), only [Zapper] will override `read`/`peek`; [NoDevice] stays as-is.
- */
-/**
- * Shared implementation for devices that don't speak the standard NES pad
- * protocol: every read/peek returns the open-bus mask (`0x40`); the strobe
- * signal is a no-op; save/load have no per-device state yet.
- *
- * Both [Zapper] (light gun stub) and [NoDevice] (nothing plugged in) extend
- * this — they currently behave identically from the CPU's perspective. When
- * the Zapper semantics land (trigger bit on `$4017` D4, light sense on `$4017`
- * D3), only [Zapper] will override `read`/`peek`; [NoDevice] stays as-is.
+ * Both [Zapper] (light gun) and [NoDevice] (nothing plugged in) extend this —
+ * from the CPU's perspective they share a base behaviour, but [Zapper] further
+ * overrides `read`/`peek` to report the live trigger and light-sense bits.
  *
  * Marked abstract so callers can't instantiate it directly — the only valid
  * concrete types are [Zapper] and [NoDevice].
@@ -164,8 +153,14 @@ abstract class OpenBusOnlyDevice : InputDevice {
  * than feeding a game phantom port-1 light data.
  *
  * There is no strobe/latch: [writeStrobe] is a no-op (inherited from
- * [OpenBusOnlyDevice]) and reads are un-latched samples of the live providers,
- * so [read] and [peek] are identical — [peek] is safe for the Memory Editor.
+ * [OpenBusOnlyDevice]) and [read] is an un-latched sample of the live
+ * providers. [peek] is a deliberately **safe approximation** for debug
+ * viewers (Memory Editor, issue #168) that polls `$4017` from the JavaFX
+ * thread — see [peek] for the exact contract. In short: peek reads only
+ * the trigger lambda (whose thread safety is the caller's responsibility,
+ * satisfied by [Memory.zapperTrigger]'s `@Volatile` field) and never
+ * reaches into the PPU's live `scanline`/`frame`, which would otherwise
+ * be a cross-thread race during the editor's 10 Hz refresh.
  *
  * @param triggerProvider returns true while the trigger is held (mouse-left held
  *   over the focused game window). Defaults to always-released so a
@@ -191,8 +186,29 @@ class Zapper(
         0
     }
 
-    // No latched state: peek is an alias for read.
-    override fun peek(): Byte = read()
+    /**
+     * Debug-viewer-safe approximation of [read]. Invokes [triggerProvider]
+     * but **not** [lightSensor]: the light bit is hard-coded to 'dark' (D3
+     * set) regardless of whether the player is currently aimed at a lit
+     * sprite. Skipping the live PPU frame sample — which a real [read]
+     * reaches via [com.github.alondero.nestlin.ppu.Ppu.aimBrightness] —
+     * prevents the Memory Editor's 10 Hz refresh from racing the emulation
+     * thread on `scanline` / `frame` (issue #219, manifested as a flickering
+     * `$4017` value in the debug view). In-game polling uses [read], so
+     * gameplay is unaffected.
+     *
+     * Thread safety: the trigger lambda's cross-thread visibility is the
+     * *caller's* responsibility. In production [Memory] wraps it around a
+     * `@Volatile` field (`Memory.zapperTrigger`), which makes the off-thread
+     * read in peek safe; the Zapper class itself makes no memory-visibility
+     * promise about the closure it receives.
+     */
+    override fun peek(): Byte = if (isPort2) {
+        val trigger = if (triggerProvider()) 0x10 else 0x00
+        (StrobeRegister.OPEN_BUS_MASK or trigger or 0x08).toByte()
+    } else {
+        0
+    }
 }
 
 /**
