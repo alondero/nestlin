@@ -29,9 +29,9 @@ class PalApuTimingTest {
         val fc = FrameCounter().apply { region = Region.PAL; mode = FrameCounter.Mode.FOUR_STEP }
 
         // Nothing should fire before the PAL step-0 boundary (8313)...
-        assertFalse(fc.tick(8312).quarterFrame)
-        // ...and the quarter-frame clock fires exactly at it.
-        assertTrue(fc.tick(8313).quarterFrame)
+        repeat(8312) { assertFalse(fc.tick().quarterFrame) }
+        // ...and the quarter-frame clock fires exactly at it (the 8313th cycle).
+        assertTrue(fc.tick().quarterFrame)
     }
 
     @Test

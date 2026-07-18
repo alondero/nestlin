@@ -10,7 +10,7 @@ import java.io.DataOutput
  * AxROM cartridges have:
  * - 32KB PRG ROM bank switchable at $8000-$FFFF (ALL PRG is switchable, no fixed bank)
  * - 8KB CHR RAM (not ROM)
- * - Single-screen mirroring controlled by bit 3 of bank write
+ * - Single-screen mirroring controlled by bit 4 of bank write
  *
  * Games: Battletoads, Arch Rivals, Beetlejuice, Cobra Triangle, etc.
  */
@@ -33,13 +33,14 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
     }
 
     override fun cpuWrite(address: Int, value: Byte) {
-        // Bank switch via $8000-$FFFF
-        // Bits 0-2: PRG bank select (32KB banks)
-        // Bit 3: Mirroring control (0 = lower screen, 1 = upper screen)
+        // Bank switch via $8000-$FFFF. Control byte layout is `xxxM xPPP`:
+        //   bits 0-2: PRG bank select (32KB banks)
+        //   bit 4:    single-screen nametable select (0 = lower, 1 = upper)
+        // The mirroring bit is bit 4 (0x10), NOT bit 3 — matching Mesen/FCEUX.
         if (address in 0x8000..0xFFFF) {
             val valueInt = value.toUnsignedInt()
             prgBank = valueInt and 0x07
-            mirroringBit = (valueInt shr 3) and 0x01
+            mirroringBit = (valueInt shr 4) and 0x01
         }
     }
 
@@ -53,7 +54,7 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
     }
 
     override fun currentMirroring(): Mapper.MirroringMode {
-        // Single-screen mirroring controlled by bit 3 of last bank write
+        // Single-screen mirroring controlled by bit 4 of last bank write
         return if (mirroringBit == 0) {
             Mapper.MirroringMode.ONE_SCREEN_LOWER
         } else {

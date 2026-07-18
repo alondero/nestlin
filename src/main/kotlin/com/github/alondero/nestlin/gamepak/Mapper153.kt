@@ -37,6 +37,20 @@ class Mapper153(private val gamePak: GamePak) : Mapper {
     private val prgBankCount = programRom.size / 0x4000  // 16KB units
     private val chrMask = if (chrRom.isEmpty()) 0 else chrRom.size - 1
 
+    // CHR bus: the canonical mapper-153 board (Famicom Jump II) is CHR-RAM. When
+    // the iNES header reports 0 KB CHR, expose 8 KB of writable CHR-RAM; otherwise
+    // the eight CHR bank registers drive banked CHR-ROM reads (the synthetic /
+    // CHR-ROM configuration exercised by the unit tests).
+    private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
+
+    // 512KB PRG (Famicom Jump II) can't be addressed by the 4-bit $8 register
+    // alone. On mapper 153 the eight "CHR bank" registers ($0-$7) are repurposed:
+    // their bit 0 is latched as PRG A18, selecting the active 256KB half. The outer
+    // bank applies to the switchable AND the fixed windows. Only meaningful on a
+    // 512KB board (nesdev "INES Mapper 153").
+    private val is512kPrg = prgBankCount > 16
+    private var prgOuterBank = 0   // 0 or 1 (bit 0 latched from a $0-$7 write)
+
     // 14 FCG registers.
     private val regs = IntArray(14)
 
@@ -58,18 +72,25 @@ class Mapper153(private val gamePak: GamePak) : Mapper {
 
     override fun isIrqPending(): Boolean = irqPending
 
+    /** PRG A18 as a 16KB-bank offset: 0 or 16, only on a 512KB board. */
+    private fun prgOuter16(): Int = if (is512kPrg) (prgOuterBank shl 4) else 0
+
     override fun cpuRead(address: Int): Byte {
         if (address in 0x6000..0x7FFF) {
             // $D bit 7 selects the source.
             return if ((regs[0xD] and 0x80) == 0) {
                 prgRam[address - 0x6000]
             } else {
-                val bank = regs[0xD] and 0x0F
+                val bank = prgOuter16() or (regs[0xD] and 0x0F)
                 programRom[(bank * 0x4000 + (address - 0x6000)) % programRom.size]
             }
         }
         if (address < 0x8000) return 0
-        val bank = if (address < 0xC000) (regs[0x8] and 0x0F) else (prgBankCount - 1)
+        val bank = when {
+            address < 0xC000 -> prgOuter16() or (regs[0x8] and 0x0F)  // switchable
+            is512kPrg -> prgOuter16() or 0x0F                          // fixed: last 16KB of the half
+            else -> prgBankCount - 1                                   // fixed: whole-ROM last bank
+        }
         val offset = address and 0x3FFF
         return programRom[(bank * 0x4000 + offset) % programRom.size]
     }
@@ -93,7 +114,11 @@ class Mapper153(private val gamePak: GamePak) : Mapper {
 
     private fun writeRegister(reg: Int, v: Int) {
         when (reg) {
-            in 0..7 -> regs[reg] = v and 0xFF
+            in 0..7 -> {
+                regs[reg] = v and 0xFF
+                // Registers $0-$7 additionally latch PRG A18 (bit 0) on 512KB boards.
+                prgOuterBank = v and 0x01
+            }
             0x8 -> regs[0x8] = v and 0x0F
             0x9 -> regs[0x9] = v and 0x03
             0xA -> {
@@ -109,18 +134,17 @@ class Mapper153(private val gamePak: GamePak) : Mapper {
 
     override fun ppuRead(address: Int): Byte {
         val a = address and 0x1FFF
-        if (chrRom.isEmpty()) return 0
+        // CHR-RAM board (Famicom Jump II): reads come from the 8KB CHR-RAM. The
+        // $0-$7 registers are PRG A18 latches here, NOT CHR bank selects.
+        if (chrRom.isEmpty()) return chrMemory.read(a)
         val window = a ushr 10
         val bank = regs[window] and 0xFF
         return chrRom[(bank * 0x0400 + (a and 0x03FF)) and chrMask]
     }
 
     override fun ppuWrite(address: Int, value: Byte) {
-        // CHR-RAM fallback: if the iNES byte says CHR-RAM, allow writes.
-        if (chrRom.isEmpty()) {
-            // No CHR-RAM allocated by default for mapper 153, but accept the
-            // write anyway so games don't crash on stray CHR writes.
-        }
+        // CHR-RAM is writable; CHR-ROM writes are dropped.
+        if (chrRom.isEmpty()) chrMemory.write(address and 0x1FFF, value)
     }
 
     override fun currentMirroring(): Mapper.MirroringMode {
@@ -143,6 +167,9 @@ class Mapper153(private val gamePak: GamePak) : Mapper {
         out.writeInt(irqCounter)
         out.writeBoolean(irqEnable)
         out.writeBoolean(irqPending)
+        out.writeInt(prgOuterBank)
+        // CHR-RAM bytes (0 bytes when CHR-ROM-backed, so CHR-ROM saves are unchanged).
+        chrMemory.serialize(out)
     }
 
     override fun loadState(input: DataInput) {
@@ -152,6 +179,8 @@ class Mapper153(private val gamePak: GamePak) : Mapper {
         irqCounter = input.readInt()
         irqEnable = input.readBoolean()
         irqPending = input.readBoolean()
+        prgOuterBank = input.readInt()
+        chrMemory.deserialize(input)
     }
 
     override fun snapshot(): MapperStateSnapshot {

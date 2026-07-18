@@ -43,37 +43,39 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
             return prgRam[address - 0x6000]
         }
         if (address < 0x8000) return 0
-        
+
         val prgMode = controlReg.toUnsignedInt() shr 2 and 0x03
+        val lowWindow = address < 0xC000
+        val offset = if (lowWindow) address - 0x8000 else address - 0xC000
+
+        // SUROM/SXROM: 512KB boards address only 256KB with the 4-bit PRG register;
+        // the active 256KB half (PRG A18) is selected by bit 4 of the CHR bank-0
+        // register. The outer bank applies to the switchable AND the fixed windows,
+        // and the fixed "last bank" is the last 16KB of the *current* half. Guarded
+        // on PRG size so ordinary <=256KB games (whose CHR bit 4 legitimately selects
+        // a CHR bank) are unaffected. See nesdev "MMC1" — SUROM/SXROM.
+        val is512k = prgBankCount > 16
+        val outer = if (is512k) (chrBank0 and 0x10) else 0   // 16KB-bank units: 0 or 16
+        val prgLow = prgBank and 0x0F
+
         val bank = when (prgMode) {
             0, 1 -> {
-                // 32KB mode: both 16KB banks use the same bank number (lower's bit 0 ignored)
-                val bankBase = (prgBank and 0xFE)
-                val offset = address - 0x8000
-                if (offset < 0x4000) {
-                    programRom[(bankBase * 0x4000 + offset) % programRom.size]
-                } else {
-                    programRom[((bankBase + 1) * 0x4000 + (offset - 0x4000)) % programRom.size]
-                }
+                // 32KB mode: both 16KB windows switch together (low bit ignored).
+                val base = outer or (prgBank and 0x0E)
+                if (lowWindow) base else base + 1
             }
             2 -> {
-                // Mode 2: $8000-$BFFF fixed to bank 0, $C000-$FFFF switchable
-                if (address < 0xC000) {
-                    programRom[(address - 0x8000) % minOf(0x4000, programRom.size)]
-                } else {
-                    programRom[(prgBank * 0x4000 + (address - 0xC000)) % programRom.size]
-                }
+                // Mode 2: $8000-$BFFF fixed to the first bank of the half, $C000 switchable.
+                if (lowWindow) outer else (outer or prgLow)
             }
             else /* 3 */ -> {
-                // Mode 3 (default): $8000-$BFFF switchable, $C000-$FFFF fixed to last bank
-                if (address < 0xC000) {
-                    programRom[(prgBank * 0x4000 + (address - 0x8000)) % programRom.size]
-                } else {
-                    programRom[((prgBankCount - 1) * 0x4000 + (address - 0xC000)) % programRom.size]
-                }
+                // Mode 3 (default): $8000 switchable, $C000 fixed to the last bank
+                // of the current half (or the whole-ROM last bank on <=256KB boards).
+                if (lowWindow) (outer or prgLow)
+                else if (is512k) (outer or 0x0F) else (prgBankCount - 1)
             }
         }
-        return bank
+        return programRom[(bank * 0x4000 + offset) % programRom.size]
     }
 
     override fun cpuWrite(address: Int, value: Byte) {
