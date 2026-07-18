@@ -181,6 +181,36 @@ class GamePakTest {
     }
 
     /**
+     * Regression for GH #212: a malformed 0-PRG dump (iNES byte 4 = 0) used
+     * to slip past header validation, leaving `programRom` empty. The very
+     * next thing the mapper layer did was `x % programRom.size`, which
+     * ArithmeticExceptions divides by zero — Mapper1, Mapper10, Mapper11,
+     * Mapper16, Mapper33, Mapper34, Mapper64, Mapper65, Mapper68, Mapper69,
+     * Mapper71, Mapper113, Mapper153, Mapper206, plus others, all had the
+     * same unguarded pattern. The fix validates PRG-bank count >= 1 here so
+     * the bad input never reaches the mapper layer in the first place.
+     *
+     * The 0-PRG case is rejected before the size-overflow check (which also
+     * reads byte 4) because the size check would silently pass: 0 declared
+     * bytes trivially fits inside any file, including the 16-byte header-
+     * only stub used here. The message must name iNES byte 4 so a user
+     * hand-editing a header knows exactly which byte to fix.
+     */
+    @Test
+    fun gamePakWithZeroPrgBanksThrowsBadHeaderException() {
+        // 16-byte iNES header only — no PRG, no CHR. Byte 4 = 0 is the
+        // malformed 0-PRG signature from the issue.
+        val data = ByteArray(16)
+        data[0] = 0x4E; data[1] = 0x45; data[2] = 0x53; data[3] = 0x1A.toByte()
+        data[4] = 0   // declares ZERO 16KB PRG banks — every NES cartridge must have >= 1
+        data[5] = 0   // no CHR (valid; CHR-RAM cart or test stub)
+        val ex = assertBadHeader { GamePak(data) }
+        // The message must name iNES byte 4 — hand-headers are a common case.
+        assertThat(ex.message ?: "", containsSubstring("byte 4"))
+        assertThat(ex.message ?: "", containsSubstring("PRG"))
+    }
+
+    /**
      * Regression: for a 4MB+ file with `programRomSize = 0xFF` (255 banks, the
      * spec-allowed max), the validator passes (it uses `toUnsignedInt()`), but
      * `header.programRomSize` is the signed `Byte` -1. If the second init
