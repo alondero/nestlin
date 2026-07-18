@@ -220,6 +220,12 @@ class NopImplied : Opcode(cycles = 2) {
  * BRK/IRQ discriminator) and increments PC past BRK's padding byte
  * before pushing. Deduplicating would require parameterising both,
  * which adds more complexity than the ~10 lines save.
+ *
+ * The `breakCommand` flag is reset after the push: bit 4 only exists in
+ * the *pushed* byte, never as stored state. Leaving it `true` would make
+ * a subsequent `asByte()` call (e.g., from `saveState`) report B=1 in a
+ * status byte that isn't really being pushed — issue #9 / regression
+ * test `brkResetsBreakCommandAfterPush`.
  */
 class Break : Opcode(cycles = 7) {
     override val mnemonic = "BRK"
@@ -231,6 +237,7 @@ class Break : Opcode(cycles = 7) {
             cpu.push((this and 0xFF).toSignedByte())
         }
         cpu.push(cpu.processorStatus.asByte())
+        cpu.processorStatus.breakCommand = false
         cpu.registers.programCounter = cpu.memory[0xFFFE, 0xFFFF]
         cpu.processorStatus.interruptDisable = true
         cpu.workCyclesLeft = 7
