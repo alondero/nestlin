@@ -382,11 +382,20 @@ class ProcessorStatus(
         negative = false
     }
 
+    /**
+     * Serialise the flag bits into the pushed-status byte. Note the
+     * "magical" bits: bit 5 is always 1 (the unused flag is hardwired on
+     * the die), and bit 4 (the B/break flag) only exists in the *pushed*
+     * byte — not as stored state. BRK and PHP force B=1; IRQ and NMI
+     * force B=0. The caller sets [breakCommand] before calling and is
+     * responsible for resetting it (BRK does so explicitly; PHP is a
+     * separate follow-up — issue #9 is scoped to BRK).
+     */
     fun asByte() =
         ((if (negative) (1 shl 7) else 0) or
          (if (overflow) (1 shl 6) else 0) or
-         (1 shl 5) or // Special logic needed for the B flag...
-         (0 shl 4) or
+         (1 shl 5) or
+         (if (breakCommand) (1 shl 4) else 0) or
          (if (decimalMode) (1 shl 3) else 0) or
          (if (interruptDisable) (1 shl 2) else 0) or
          (if (zero) (1 shl 1) else 0) or
