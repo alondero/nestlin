@@ -24,6 +24,16 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
     private var chrBank1 = 0
     private var prgBank = 0
 
+    // MMC1 serial-port consecutive-write guard (issue #235). tickCpuCycle()
+    // advances cpuCycle once per CPU (M2) cycle; each serial-port write stamps
+    // its cycle in lastSerialWriteCycle. A data write landing within one CPU
+    // cycle of the previous serial write is the 6502 read-modify-write
+    // dummy/real write pair, which real MMC1 shifts only once — see cpuWrite.
+    // These are transient (not save-state persisted): save states are taken at
+    // instruction boundaries, never mid-RMW, so resetting them on load is safe.
+    private var cpuCycle = 0L
+    private var lastSerialWriteCycle = NO_SERIAL_WRITE
+
     // CHR bus: backed by ROM when present, otherwise 8KB of CHR-RAM.
     private val chrMemory: ChrMemory = ChrMemory.default(gamePak.chrRom)
     // Held for save-state/snapshot compatibility (the snapshot field exposes
@@ -86,9 +96,23 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
         }
         if (address < 0x8000) return
 
+        // MMC1's serial port ignores a data write that lands within one CPU
+        // cycle of the previous serial-port write. The 6502 executes
+        // read-modify-write instructions (INC/DEC/ASL/ROR/...) as a dummy write
+        // of the unmodified byte followed by the real write on the very next
+        // cycle; real MMC1 shifts only the first, so without this guard the
+        // second write corrupts the 5-bit shift register (e.g. Bill & Ted).
+        // The bit-7 reset is NEVER ignored — matches Mesen2 MMC1.h / nesdev and
+        // fixes Shinsenden. The cycle stamp is updated unconditionally.
+        val isReset = value.toUnsignedInt() and 0x80 != 0
+        val consecutive = lastSerialWriteCycle != NO_SERIAL_WRITE &&
+            (cpuCycle - lastSerialWriteCycle) < 2L
+        lastSerialWriteCycle = cpuCycle
+        if (consecutive && !isReset) return
+
         // MMC1 uses a 5-bit shift register protocol
         // Bit 7 of the value controls whether this is a "reset" write
-        if (value.toUnsignedInt() and 0x80 != 0) {
+        if (isReset) {
             // Bit 7 set: reset shift register and force PRG mode 3
             shiftReg = 0x10
             controlReg = (controlReg.toUnsignedInt() or 0x0C).toByte()
@@ -111,6 +135,11 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
             }
             shiftReg = 0x10  // Reset to marker value
         }
+    }
+
+    /** Advances the serial-port cycle clock; see the consecutive-write guard in [cpuWrite]. */
+    override fun tickCpuCycle() {
+        cpuCycle++
     }
 
     override fun ppuRead(address: Int): Byte {
@@ -196,5 +225,11 @@ class Mapper1(private val gamePak: GamePak) : Mapper {
             chrRam = chrMemory.snapshotBytes(),
             prgRam = prgRam.copyOf()
         )
+    }
+
+    private companion object {
+        /** Sentinel: no serial-port write has happened yet (guards against a
+         *  spurious "consecutive" verdict on the very first write). */
+        const val NO_SERIAL_WRITE = Long.MIN_VALUE
     }
 }

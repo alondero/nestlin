@@ -20,6 +20,7 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33,
   - PRG mode 0/1: 32KB mode (both 16KB banks switch together)
   - CHR ROM loaded via mapper delegate into pattern tables
   - **PRG RAM ($6000-$7FFF):** 8KB RAM supported (Added 2026-04-27)
+  - **Consecutive-write ignore (issue #235, 2026-07-19):** the serial port ignores a data write that lands within one CPU cycle of the previous serial write (the 6502 read-modify-write dummy/real write pair), so only the first bit shifts. The bit-7 reset is never ignored (Shinsenden). Cycle stamped via `tickCpuCycle()`; matches Mesen2 `MMC1.h`.
 - **Banking Fix Applied (2026-04-15):** Mode 3 and mode 2 had inverted fixed/switchable assignments per MMC1 spec
 
 ## Mapper 2 (CNROM/UNROM)
