@@ -39,9 +39,9 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33,
 ## Mapper 3 (NINA-003/006)
 **Status:** Working
 
-- **Games:** Paperboy
+- **Games:** Paperboy (32KB-PRG); Joust (16KB-PRG)
 - **Behavior:** 8KB CHR ROM bank switching via $8000-$9FFF (bits 0-1)
-- **PRG:** Fixed 32KB at $8000-$FFFF
+- **PRG:** Fixed 16KB or 32KB at $8000-$FFFF. In 16KB mode the chip ignores A14, so $C000-$FFFF mirrors $8000-$BFFF. Issue #231 fixed the 16KB crash by switching the CPU-window read from `and 0x7FFF` to `% programRom.size`.
 
 ## Mapper 4 (MMC3/TxROM)
 **Status:** Supported
