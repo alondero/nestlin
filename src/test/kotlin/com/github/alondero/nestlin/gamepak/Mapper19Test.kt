@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.gamepak
 
+import com.github.alondero.nestlin.ppu.PpuInternalMemory
 import com.github.alondero.nestlin.testutil.testGamePak
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toUnsignedInt
@@ -164,20 +165,20 @@ class Mapper19Test {
     // ---- CHR nametable extension (value >= 0xE0) ----
 
     @Test
-    fun `CHR bank value with bit 7 set routes to a nametable sentinel`() {
-        // Per spec: a value >= 0xE0 + !lowChrNtMode → that 1KB CHR window
-        // becomes a nametable instead of CHR. We don't model the nametable
-        // backing yet (TODO in Mapper19.ppuRead), but the read should NOT
-        // return the value as if it were a CHR bank number (e.g. 0xE0 = 224,
-        // which would index way past the 8KB CHR ROM).
+    fun `CHR bank value with bit 7 set routes to the extended CHR-RAM nametable`() {
+        // Issue #234: a value >= 0xE0 + !lowChrNtMode turns that 1KB CHR window
+        // into a nametable mirror backed by the chip's extended 4KB CHR-RAM.
+        // Previously this branch logged and returned 0; now the read goes
+        // through to the NT slot. With a fresh extendedChrRam, the read still
+        // returns 0 — but for the *right* reason (uninitialised RAM) instead
+        // of a sentinel placeholder.
         val m = newN163(prgKb = 128, chrKb = 8)
-        m.cpuWrite(0x8000, 0xE0.toSignedByte())    // value >= 0xE0 → nametable
-        m.cpuWrite(0x9000, 0x05.toSignedByte())     // normal bank for comparison
-        // The two windows should NOT both read the same byte: $E0 is a
-        // nametable flag, $05 is a CHR bank. The fact that we return 0
-        // for the nametable (and 5 for the CHR) is what matters here.
-        assertThat("PPU \$0000 (nametable-extended) is NOT chr bank 224", m.ppuRead(0x0000).toUnsignedInt(), equalTo(0))
-        assertThat("PPU \$0800 (chr bank 5) still works", m.ppuRead(0x0800).toUnsignedInt(), equalTo(5))
+        m.cpuWrite(0x8000, 0xE0.toSignedByte())    // value >= 0xE0 → NT mode
+        m.cpuWrite(0x9000, 0x05.toSignedByte())    // normal CHR bank for control
+        assertThat("PPU \$0000 (NT-mode) reads from extended CHR-RAM (fresh = 0)",
+            m.ppuRead(0x0000).toUnsignedInt(), equalTo(0))
+        assertThat("PPU \$0800 (chr bank 5) still works",
+            m.ppuRead(0x0800).toUnsignedInt(), equalTo(5))
     }
 
     @Test
@@ -199,6 +200,133 @@ class Mapper19Test {
         val chrBank0 = snap.banks["chrBank0"] ?: 0
         assertThat("chrBank0 stored as plain CHR bank (no nt sentinel)",
             chrBank0 and 0x100, equalTo(0))
+    }
+
+    // ---- CHR-as-nametable wiring (issue #234) --------------------------------
+    //
+    // The CHR-as-nametable trick has TWO coupled surfaces that must agree:
+    //   (a) PPU reads at $0000-$03FF (CHR bank 0 in NT mode) read from the
+    //       extended CHR-RAM "NT A" slot.
+    //   (b) PPU reads at $2000-$23FF (when CHR bank 8 is in NT mode with bit 0=0)
+    //       read from the SAME extended CHR-RAM "NT A" slot.
+    //
+    // Both surfaces must observe the same byte at the same offset — that's the
+    // whole point of the trick (one window of internal RAM accessible from
+    // both a CHR address and a NT address). Without this wiring, the game
+    // writes nametable data to one address and reads back through the other
+    // and gets 0, so the screen renders wrong.
+
+    @Test
+    fun `CHR bank 0 in NT mode bit 0 = 0 reads from extended CHR-RAM NT A slot`() {
+        // After issue #234, NT-mode bank 0 (value 0xE0) routes the PPU read
+        // at $0000-$03FF to extendedChrRam[0x000-0x3FF]. The bit-0=0 case is
+        // NT A, so we offset 0x000 (not 0x400).
+        val m = newN163(prgKb = 128, chrKb = 0)
+        m.cpuWrite(0x8000, 0xE0.toSignedByte())    // bank 0 → NT mode, bit 0 = 0 (NT A)
+        m.ppuWrite(0x0050, 0xAB.toSignedByte())    // writes to NT A offset 0x050
+        assertThat("PPU \$0050 reads back 0xAB from NT A slot",
+            m.ppuRead(0x0050).toUnsignedInt(), equalTo(0xAB))
+    }
+
+    @Test
+    fun `CHR bank 0 in NT mode bit 0 = 1 reads from extended CHR-RAM NT B slot`() {
+        // NT-mode bank 0 with bit 0=1 routes to NT B at extendedChrRam[0x400-0x7FF].
+        // The two slots are distinct — a write to one doesn't bleed into the
+        // other (which would defeat the 4-screen arrangement).
+        val m = newN163(prgKb = 128, chrKb = 0)
+        m.cpuWrite(0x8000, 0xE1.toSignedByte())    // bank 0 → NT mode, bit 0 = 1 (NT B)
+        m.ppuWrite(0x0100, 0xCD.toSignedByte())    // writes to NT B offset 0x100
+        assertThat("PPU \$0100 reads back 0xCD from NT B slot",
+            m.ppuRead(0x0100).toUnsignedInt(), equalTo(0xCD))
+        // Also verify NT A is independent — write to NT A offset 0x100 and
+        // confirm NT B at the same offset is unaffected.
+        m.cpuWrite(0x8000, 0xE0.toSignedByte())    // bank 0 → NT A
+        m.ppuWrite(0x0100, 0x11.toSignedByte())    // writes NT A offset 0x100
+        assertThat("PPU \$0100 with NT A reads 0x11 (independent from NT B)",
+            m.ppuRead(0x0100).toUnsignedInt(), equalTo(0x11))
+        m.cpuWrite(0x8000, 0xE1.toSignedByte())    // bank 0 → NT B
+        assertThat("PPU \$0100 with NT B still reads 0xCD (unaffected)",
+            m.ppuRead(0x0100).toUnsignedInt(), equalTo(0xCD))
+    }
+
+    @Test
+    fun `CHR bank 8 in NT mode redirects PPU 2000 reads to NT A extended CHR-RAM`() {
+        // Banks 8-11 live at the extended CHR/nametable register range
+        // ($C000-$D800) and per the wiki "always select CHR banks for PPU
+        // $2000-$2FFF". When bank 8 is in NT mode (value 0xE0), PPU reads at
+        // $2000-$23FF go to extendedChrRam via readNametableOverride —
+        // bypassing the standard PpuInternalMemory CIRAM.
+        val m = newN163(prgKb = 128, chrKb = 0)
+        m.cpuWrite(0xC000, 0xE0.toSignedByte())    // bank 8 → NT A
+        assertThat("readNametableOverride(\$2000) returns the NT slot byte",
+            m.readNametableOverride(0x2000)?.toUnsignedInt(), equalTo(0))
+        assertThat("readNametableOverride(\$2001) reads from extended CHR-RAM",
+            m.readNametableOverride(0x2001)?.toUnsignedInt(), equalTo(0))
+    }
+
+    @Test
+    fun `writeNametableOverride writes to extended CHR-RAM when bank 8 is in NT mode`() {
+        // Mirror of the read path: when bank 8 (PPU $2000-$23FF) is in NT
+        // mode, a PPU write at $2000-$23FF lands in extendedChrRam, NOT in
+        // PpuInternalMemory's nameTable0. The override returns `true` to
+        // signal the write was consumed.
+        val m = newN163(prgKb = 128, chrKb = 0)
+        m.cpuWrite(0xC000, 0xE0.toSignedByte())    // bank 8 → NT A
+        val consumed = m.writeNametableOverride(0x2050, 0xAB.toSignedByte())
+        assertThat("writeNametableOverride returns true (consumed) when bank 8 is NT",
+            consumed, equalTo(true))
+        assertThat("readNametableOverride(\$2050) reads back 0xAB",
+            m.readNametableOverride(0x2050)?.toUnsignedInt(), equalTo(0xAB))
+    }
+
+    @Test
+    fun `writeNametableOverride is no-op when bank 8 is NOT in NT mode`() {
+        // When bank 8's value is below 0xE0, the bank is a regular CHR bank
+        // (or unused) and the PPU $2000-$23FF path should fall through to
+        // PpuInternalMemory's CIRAM. The override returns `false` to signal
+        // "I didn't consume this".
+        val m = newN163(prgKb = 128, chrKb = 0)
+        m.cpuWrite(0xC000, 0x05.toSignedByte())    // bank 8 → plain CHR bank (not NT)
+        val consumed = m.writeNametableOverride(0x2050, 0xAB.toSignedByte())
+        assertThat("writeNametableOverride returns false (passthrough) when bank 8 is not NT",
+            consumed, equalTo(false))
+        assertThat("readNametableOverride returns null (passthrough)",
+            m.readNametableOverride(0x2050), equalTo(null))
+    }
+
+    @Test
+    fun `CHR bank 0 in NT mode and CHR bank 8 in NT mode see the same extended CHR-RAM byte`() {
+        // The whole point of the CHR-as-NT trick: writing to PPU $0000-$03FF
+        // (bank 0 in NT mode) and reading back at PPU $2000-$23FF (bank 8 in
+        // NT mode, bit 0=0) must return the same byte, because both windows
+        // address the SAME NT A slot in extendedChrRam. Without this, games
+        // can't coordinate the "extra screen" between the CHR-side and
+        // NT-side writes.
+        val m = newN163(prgKb = 128, chrKb = 0)
+        m.cpuWrite(0x8000, 0xE0.toSignedByte())    // bank 0 → NT A
+        m.cpuWrite(0xC000, 0xE0.toSignedByte())    // bank 8 → NT A
+        // Write via the CHR window (bank 0 in NT mode), read via the NT
+        // window (bank 8 in NT mode) — must match.
+        m.ppuWrite(0x0080, 0x77.toSignedByte())
+        assertThat("PPU \$2080 (NT side) reflects the CHR-side write",
+            m.readNametableOverride(0x2080)?.toUnsignedInt(), equalTo(0x77))
+        // And the inverse: write via the NT window, read via the CHR window.
+        m.writeNametableOverride(0x2090, 0x88.toSignedByte())
+        assertThat("PPU \$0090 (CHR side) reflects the NT-side write",
+            m.ppuRead(0x0090).toUnsignedInt(), equalTo(0x88))
+    }
+
+    @Test
+    fun `CHR bank 4 in NT mode bit 0 = 0 reads from extended CHR-RAM NT A slot`() {
+        // Banks 4-7 are gated by highChrNtMode (bit 7 of $E800), which is
+        // independent of lowChrNtMode (bit 6). Default state is highChrNtMode
+        // = 0, so banks 4-7 honor NT mode like banks 0-3. Bit 0=0 still
+        // selects NT A.
+        val m = newN163(prgKb = 128, chrKb = 0)
+        m.cpuWrite(0xA000, 0xE0.toSignedByte())    // bank 4 → NT mode, bit 0 = 0 (NT A)
+        m.ppuWrite(0x1050, 0xEE.toSignedByte())
+        assertThat("PPU \$1050 (bank 4 NT mode) reads back 0xEE from NT A slot",
+            m.ppuRead(0x1050).toUnsignedInt(), equalTo(0xEE))
     }
 
     // ---- PRG-RAM ($6000-$7FFF) and write-protect ----
@@ -385,6 +513,47 @@ class Mapper19Test {
             ex.message!!.contains("Mapper19"), equalTo(true))
     }
 
+    @Test
+    fun `extended CHR-RAM survives save and load round-trip`() {
+        // Issue #234: extendedChrRam backs the CHR-as-nametable mode and
+        // must round-trip through save state. Without this, restoring a save
+        // taken mid-game would zero the 4KB of NT-extension data and the
+        // screen would render wrong until the game re-wrote it (which games
+        // typically don't do between save and load).
+        val m = newN163(prgKb = 128, chrKb = 0)
+        m.cpuWrite(0x8000, 0xE0.toSignedByte())    // bank 0 → NT A
+        m.cpuWrite(0xA000, 0xE1.toSignedByte())    // bank 4 → NT B
+        m.cpuWrite(0xC000, 0xE0.toSignedByte())    // bank 8 → NT A
+        m.cpuWrite(0xC800, 0xE1.toSignedByte())    // bank 9 → NT B
+        // Write a few distinct bytes across both NT slots.
+        m.ppuWrite(0x0005, 0x11.toSignedByte())    // NT A offset 5 (via bank 0)
+        m.ppuWrite(0x03FF, 0x22.toSignedByte())    // NT A offset 0x3FF (via bank 0)
+        m.writeNametableOverride(0x240A, 0x33.toSignedByte())    // NT B offset 0xA (via bank 9)
+
+        val baos = ByteArrayOutputStream()
+        val out = DataOutputStream(baos)
+        m.saveState(out)
+        out.flush()
+        val bytes = baos.toByteArray()
+
+        val m2 = newN163(prgKb = 128, chrKb = 0)
+        val inp = DataInputStream(ByteArrayInputStream(bytes))
+        m2.loadState(inp)
+
+        // NT A bytes (bank 0 still in NT mode bit 0=0)
+        assertThat("NT A offset 5 restored",
+            m2.ppuRead(0x0005).toUnsignedInt(), equalTo(0x11))
+        assertThat("NT A offset 0x3FF restored",
+            m2.ppuRead(0x03FF).toUnsignedInt(), equalTo(0x22))
+        // NT B byte (bank 9 still in NT mode bit 0=1 — bank 9 owns the
+        // $2400-$27FF PPU window that readNametableOverride dispatches on)
+        assertThat("NT B offset 0xA restored (via readNametableOverride)",
+            m2.readNametableOverride(0x240A)?.toUnsignedInt(), equalTo(0x33))
+        // Bytes we DIDN'T write are still 0
+        assertThat("NT A offset 0 untouched",
+            m2.ppuRead(0x0000).toUnsignedInt(), equalTo(0))
+    }
+
     // ---- Snapshot ----
 
     @Test
@@ -396,6 +565,116 @@ class Mapper19Test {
         assertThat("mapperId", snap.mapperId, equalTo(19))
         assertThat("prgBank0", snap.banks["prgBank0"], equalTo(5))
         assertThat("chrBank0", snap.banks["chrBank0"], equalTo(3))
+    }
+
+    // ---- End-to-end wiring through PpuInternalMemory (issue #234) -----------
+    //
+    // These tests replicate the delegate wiring that `Memory.readCartridge`
+    // installs (`ppuInternalMemory.nametableReadDelegate = ...` +
+    // `nametableWriteDelegate = ...`). Going through `PpuInternalMemory` (not
+    // calling Mapper19 directly) catches bugs that a direct-call test would
+    // miss — e.g. an off-by-one in `mapNametableAddress`, a typo in the
+    // delegate lambda, or the fallback path incorrectly skipping the override.
+    //
+    // The "usage trace" framing: a game running N163's CHR-as-NT mode reads
+    // and writes nametables through PPU $2000-$2FFF during normal operation
+    // (CPU $2007 PPUDATA + PPU rendering-time $2000-$2FFF fetches). After
+    // issue #234 those accesses route through Mapper19's extended CHR-RAM,
+    // not PpuInternalMemory's CIRAM, and the test below proves that.
+
+    @Test
+    fun `end-to-end - PPU 2000 reads hit the mapper's extended CHR-RAM when bank 8 is NT`() {
+        // Wiring: same pattern Memory.kt:readCartridge uses. We don't go
+        // through Memory here because that pulls in the full CPU + APU +
+        // PPU stack — overkill for a delegate round-trip test.
+        val mapper = newN163(prgKb = 128, chrKb = 0)
+        val ppuMem = PpuInternalMemory()
+        ppuMem.nametableReadDelegate = { addr -> mapper.readNametableOverride(addr) }
+        ppuMem.nametableWriteDelegate = { addr, v -> mapper.writeNametableOverride(addr, v) }
+        mapper.cpuWrite(0xC000, 0xE0.toSignedByte())   // bank 8 → NT A
+
+        // CPU-side path: PPUDATA write via $2007. PpuInternalMemory.set is
+        // called for the vramAddress'd PPU address — write to $2000 lands
+        // there because vRamAddress is 0 by default.
+        ppuMem[0x2000] = 0x42.toSignedByte()
+        // Re-read goes through the delegate → mapper.readNametableOverride →
+        // extendedChrRam[0x000], NOT the standard CIRAM. Verify both paths
+        // agree on the source so a regression that bypassed the override
+        // would surface as "CIRAM and override return different bytes".
+        assertThat("PPU \$2000 read goes through the override (round-trip)",
+            ppuMem[0x2000].toUnsignedInt(), equalTo(0x42))
+        assertThat("mapper.readNametableOverride(\$2000) returns 0x42 (owning the byte)",
+            mapper.readNametableOverride(0x2000)?.toUnsignedInt(), equalTo(0x42))
+    }
+
+    @Test
+    fun `end-to-end - PPU 2000 reads fall through to CIRAM when bank 8 is NOT NT`() {
+        // Negative case: with bank 8 in normal (non-NT) mode, the delegate
+        // returns null/false and the standard CIRAM path runs. Without this
+        // we couldn't distinguish a wired-up mapper from one that always
+        // returns a value.
+        val mapper = newN163(prgKb = 128, chrKb = 0)
+        val ppuMem = PpuInternalMemory()
+        ppuMem.nametableReadDelegate = { addr -> mapper.readNametableOverride(addr) }
+        ppuMem.nametableWriteDelegate = { addr, v -> mapper.writeNametableOverride(addr, v) }
+        mapper.cpuWrite(0xC000, 0x05.toSignedByte())   // bank 8 → plain CHR bank (not NT)
+
+        // With no override, writes go to nameTable0 (via mapNametableAddress).
+        ppuMem[0x2000] = 0x42.toSignedByte()
+        // Re-read through the delegate path: should still be 0x42 (came
+        // from CIRAM, not extended CHR-RAM, so the mapper.readNametableOverride
+        // returns null and we see the same byte via fall-through).
+        assertThat("ppu \$2000 reads back 0x42 from CIRAM (no override)",
+            ppuMem[0x2000].toUnsignedInt(), equalTo(0x42))
+        // And confirm Mapper19's extended CHR-RAM was untouched (still 0).
+        assertThat("mapper's readNametableOverride(\$2000) is null (no claim)",
+            mapper.readNametableOverride(0x2000), equalTo(null))
+    }
+
+    @Test
+    fun `end-to-end - CHR and NT sides share extended CHR-RAM`() {
+        // The "4-screen" arrangement: writes at PPU $0000-$03FF (CHR side,
+        // bank 0 in NT mode) and reads at PPU $2000-$23FF (NT side, bank 8
+        // in NT mode with bit 0=0) must agree, because both windows address
+        // the same NT A slot. This is the headline test for issue #234.
+        val mapper = newN163(prgKb = 128, chrKb = 0)
+        val ppuMem = PpuInternalMemory()
+        ppuMem.nametableReadDelegate = { addr -> mapper.readNametableOverride(addr) }
+        ppuMem.nametableWriteDelegate = { addr, v -> mapper.writeNametableOverride(addr, v) }
+        mapper.cpuWrite(0x8000, 0xE0.toSignedByte())   // bank 0 → NT A
+        mapper.cpuWrite(0xC000, 0xE0.toSignedByte())   // bank 8 → NT A
+
+        // Write via PPU $2000-$23FF (NT side, the typical PPU rendering fetch).
+        ppuMem[0x2010] = 0xAB.toSignedByte()
+        // Read via PPU $0000-$03FF (CHR side, same backing slot).
+        assertThat("CHR side reads 0xAB written through NT side",
+            mapper.ppuRead(0x0010).toUnsignedInt(), equalTo(0xAB))
+
+        // Inverse: write via PPU $0000-$03FF (CHR side), read via $2000-$23FF.
+        mapper.ppuWrite(0x0020, 0xCD.toSignedByte())
+        assertThat("NT side reads 0xCD written through CHR side",
+            ppuMem[0x2020].toUnsignedInt(), equalTo(0xCD))
+    }
+
+    @Test
+    fun `end-to-end - bit 0 selects NT A vs NT B (independent slots)`() {
+        // Banks 8 and 9 can simultaneously point to NT A and NT B (or both
+        // to NT A, or both to NT B). The two NT slots are independent —
+        // writes to one don't bleed into the other. This is what makes the
+        // 4-screen arrangement actually give 4 distinct screens of RAM.
+        val mapper = newN163(prgKb = 128, chrKb = 0)
+        val ppuMem = PpuInternalMemory()
+        ppuMem.nametableReadDelegate = { addr -> mapper.readNametableOverride(addr) }
+        ppuMem.nametableWriteDelegate = { addr, v -> mapper.writeNametableOverride(addr, v) }
+        mapper.cpuWrite(0xC000, 0xE0.toSignedByte())   // bank 8 ($2000) → NT A
+        mapper.cpuWrite(0xC800, 0xE1.toSignedByte())   // bank 9 ($2400) → NT B
+
+        ppuMem[0x2010] = 0x11.toSignedByte()    // writes to NT A
+        ppuMem[0x2410] = 0x22.toSignedByte()    // writes to NT B
+        assertThat("NT A reads 0x11 (independent of NT B)",
+            ppuMem[0x2010].toUnsignedInt(), equalTo(0x11))
+        assertThat("NT B reads 0x22 (independent of NT A)",
+            ppuMem[0x2410].toUnsignedInt(), equalTo(0x22))
     }
 
     // ---- Helpers ----

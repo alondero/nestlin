@@ -22,6 +22,28 @@ interface Mapper {
     fun currentMirroring(): MirroringMode
 
     /**
+     * Optional PPU nametable ($2000-$2FFF) override for read. Return non-null
+     * to take ownership of the byte (e.g. Mapper 19's CHR-as-nametable extension
+     * redirects the read to its internal CHR-RAM); return null to fall through
+     * to PpuInternalMemory's standard CIRAM-backed mirroring.
+     *
+     * [address] is the FULL PPU address ($2000-$2FFF, not normalised). This is
+     * distinct from [ppuRead] which only covers the CHR range $0000-$1FFF —
+     * the PPU's two read paths converge in [com.github.alondero.nestlin.ppu.PpuInternalMemory],
+     * which consults this hook before the standard table/offset resolution.
+     *
+     * Default no-op (every existing mapper inherits "no nametable override").
+     */
+    fun readNametableOverride(address: Int): Byte? = null
+
+    /**
+     * Mirror of [readNametableOverride] for writes. Return `true` to consume
+     * the write (no fall-through to the standard CIRAM backing); `false` to
+     * let PpuInternalMemory's standard write happen.
+     */
+    fun writeNametableOverride(address: Int, value: Byte): Boolean = false
+
+    /**
      * CPU data-bus value, set by [Memory] before each `cpuRead` call. Open-
      * bus reads (i.e. addresses the mapper has no byte of its own to return
      * for) should return this value, matching real 6502 hardware where
