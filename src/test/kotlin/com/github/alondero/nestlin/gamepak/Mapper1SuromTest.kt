@@ -36,9 +36,18 @@ class Mapper1SuromTest {
         return pak.createMapper() as Mapper1
     }
 
-    /** Drive MMC1's 5-write serial load (LSB first) into the register at [addr]. */
+    /**
+     * Drive MMC1's 5-write serial load (LSB first) into the register at [addr].
+     *
+     * Each write is spaced two CPU cycles from the previous one so the
+     * consecutive-write guard (issue #235) accepts every bit — real software
+     * issues each of the 5 writes as a separate STA, several cycles apart.
+     */
     private fun write5(m: Mapper1, addr: Int, value: Int) {
-        for (i in 0 until 5) m.cpuWrite(addr, (((value shr i) and 1)).toSignedByte())
+        for (i in 0 until 5) {
+            repeat(2) { m.tickCpuCycle() }
+            m.cpuWrite(addr, (((value shr i) and 1)).toSignedByte())
+        }
     }
 
     private fun setControl(m: Mapper1, value: Int) = write5(m, 0x8000, value)   // $8000-$9FFF
