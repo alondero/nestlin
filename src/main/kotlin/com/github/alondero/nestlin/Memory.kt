@@ -205,6 +205,20 @@ class Memory : DmaPort {
         }
         ppuAddressedMemory.ppuInternalMemory.chrWriteDelegate = { addr, v -> m.ppuWrite(addr, v) }
 
+        // Nametable override: PPU reads/writes at $2000-$2FFF consult the
+        // mapper first, so mappers that own part of the nametable area
+        // (Mapper 19's CHR-as-NT, future 4-screen modes) can claim the byte.
+        // The mapper returns null / false for "not mine" — the request falls
+        // through to PpuInternalMemory's standard CIRAM mirroring. This is
+        // the second half of the CHR/namespacing plumbing — the first half
+        // is `chrReadDelegate` above for the $0000-$1FFF CHR range.
+        ppuAddressedMemory.ppuInternalMemory.nametableReadDelegate = { addr ->
+            m.readNametableOverride(addr)
+        }
+        ppuAddressedMemory.ppuInternalMemory.nametableWriteDelegate = { addr, v ->
+            m.writeNametableOverride(addr, v)
+        }
+
         // Wire A12 edge detection for MMC3 scanline IRQ
         ppuAddressedMemory.ppuInternalMemory.a12EdgeListener = { rising -> m.notifyA12Edge(rising) }
         ppuAddressedMemory.ppuInternalMemory.resetA12State()

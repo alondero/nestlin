@@ -94,6 +94,18 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
     // the same `ppuRead` dispatch.
     private val chrMemory: ChrMemory = ChrMemory.default(chrRom, chrRamSize = 0x3000)
 
+    // Extended CHR-RAM (4KB at offsets $2000-$2FFF of the chip's internal RAM).
+    // Always present — real N163 hardware has internal RAM here regardless of
+    // whether the cartridge carries external CHR-ROM. When CHR-as-nametable
+    // mode is active (chrBanks[i] has bit 8 set), the lower 1KB backs NT A
+    // ($2000-$23FF) and the upper 1KB backs NT B ($2400-$27FF). The other 2KB
+    // is reserved for banks 10/11 in non-NT mode (extended CHR pattern data).
+    //
+    // We keep this separate from [chrMemory] because [chrMemory] collapses to
+    // ROM-only when chrRom is non-empty — the extended region has no CHR-ROM
+    // backing on real hardware, so it must be RAM regardless.
+    private val extendedChrRam: ByteArray = ByteArray(0x1000)
+
     // 4 × 2KB PRG-RAM pages at $6000-$7FFF. _writeProtect gates writes per
     // page; reads are always live.
     private val prgRam = ByteArray(0x2000)
@@ -281,25 +293,20 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
         val bankIndex = a ushr 10   // 0..7
         val bank = chrBanks[bankIndex]
         if (bank and 0x100 != 0) {
-            // Nametable-extension: bit 0 selects the lower ($2000) or
-            // upper ($2400) nametable. We don't have a real nametable
-            // backing store wired to the mapper (the PPU's own internal
-            // nametable RAM is the source of truth), so we return a
-            // deterministic placeholder. Real cartridges use this in
-            // conjunction with extended CHR-RAM to give the PPU a 4-screen
-            // arrangement; surfacing it as 0 is honest about not modelling
-            // that — but the standard 8-bank decode below covers the games
-            // the regression test exercises.
+            // CHR-as-nametable mode. Bit 0 of the stored bank value selects
+            // which NT slot (A = $2000-$23FF, B = $2400-$27FF) this 1KB CHR
+            // window now mirrors. Both slots are backed by the chip's internal
+            // CHR-RAM at extended offsets 0x000 (NT A) and 0x400 (NT B).
             //
-            // TODO(extended-nametable): plumb through to the PPU's
-            // nametable RAM when a game actually uses this mode. Until
-            // then, log so a divergence surfaces rather than silently
-            // rendering wrong tiles.
-            System.err.println(
-                "Mapper 19: nametable-extended CHR bank $bankIndex read at PPU " +
-                    "\$${address.toString(16)}; not yet wired to nametable RAM."
-            )
-            return 0
+            // Wiring (issue #234): a PPU read at $0000-$03FF in NT mode
+            // returns the same byte as a PPU read at $2000-$23FF (or $2400-
+            // $27FF), because both windows now read from [extendedChrRam].
+            // Games that use this mode (Namco-published titles like Splatterhouse
+            // Wanpaku Graffiti, Rolling Thunder, etc.) get a 4-screen
+            // arrangement where the "fourth screen" lives in the chip's
+            // internal RAM instead of cartridge CIRAM.
+            val ntOffset = (bank and 0x01) * 0x400
+            return extendedChrRam[ntOffset + (a and 0x03FF)]
         }
         val rom = chrRom
         return if (rom.isNotEmpty()) {
@@ -315,13 +322,50 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
         val bankIndex = a ushr 10
         val bank = chrBanks[bankIndex]
         if (bank and 0x100 != 0) {
-            // Same TODO as ppuRead — nametable-extended CHR windows aren't
-            // currently backed by the PPU's nametable RAM.
+            // Mirror of [ppuRead]'s NT-mode branch: a PPU write at $0000-$03FF
+            // in NT mode lands in [extendedChrRam] at the same offset a PPU
+            // write at $2000-$23FF (or $2400-$27FF) would land via
+            // [writeNametableOverride]. This is what makes the two PPU
+            // windows stay synchronised for the 4-screen arrangement.
+            val ntOffset = (bank and 0x01) * 0x400
+            extendedChrRam[ntOffset + (a and 0x03FF)] = value
             return
         }
         if (chrRom.isEmpty()) {
             chrMemory.write(bankIndex * 0x0400 + (a and 0x03FF), value)
         }
+    }
+
+    override fun readNametableOverride(address: Int): Byte? {
+        // PPU reads at $2000-$2FFF route through here when a mapper owns part
+        // of the nametable area. Banks 8-11 cover $2000/$2400/$2800/$2C00 in
+        // 1KB slots. When bank N (8..11) is in NT mode (bit 8 of [chrBanks]N
+        // is set), the corresponding PPU window reads from [extendedChrRam]
+        // at the NT A / NT B slot; otherwise we return null so the standard
+        // PpuInternalMemory CIRAM-backed read proceeds unchanged.
+        val a = address - 0x2000
+        if (a < 0 || a >= 0x1000) return null
+        val bankIndex = 8 + (a ushr 10)
+        val bank = chrBanks[bankIndex]
+        if (bank and 0x100 == 0) return null
+        val ntOffset = (bank and 0x01) * 0x400
+        return extendedChrRam[ntOffset + (a and 0x03FF)]
+    }
+
+    override fun writeNametableOverride(address: Int, value: Byte): Boolean {
+        // Mirror of [readNametableOverride]. Returning `true` consumes the
+        // write (no fall-through to PpuInternalMemory's CIRAM mirroring) so
+        // the standard table/offset write at [PpuInternalMemory.set] is
+        // skipped — the extended 4KB RAM is the sole source of truth for
+        // this NT slot while it's in NT mode.
+        val a = address - 0x2000
+        if (a < 0 || a >= 0x1000) return false
+        val bankIndex = 8 + (a ushr 10)
+        val bank = chrBanks[bankIndex]
+        if (bank and 0x100 == 0) return false
+        val ntOffset = (bank and 0x01) * 0x400
+        extendedChrRam[ntOffset + (a and 0x03FF)] = value
+        return true
     }
 
     // ---- Mirroring ----------------------------------------------------------
@@ -370,6 +414,13 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
             "prgBank2" to prgBank2
         )
         for (i in 0 until 12) banks["chrBank$i"] = chrBanks[i]
+        // chrMemory already covers the 8KB standard + 4KB extended window
+        // (or ROM bytes when CHR-ROM is present); we tack on the dedicated
+        // NT-extension 4KB so a divergence dump shows both surfaces. The
+        // extra 4KB is fine for human inspection — `MapperStateSnapshot.chrRam`
+        // is documented as "for the debug snapshot", not a fixed-size contract.
+        val baseChrRam = chrMemory.snapshotBytes()
+        val combined = if (baseChrRam != null) baseChrRam + extendedChrRam else null
         return MapperStateSnapshot(
             mapperId = 19,
             type = "Namco 163",
@@ -384,14 +435,20 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
                 "irqCounter" to irqCounter,
                 "irqPending" to if (irqPending) 1 else 0
             ),
-            chrRam = chrMemory.snapshotBytes(),
+            chrRam = combined,
             prgRam = prgRam.copyOf()
         )
     }
 
     // ---- Save state --------------------------------------------------------
 
-    override val saveStateVersion: Int = 3
+    // v4: issue #234 — extended CHR-RAM (4KB) backing the CHR-as-nametable
+    // mode is now wired and must round-trip through save state. v3 dumps
+    // predated the wiring and have no [extendedChrRam] bytes to read — the
+    // version bump makes the [SaveState.IncompatibleSaveStateException] the
+    // load path raises on a v3 file loud rather than silently deserialising
+    // garbage (and re-zeros extendedChrRam by accident).
+    override val saveStateVersion: Int = 4
 
     override fun saveState(out: DataOutput) {
         super.saveState(out)
@@ -407,6 +464,7 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
         out.writeInt(prgRamPageWriteProtectMask)
         out.write(prgRam)
         chrMemory.serialize(out)
+        out.write(extendedChrRam)
         audio.saveState(out)
     }
 
@@ -424,6 +482,7 @@ class Mapper19(private val gamePak: GamePak) : Mapper {
         prgRamPageWriteProtectMask = input.readInt()
         input.readFully(prgRam)
         chrMemory.deserialize(input)
+        input.readFully(extendedChrRam)
         audio.loadState(input)
     }
 }

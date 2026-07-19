@@ -17,6 +17,24 @@ class PpuInternalMemory {
     var chrReadDelegate: ((Int) -> Byte)? = null
     var chrWriteDelegate: ((Int, Byte) -> Unit)? = null
 
+    // Optional nametable override ($2000-$2FFF). When a mapper (e.g. Mapper 19
+    // CHR-as-nametable mode) wants to redirect a nametable read/write to its own
+    // backing — typically because the chip's internal CHR-RAM is doubling as NT
+    // RAM — it installs these and returns `true` / non-null to claim the access.
+    // null / false means "fall through to the standard CIRAM-backed read".
+    //
+    // The split between read & write mirrors chrReadDelegate / chrWriteDelegate
+    // so the mapper's `ppuRead` (which only covers $0000-$1FFF CHR) can co-exist
+    // with the mapper's `readNametableOverride` (which covers $2000-$2FFF) —
+    // both delegate paths converge in this class.
+    //
+    // The READ lambda returns `Byte?` (nullable) so the mapper can signal
+    // "I don't own this address" by returning null — the caller's `?: run {...}`
+    // then falls through to the standard CIRAM mirroring. A non-null Byte is
+    // the mapper's authoritative read result.
+    var nametableReadDelegate: ((Int) -> Byte?)? = null
+    var nametableWriteDelegate: ((Int, Byte) -> Boolean)? = null
+
     // A12 edge detection for MMC3 scanline IRQ
     private var lastA12High: Boolean = false
     // Tracks how many M2 (CPU) cycles A12 has been continuously low
@@ -89,8 +107,13 @@ class PpuInternalMemory {
         }
         in 0x2000..0x2FFF -> {
             emitA12(addr)
-            val (table, offset) = mapNametableAddress(addr)
-            table[offset]
+            // Nametable override: mappers that own part of the nametable area
+            // (e.g. Mapper 19's CHR-as-NT mode) return non-null to claim the
+            // read. See `Mapper.readNametableOverride`.
+            nametableReadDelegate?.invoke(addr) ?: run {
+                val (table, offset) = mapNametableAddress(addr)
+                table[offset]
+            }
         }
         in 0x3000..0x3EFF -> this[addr - 0x1000] // Mirror of 0x2000 - 0x2EFF
         else /*in 0x3F00..0x3FFF*/ -> paletteRam[addr % 0x020]
@@ -109,8 +132,14 @@ class PpuInternalMemory {
             }
             in 0x2000..0x2FFF -> {
                 emitA12(addr)
-                val (table, offset) = mapNametableAddress(addr)
-                table[offset] = value
+                // Mirror of the read path — see `Mapper.writeNametableOverride`.
+                // Returning `true` from the delegate consumes the write (no
+                // fall-through to the standard CIRAM mirroring); `false` (or a
+                // null delegate) lets the standard table/offset write happen.
+                if (nametableWriteDelegate?.invoke(addr, value) != true) {
+                    val (table, offset) = mapNametableAddress(addr)
+                    table[offset] = value
+                }
             }
             in 0x3000..0x3EFF -> this[addr - 0x1000] = value // Mirror of 0x2000 - 0x2EFF
             else /*in 0x3F00..0x3FFF*/ -> paletteRam[addr % 0x020] = value
