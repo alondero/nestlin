@@ -163,7 +163,7 @@ class GamePak(data: ByteArray, displayName: String = "") {
         25 -> Mapper25(this)
         26 -> Mapper26(this)
         33 -> Mapper33(this)
-        34 -> Mapper34(this)
+        34 -> Mapper34(this, header.submapper)
         64 -> Mapper64(this)
         65 -> Mapper65(this)
         66 -> Mapper66(this)

@@ -551,22 +551,78 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33,
 ---
 
 ## Mapper 34 (BNROM / NINA-001)
-**Status:** Working
+**Status:** Working (NINA-001 variant added 2026-07-19, issue #233)
 
-- **Games:** Deadly Towers (BNROM), Impossible Mission II / Darkseed-class NINA-001 titles.
+- **Games:**
+  - **BNROM (submapper 2):** Deadly Towers (USA).
+  - **NINA-001 (submapper 1):** Impossible Mission II (USA) (Unl).
 - **What it is:** two unrelated boards sharing one iNES number. Both bank the **entire** 32 KB
-  PRG window at `$8000-$FFFF` (no fixed bank, unlike UNROM/Mapper 2) and switch 8 KB CHR.
-- **Register decode (writes to `$8000-$FFFF`):** a single byte — `prgBank = value & 0x07`
-  (32 KB PRG bank, modulo PRG-bank count), `chrBank = (value >> 3) & 0x03` (8 KB CHR bank,
-  modulo CHR size). The NINA-001 sub-board uses separate `$7FFD/$7FFE/$7FFF` registers on real
-  hardware; this implementation models the BNROM-style combined `$8000` write.
-- **CHR:** 8 KB banked from CHR ROM; a 0 KB-CHR dump gets 8 KB of writable CHR RAM (same fallback
-  as Mappers 2/3/7/11/33/71).
-- **Mirroring:** fixed from the iNES header. No PRG-RAM, no IRQ.
-- **Verification:** `Mapper34Test` covers PRG/CHR bank select, the bit split, CHR-RAM fallback,
-  header mirroring, and save/load round-trip. End-to-end Mesen2 boot comparison is a follow-up
-  (Deadly Towers is the natural oracle) — run `./gradlew bootcheck -Prom=<deadly-towers.nes>`
-  for the oracle-free smoke in the meantime.
+  PRG window at `$8000-$FFFF` (no fixed bank, unlike UNROM/Mapper 2). The boards differ in
+  everything else — register addresses, CHR bank granularity, and PRG-RAM presence.
+- **Variant detection:**
+  1. **NES 2.0 submapper byte is authoritative** (header byte 8 high nibble). Submapper 1 =
+     NINA-001; submapper 2 = BNROM. Unknown submappers fall through.
+  2. **Plain iNES fallback heuristic** — when no submapper byte is present, CHR-ROM size
+     disambiguates: `>8 KB` ⇒ NINA-001 (the two 4 KB CHR windows need ≥16 KB to be useful);
+     `≤8 KB` ⇒ BNROM. Real-world commercial NINA-001 titles ship ≥16 KB CHR (Impossible
+     Mission II carries 16 KB) and BNROM titles ship exactly 8 KB (Deadly Towers), so the
+     heuristic is unambiguous in practice. 0 KB CHR (CHR-RAM homebrew) defaults to BNROM
+     — both variants expose the same CHR-RAM regardless of decode, and BNROM's
+     write-anywhere register is the more permissive.
+- **BNROM register decode (writes to `$8000-$FFFF`):** a single byte — `prgBank = value & 0x07`
+  (32 KB PRG bank, modulo PRG-bank count, max 128 KB PRG = 4 banks), `chrBank = (value >> 3) & 0x03`
+  (8 KB CHR bank, modulo CHR size). Bits 5-7 of the write value are unused on real BNROM hardware.
+  **Any** write in `$8000-$FFFF` fires the register — there is no address decode. Writes outside
+  that range (`$6000-$7FFF`, etc.) are silently dropped.
+- **NINA-001 register decode:** three discrete registers — no address-aliasing, only the exact
+  addresses matter:
+  - `$7FFD` → **PRG bank** (bit 0 only, max 64 KB PRG = 2 banks).
+  - `$7FFE` → **CHR bank 0** (4 KB window for PPU `$0000-$0FFF`, low 4 bits = bank, max 16 banks / 64 KB CHR).
+  - `$7FFF` → **CHR bank 1** (4 KB window for PPU `$1000-$1FFF`, low 4 bits = bank, max 16 banks / 64 KB CHR).
+  - `$6000-$7FFF` → **8 KB PRG-RAM** (read/write, no write-protect bit). Exposed via
+    `batteryBackedRam()`; `Nestlin.loadBatteryRam` gates `.sav` persistence on `Header.hasBattery`.
+  - Writes outside those four ranges (`$8000-$FFFF`, etc.) are silently dropped.
+- **CHR:** 8 KB banked from CHR ROM (BNROM) / two 4 KB windows banked from CHR ROM (NINA-001). A
+  0 KB-CHR dump gets 8 KB of writable CHR RAM shared across the whole `$0000-$1FFF` window (same
+  fallback as Mappers 2/3/7/11/33/71).
+- **Mirroring:** fixed from the iNES header (solder-pad on real hardware). No software-controlled
+  mirroring register. No IRQ on either variant.
+- **Implementation notes:**
+  - A single `Mapper34` class branches internally on a `Variant` enum chosen at construction time.
+    A "shared base class + subclass" pattern was considered and rejected — the two boards share
+    only the 32 KB PRG-window topology + CHR-RAM fallback + header-driven mirroring, and the
+    register protocol differs enough that the abstraction would have hidden more than it revealed.
+  - Save state version bumped 2 → 3 (issue #100 convention): the variant ordinal is written first
+    so `loadState` can refuse a BNROM save state being loaded into a NINA-001 instance (and vice
+    versa) instead of silently corrupting state. The check throws
+    `SaveState.IncompatibleSaveStateException` with a message naming both variants.
+  - NINA-001 PRG-RAM uses the same `batteryBackedRam()` convention as Mapper 10 / 16 / 153 — the
+    buffer is allocated unconditionally and the higher layer gates `.sav` persistence. NINA-001
+    boards in the wild don't carry a battery (Impossible Mission II has no save game), so the
+    buffer is typically volatile.
+- **Verification:**
+  - `Mapper34Test` covers both variants. For BNROM: dispatch, PRG low-3-bit decode + high-bit
+    mask, write-anywhere register (`$8000`/`$FFFF`/`$ABCD` all fire), all 4 PRG banks reachable,
+    PRG modulo wrap, CHR bits 3-4 decode + high-bit mask, CHR-RAM fallback, header mirroring,
+    `batteryBackedRam() == null`, save/load round-trip, and a save-state variant-mismatch
+    rejection assertion. For NINA-001: dispatch, `$7FFD` bit-0 + high-bit mask, `$7FFD`-only PRG
+    write target (writes elsewhere don't move the bank), `$7FFE`/`$7FFF` CHR-bank registers,
+    CHR window independence (write `$7FFE` does NOT affect `$1000-$1FFF`), 8 KB PRG-RAM at
+    `$6000-$7FFF` (read/write, `batteryDirty` toggle on write, `batteryBackedRam()` non-null,
+    no aliasing with PRG ROM), CHR-RAM fallback, header mirroring, save/load round-trip, and a
+    save-state variant-mismatch rejection assertion. Variant-detection tests cover NES 2.0
+    submapper 1/2 (submapper wins over heuristic even when the heuristic would disagree), the
+    plain iNES >8 KB / ≤8 KB heuristic, and the 0 CHR default. Snapshot tests cover both
+    `type` labels ("BNROM" vs "NINA-001") and the differing bank-key set.
+  - `Mapper34RegressionTest` (`@Tag("mesen")`, in the mesen lane via `MapperRegressionTestBase`)
+    covers both Deadly Towers (BNROM) and Impossible Mission II (NINA-001): the cheap
+    `assertBankSwitchesDuringBoot` guard for each (BNROM watches `prgBank`, NINA-001 watches
+    `chrBank1` because that's the window IM2 actively pages) plus the Mesen2 byte-compare at
+    frame 60 for each. ROMs are resolved from `S:/Media/Nintendo NES/Games/`; override with
+    `NESTLIN_DEADLY_TOWERS_ROM` / `NESTLIN_IMPOSSIBLE_MISSION_II_ROM`.
+  - **Real-ROM boot gate:** `./gradlew bootcheck -Prom=".../Deadly Towers (USA).nes" -Pframes=120`
+    and `./gradlew bootcheck -Prom=".../Impossible Mission II (USA) (Unl).nes" -Pframes=120`
+    both return **PASS**.
 
 ## Mapper 64 (Tengen RAMBO-1)
 **Status:** Working (Added 2026-06-07, issue #132)
