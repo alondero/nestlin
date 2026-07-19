@@ -8,7 +8,9 @@ import java.io.DataOutput
  * Mapper 3 (CNROM) - 8KB CHR bank switching. Used by Star Soldier,
  * Solomon's Key, Gradius and many other early commercial games.
  *
- * - Fixed PRG ROM at $8000-$FFFF (16 or 32KB)
+ * - Fixed PRG ROM at $8000-$FFFF (16 or 32KB). Real CNROM's address
+ *   decoder ignores A14 in 16KB mode, so $C000-$FFFF mirrors $8000-$BFFF;
+ *   the modulo below produces that naturally. See issue #231.
  * - CHR ROM switched in 8KB banks via a write to ANY address in the
  *   $8000-$FFFF window (the bank register is mirrored across the whole
  *   PRG space; some games — Star Soldier writes to $D030 — exploit this
@@ -32,8 +34,11 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
     var writeTrace: MutableList<Write>? = null
 
     override fun cpuRead(address: Int): Byte {
-        // PRG fixed at $8000-$FFFF (32KB)
-        return programRom[(address - 0x8000) and 0x7FFF]
+        // PRG fixed at $8000-$FFFF (16 or 32KB). Use `% programRom.size`
+        // rather than `and 0x7FFF` so 16KB images don't index past their
+        // ROM at $C000..$FFFF — the modulo wraps those offsets into the
+        // 16KB mirror, matching real CNROM behaviour. See issue #231.
+        return programRom[(address - 0x8000) % programRom.size]
     }
 
     override fun cpuWrite(address: Int, value: Byte) {

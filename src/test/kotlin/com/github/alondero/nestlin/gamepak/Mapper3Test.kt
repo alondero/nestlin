@@ -88,4 +88,62 @@ class Mapper3Test {
         m.cpuWrite(0xFFFF, 3.toSignedByte())
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(3))
     }
+
+    /**
+     * Regression for issue #231 — 16KB-PRG CNROM must not index past programRom
+     * when the CPU reads $C000-$FFFF. Real CNROM ignores A14 in 16KB mode, so
+     * $C000-$FFFF mirrors $8000-$BFFF. The previous implementation masked with
+     * `and 0x7FFF`, which produces offsets 0x4000..0x7FFF and throws
+     * ArrayIndexOutOfBoundsException against a 16KB array. Many homebrew and
+     * some licensed CNROM titles (e.g. Cybernoid's 32KB-PRG variant's sister
+     * boards) ship as 16KB; the latent crash only manifests for those.
+     */
+    @Test
+    fun `16KB PRG does not crash reading $C000-$FFFF (issue 231)`() {
+        // Real CNROM with 16KB PRG ignores A14, so $C000 mirrors $8000
+        // (offset 0). Stamp byte 0 of PRG with a sentinel and verify that
+        // a high-window read returns the SAME byte as a low-window read
+        // (rather than a zero-fill from a wrap-around sentinel return).
+        val prg = ByteArray(0x4000).also { it[0] = 0x5A.toByte() }
+        val gp = GamePak(buildIne(prg, makeStampedChr(banks8k = 1)))
+        val m = gp.createMapper() as Mapper3
+
+        // Pre-fix: cpuRead(0xC000) throws ArrayIndexOutOfBoundsException.
+        // Post-fix: returns the same byte as cpuRead(0x8000).
+        assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(0x5A))
+        assertThat(m.cpuRead(0xC000).toUnsignedInt(), equalTo(0x5A))
+    }
+
+    @Test
+    fun `16KB PRG mirrors $C000-$FFFF from $8000-$BFFF byte-for-byte (issue 231)`() {
+        // Stamp every byte of the 16KB PRG with its low byte so the mirror
+        // assertion can verify the full $8000-$FFFF range, not just one byte.
+        val prg = ByteArray(0x4000) { i -> (i and 0xFF).toByte() }
+        val gp = GamePak(buildIne(prg, makeStampedChr(banks8k = 1)))
+        val m = gp.createMapper() as Mapper3
+
+        for (addr in 0x8000..0xFFFF) {
+            val mirroredLowByte = (addr - 0x8000).toByte()  // A14 ignored
+            assertThat(
+                m.cpuRead(addr).toUnsignedInt(),
+                equalTo(mirroredLowByte.toUnsignedInt()),
+                message = { "16KB PRG mirror: addr=\$${addr.toString(16)}" },
+            )
+        }
+    }
+
+    @Test
+    fun `32KB PRG still works (sanity check the fix)`() {
+        val prg = ByteArray(0x8000) { i -> (i and 0xFF).toByte() }
+        val gp = GamePak(buildIne(prg, makeStampedChr(banks8k = 1)))
+        val m = gp.createMapper() as Mapper3
+
+        // No mirroring in 32KB mode — $C000-$FFFF reads the upper 16KB.
+        for (addr in 0x8000..0xFFFF) {
+            assertThat(
+                m.cpuRead(addr).toUnsignedInt(),
+                equalTo((addr - 0x8000).toByte().toUnsignedInt()),
+            )
+        }
+    }
 }
