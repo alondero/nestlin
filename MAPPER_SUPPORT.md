@@ -23,18 +23,17 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33,
   - **Consecutive-write ignore (issue #235, 2026-07-19):** the serial port ignores a data write that lands within one CPU cycle of the previous serial write (the 6502 read-modify-write dummy/real write pair), so only the first bit shifts. The bit-7 reset is never ignored (Shinsenden). Cycle stamped via `tickCpuCycle()`; matches Mesen2 `MMC1.h`.
 - **Banking Fix Applied (2026-04-15):** Mode 3 and mode 2 had inverted fixed/switchable assignments per MMC1 spec
 
-## Mapper 2 (CNROM/UNROM)
+## Mapper 2 (UxROM: UNROM/UOROM)
 **Status:** Working
 
-- **CNROM (original):** 8KB CHR bank switching, fixed PRG at $8000-$FFFF
-- **UNROM (commercial variant):** 16KB PRG bank switching at $8000-$BFFF via $8000-$FFFF writes
-  - Bits 0-2 of value written select the 16KB PRG bank (0-7 for 128KB ROM)
-  - $8000-$BFFF: switchable 16KB PRG bank window
-  - $C000-$FFFF: fixed to last PRG bank (bank 7 for 128KB, bank 3 for 64KB)
-  - Same CHR banking as CNROM (bits 0-1 for CHR bank selection)
-- **Games:** Castlevania, Contra, 1943, DuckTales, California Games (UNROM); original CNROM games
-- **PRG Banking:** $8000-$BFFF switchable, $C000-$FFFF fixed to last bank
-- **CHR Banking:** 8KB banks, switch via bits 0-1 of $8000-$9FFF writes
+- **PRG banking:** writes anywhere in `$8000-$FFFF` select the 16KB bank at `$8000-$BFFF`; `$C000-$FFFF` stays fixed to the last bank
+  - UNROM uses up to 3 bank bits (8 banks / 128KB)
+  - UOROM uses up to 4 bank bits (16 banks / 256KB)
+  - The full written value is retained and resolved modulo the available PRG-bank count, matching Mesen2 and safely wrapping oversized selectors
+- **CHR:** standard boards provide fixed 8KB CHR-RAM; the implementation retains its legacy optional banked CHR-ROM path for nonstandard dumps
+- **Mirroring:** fixed from the cartridge header
+- **Games:** Castlevania, Contra, 1943, DuckTales, California Games (UNROM); Paperboy 2 (UOROM)
+- **Issue #232 (2026-07-20):** removed the 3-bit-only PRG mask so all 16 UOROM banks are reachable; Paperboy 2's Mesen2 boot trace writes banks `$0E` and `$0D`, and its CHR RAM matches Mesen2 at frame 120
 
 ## Mapper 3 (NINA-003/006)
 **Status:** Working
