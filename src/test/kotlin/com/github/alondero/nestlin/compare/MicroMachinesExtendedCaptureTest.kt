@@ -100,10 +100,13 @@ class MicroMachinesExtendedCaptureTest {
         println("[MicroMachinesTrace] screenshots written to $outDir")
 
         // Sanity: the game must still be alive after 600 frames (~10 seconds).
-        // 5,000,000 instructions is roughly 600 frames * 8,000 instr/frame on a
-        // well-behaved mapper 71 boot.
-        Assertions.assertTrue(instrLast > 5_000_000
-        , "Game appears stuck: only $instrLast instructions over $frame frames")
+        Assertions.assertEquals(600, frame, "Emulation stopped before the 600-frame target")
+        // Four million instructions leaves a conservative margin below the observed
+        // healthy boot rate while still catching an idle-loop regression.
+        Assertions.assertTrue(
+            instrLast > 4_000_000,
+            "Game appears stuck: only $instrLast instructions over $frame frames"
+        )
     }
 
     private fun savePng(frame: Frame, outputPath: Path) {

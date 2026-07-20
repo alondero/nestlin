@@ -1,8 +1,11 @@
 package com.github.alondero.nestlin.compare
 
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
+import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 
 /**
@@ -30,10 +33,17 @@ class ScreenshotComparisonTest {
         )
     }
 
+    private fun resolveRom(romName: String): Path {
+        val root = System.getenv("NESTLIN_TESTROMS")?.let(Paths::get) ?: Paths.get("testroms")
+        val rom = root.resolve(romName).toAbsolutePath()
+        assumeTrue(Files.exists(rom), "ROM not found at $rom (set NESTLIN_TESTROMS to the ROM directory)")
+        return rom
+    }
+
     @ParameterizedTest(name = "{0} @ frame {1}")
     @MethodSource("data")
     fun compareFrames(romName: String, frameNumber: Int, threshold: Double) {
-        val romPath = Paths.get("testroms/$romName")
+        val romPath = resolveRom(romName)
         val reportsDir = Paths.get("build/reports/screenshot-diffs/$romName-frame-$frameNumber")
         val nestlinPng = reportsDir.resolve("nestlin.png")
         val mesen2Png = reportsDir.resolve("mesen2.png")

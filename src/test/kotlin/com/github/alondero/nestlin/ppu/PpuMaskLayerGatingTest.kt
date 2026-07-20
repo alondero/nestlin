@@ -69,6 +69,19 @@ class PpuMaskLayerGatingTest {
     }
 
     @Test
+    fun `background renders the rightmost pixel column`() {
+        val (memory, ppu) = setUpPpu()
+        memory.ppuAddressedMemory.mask.register = 0b0000_1010.toByte()
+
+        val frame = runOneFrame(ppu)
+
+        val expected = NesPalette.getRgb(bgColorIndex)
+        for (y in intArrayOf(0, 60, 120, 200, 239)) {
+            assertThat("pixel (255,$y)", frame.scanlines[y][255], equalTo(expected))
+        }
+    }
+
+    @Test
     fun `background-only mode does not render sprites`() {
         val (memory, ppu) = setUpPpu()
         // Put sprite 0 mid-screen (outside the left-8px clip zone): y=49 → visible on
