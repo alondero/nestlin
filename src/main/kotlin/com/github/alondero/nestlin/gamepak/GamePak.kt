@@ -162,6 +162,7 @@ class GamePak(data: ByteArray, displayName: String = "") {
         24 -> Mapper24(this)
         25 -> Mapper25(this)
         26 -> Mapper26(this)
+        30 -> Mapper30(this, header.submapper)
         33 -> Mapper33(this)
         34 -> Mapper34(this, header.submapper)
         64 -> Mapper64(this)
@@ -222,6 +223,16 @@ class Header(headerData: ByteArray) {
         (if (isNes20) ((headerData[8].toUnsignedInt() and 0x0F) shl 8) else 0)
     val mirroring: Mirroring = if (headerData[6].toUnsignedInt() and 0x01 == 0) Mirroring.HORIZONTAL else Mirroring.VERTICAL
     val hasBattery: Boolean = headerData[6].toUnsignedInt() and 0x02 != 0
+
+    /**
+     * Raw iNES / NES 2.0 byte 6, masked to its low 4 bits (the standard
+     * "flags" nibble: bit 0 mirroring, bit 1 battery, bit 2 trainer, bit 3
+     * four-screen). Higher bits live in [mapper]. Exposed because some
+     * boards (UNROM 512 = mapper 30) combine bits 0 and 3 to pick a mode
+     * from a single lookup; reaching into `headerData[6]` from every such
+     * mapper would repeat the same `toUnsignedInt()` dance.
+     */
+    val byte6Flags: Int = headerData[6].toUnsignedInt() and 0x0F
 
     /**
      * iNES byte 6 bit 3 (`0x08`) — the 4-screen VRAM flag. When set, the cartridge

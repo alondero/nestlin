@@ -1,6 +1,6 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33, 34, 64, 65, 66, 68, 69, 153, 206, 228.**
+Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30, 33, 34, 64, 65, 66, 68, 69, 153, 206, 228.**
 
 ## Mapper 0 (NROM)
 **Status:** Working
@@ -512,6 +512,42 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33,
     *Esper Dream 2* on the real ROM. Same pattern as Mapper 24:
     bank-moves-during-boot guard + byte-identical CHR compare vs Mesen2
     at frame 60.
+
+---
+
+## Mapper 30 (UNROM 512)
+**Status:** Working (Added 2026-07-20, issue #87)
+
+- **Games:** Lizard, The Meowtrix, and most modern NES homebrew. UNROM 512
+  is the de-facto modern standard for new NES releases because it covers
+  large PRG (up to 512 KiB) and bankable CHR-RAM in a single discrete-logic
+  board.
+- **Board:** RetroUSB UNROM 512 (discrete logic). No mapper ASIC.
+- **PRG banking:** writes to any address in `$8000-$FFFF` write one
+  register `~NCCPPPPP`. Bits 0-4 select the 16 KiB page at `$8000-$BFFF`
+  (up to 32 banks = 512 KiB). `$C000-$FFFF` is hard-wired to the LAST
+  16 KiB bank (the reset vector). Oversized bank numbers wrap modulo the
+  available bank count, matching Mesen2's `SelectPrgPage` semantics.
+- **CHR-RAM:** 32 KiB of CHR-RAM (no CHR-ROM variant). Bits 5-6 select
+  one of four 8 KiB pages at PPU `$0000-$1FFF`. CHR-RAM is fully writable.
+- **Mirroring decode (Mesen2 oracle):** the meaning of bit 7 depends on
+  iNES byte 6 bits 3,0 (`byte6Flags & 0x09`):
+  - `00` → fixed Horizontal (bit 7 ignored)
+  - `01` → fixed Vertical (bit 7 ignored)
+  - `10` → 1-screen switchable (bit 7 toggles ScreenA ↔ ScreenB)
+  - `11` → 4-screen (InfiniteNesLives variation: last 8 KiB of CHR-RAM is
+    mapped to PPU `$2000-$3EFF` via the nametable-override hook)
+  Note: the nesdev wiki lists `00`/Vertical and `01`/Horizontal, which
+  contradicts Mesen2's case-0=H, case-1=V. Mesen2 wins per the new-mapper
+  skill's "wiki prose vs Mesen: Mesen wins" rule.
+- **NES 2.0 submappers:** 0–4. Submapper 3 flips bit 7 between H and V
+  (not A and B). Submapper 4's LED register at `$8000-$BFFF` is not
+  emulated (Mesen2 also removes the LED range from the write decoder).
+  Battery-equipped submapper 0/1/4 would route `$8000-$BFFF` writes to a
+  flash SST39SF040 chip; we don't emulate flash, so battery saves do
+  nothing — matches the expectation of most homebrew titles.
+- **PRG-RAM:** none (`GetSaveRamSize() == 0` in Mesen2).
+- **IRQ / audio:** no scanline IRQ, no expansion audio.
 
 ---
 
