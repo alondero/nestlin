@@ -16,6 +16,9 @@ Subcommands:
     patch-namco108 <rom.nes>          emit a sibling COPY with the NO-INTRO
                                        Namco 108 header patch applied
                                        (mapper 4 -> mapper 206)
+    patch-sunsoft2 <rom.nes>          emit a sibling COPY with the NO-INTRO
+                                       Sunsoft-2 / Sunsoft-4 header patch
+                                       applied (mapper 4 -> mapper 68)
     vectors      <rom.nes>            NMI / RESET / IRQ vectors from the
                                        fixed last bank
     addr         <rom.nes> --cpu-addr 0xXXXX [--bank N|last]
@@ -89,6 +92,21 @@ KNOWN_MISLABEL_FAMILIES = {
             "family": "Namco 108 / DxROM",
             "known_titles": "Gauntlet, Ring King, RBI Baseball, Mappy-Land",
             "patch_recipe": "byte6 = (b6 & 0x0F) | 0xE0; byte7 = (b7 & 0x0F) | 0xC0",
+        },
+        {
+            # NO-INTRO labels these titles as MMC3 (mapper 4); the actual
+            # board is the Sunsoft-2 / Sunsoft-4 IC, which the NESdev wiki
+            # and Mesen2 (Sunsoft4.h) both call mapper 68. The patch flips
+            # the mapper bits in bytes 6/7 without touching mirroring or
+            # battery flags (low nibbles of byte 6) or format/reserved bits
+            # (low nibble of byte 7). See memory file
+            # 'mapper68-sunsoft4-impl-2026-06-27.md' for the implementation
+            # context (Mesen2 was the oracle over the original Sunsoft-2
+            # prose in issue #134).
+            "actual_mapper": 68,
+            "family": "Sunsoft-2 / Sunsoft-4 (NESdev mapper 68)",
+            "known_titles": "Valkyrie no Bouken (Legend of Valkyrie), Mito Koumon II",
+            "patch_recipe": "byte6 = (b6 & 0x0F) | 0x40; byte7 = (b7 & 0x0F) | 0x40",
         },
     ],
 }
@@ -606,6 +624,64 @@ def patch_namco108(src: str, dst: Optional[str] = None) -> Tuple[Path, dict]:
     return out, diff
 
 
+def patch_sunsoft2(src: str, dst: Optional[str] = None) -> Tuple[Path, dict]:
+    """Emit a patched COPY of a NO-INTRO Sunsoft-2 dump with mapper 68 header.
+
+    Returns (output_path, diff_dict) where diff_dict summarises what changed.
+    NEVER modifies the source file. If `dst` is None the output is written
+    next to the source with the suffix `.mapper68.nes`.
+
+    The patch recipe (issue #204, byte-accurate to Mesen2's expected mapper
+    68 header for Sunsoft-2 / Sunsoft-4 titles like The Legend of Valkyrie):
+        byte6 = (b6 & 0x0F) | 0x40
+        byte7 = (b7 & 0x0F) | 0x40
+
+    Distinct from Namco 108 (which OR's 0xE0 / 0xC0): mapper 68's high nibble
+    is 0x4 in BOTH bytes (mapper = (4<<0) | (4<<4) = 0x44), whereas Namco
+    108 uses 0xE0 / 0xC0 (mapper = 0xE | (0xC<<4) = 0xCE). Mirroring, battery,
+    and format bits (low nibbles of bytes 6/7) are preserved untouched.
+    """
+    p = Path(src)
+    if not p.is_file():
+        raise BadRomFile(f"Not a file: {src}")
+    with open(p, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < INES_HEADER_SIZE or data[0:4] != INES_MAGIC:
+        raise BadRomFile(f"{src} is not a valid iNES file")
+    if dst is None:
+        dst = str(p.with_name(p.stem + ".mapper68" + p.suffix))
+    out = Path(dst)
+
+    old_b6, old_b7 = data[6], data[7]
+    new_b6 = (old_b6 & 0x0F) | 0x40
+    new_b7 = (old_b7 & 0x0F) | 0x40
+    data[6] = new_b6
+    data[7] = new_b7
+
+    with open(out, "wb") as f:
+        f.write(data)
+
+    # Decode both before/after for the diff summary (mirrors patch_namco108).
+    original = bytearray(data)
+    original[6] = old_b6
+    original[7] = old_b7
+    before = decode_bytes(bytes(original), source=str(p), full_crc=True)
+    after = decode_bytes(bytes(data), source=str(out), full_crc=True)
+    diff = {
+        "source": str(p),
+        "output": str(out),
+        "byte6_before": f"0x{old_b6:02X}",
+        "byte6_after": f"0x{new_b6:02X}",
+        "byte7_before": f"0x{old_b7:02X}",
+        "byte7_after": f"0x{new_b7:02X}",
+        "mapper_before": before.mapper,
+        "mapper_after": after.mapper,
+        "crc32_before": f"0x{before.crc32:08X}",
+        "crc32_after": f"0x{after.crc32:08X}",
+    }
+    return out, diff
+
+
 # =============================================================================
 # CLI (argparse subcommands)
 # =============================================================================
@@ -632,6 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  rom_info.py info game.nes\n"
             "  rom_info.py scan S:\\\\Media\\\\Nintendo\\\\NES\\\\Games --mapper 33\n"
             "  rom_info.py patch-namco108 game.nes --out game.mapper206.nes\n"
+            "  rom_info.py patch-sunsoft2 game.nes --out game.mapper68.nes\n"
             "  rom_info.py vectors game.nes\n"
             "  rom_info.py addr game.nes --cpu-addr 0xEA40 --bank last\n"
         ),
@@ -656,6 +733,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Emit a sibling COPY with the NO-INTRO Namco 108 header patch (mapper 4 -> 206).")
     pp.add_argument("rom", help="Source .nes file (will NOT be modified).")
     pp.add_argument("--out", default=None, help="Output path (default: <stem>.mapper206.nes).")
+
+    # patch-sunsoft2
+    pp2 = sub.add_parser("patch-sunsoft2",
+                         help="Emit a sibling COPY with the NO-INTRO Sunsoft-2 / Sunsoft-4 header patch (mapper 4 -> 68).")
+    pp2.add_argument("rom", help="Source .nes file (will NOT be modified).")
+    pp2.add_argument("--out", default=None, help="Output path (default: <stem>.mapper68.nes).")
 
     # vectors
     pv = sub.add_parser("vectors", help="Read NMI/RESET/IRQ vectors from the fixed last bank.")
@@ -747,6 +830,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             _print_scan(scan_library(root, mapper=args.mapper), args.mapper)
         elif args.cmd == "patch-namco108":
             out, diff = patch_namco108(args.rom, args.out)
+            for k, v in diff.items():
+                print(f"{k}: {v}")
+        elif args.cmd == "patch-sunsoft2":
+            out, diff = patch_sunsoft2(args.rom, args.out)
             for k, v in diff.items():
                 print(f"{k}: {v}")
         elif args.cmd == "vectors":
