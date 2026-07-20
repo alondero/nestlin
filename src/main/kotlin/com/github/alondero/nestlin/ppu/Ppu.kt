@@ -538,8 +538,11 @@ class Ppu(var memory: Memory) {
             }
         }
 
-        // Increment horizontal position after fetching pattern data (NES dot 7 == Nestlin cycle 6)
-        if (cycle % 8 == 6 && (cycle in 0..255 || cycle in 320..335)) {
+        // Increment horizontal position after fetching pattern data (NES dot 7 == Nestlin cycle 6).
+        // Only during the visible fetch window (cycles 0-255); do NOT advance at 320-335 or
+        // preloadFirstTwoTiles at the next scanline's cycle 0 will read two tiles past t.coarseX
+        // (regression of the issue-#227 fix: SMB3 status bar reads "ORLD 1" instead of "WORLD 1").
+        if (cycle % 8 == 6 && cycle in 0..255) {
             with(memory.ppuAddressedMemory) {
                 vRamAddress.incrementHorizontalPosition()
             }
