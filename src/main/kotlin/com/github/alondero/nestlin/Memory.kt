@@ -249,6 +249,7 @@ class Memory : DmaPort {
             Mapper.MirroringMode.VERTICAL -> com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.VERTICAL
             Mapper.MirroringMode.ONE_SCREEN_LOWER -> com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.ONE_SCREEN_LOWER
             Mapper.MirroringMode.ONE_SCREEN_UPPER -> com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.ONE_SCREEN_UPPER
+            Mapper.MirroringMode.FOUR_SCREEN -> com.github.alondero.nestlin.ppu.PpuInternalMemory.Mirroring.FOUR_SCREEN
         }
     }
 

@@ -15,8 +15,9 @@ import java.io.DataOutput
  *     four 1 KB banks at $1000-$1FFF (MMC3 CHR mode 0). Bit 7 of the bank-select
  *     register is ignored.
  *   - Mirroring is hardwired from the iNES header — there is no $A000 mirroring
- *     register. (DRROM Gauntlet uses 4-screen, signalled via the header's 4-screen
- *     bit; the body of Namco 108 boards does not let the program change it.)
+ *     register. DRROM Gauntlet uses 4-screen VRAM, signalled via the header's
+ *     4-screen bit (byte 6 bit 3); that bit is honoured here (GH #105) and the
+ *     body of Namco 108 boards does not let the program change mirroring.
  *   - There is no scanline IRQ counter; the $C000/$C001/$E000/$E001 write pair is
  *     accepted but has no effect.
  *
@@ -152,6 +153,10 @@ class Mapper206(private val gamePak: GamePak) : Mapper {
 
     override fun currentMirroring(): Mapper.MirroringMode {
         // No $A000 mirroring register — driven entirely by the iNES header.
+        // DRROM Gauntlet wires 4-screen VRAM (header byte 6 bit 3); when that bit
+        // is set the board ignores the H/V bit and exposes four distinct
+        // nametables. See GH #105.
+        if (gamePak.header.fourScreen) return Mapper.MirroringMode.FOUR_SCREEN
         return when (gamePak.header.mirroring) {
             Header.Mirroring.HORIZONTAL -> Mapper.MirroringMode.HORIZONTAL
             Header.Mirroring.VERTICAL -> Mapper.MirroringMode.VERTICAL

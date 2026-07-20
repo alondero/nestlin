@@ -29,11 +29,12 @@ import java.nio.file.Path
 class SaveStateMigrationTest {
 
     @Test
-    fun `SaveState VERSION is 5 to record the new ports block`() {
+    fun `SaveState VERSION is 6 to record the optional 4-screen VRAM block`() {
         // Sanity check — fails fast if someone bumps or forgets the version
         // migration. The kdoc on SaveState and the load() version branch both
-        // hinge on this constant.
-        assertThat(SaveState.VERSION, equalTo(5))
+        // hinge on this constant. v6 (GH #105) adds two optional 1 KB nametables
+        // to the PPU block, written only when mirroring is FOUR_SCREEN.
+        assertThat(SaveState.VERSION, equalTo(6))
     }
 
     @Test
