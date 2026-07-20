@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.cpu.UnhandledOpcodeException
+import com.github.alondero.nestlin.testutil.TestRoms
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -16,7 +17,7 @@ class GoldenLogTest {
         System.setOut(PrintStream(nestlinOut))
         try {
             Nestlin().apply {
-                load(Paths.get("testroms/nestest.nes"))
+                loadBytes(TestRoms.nestestBytes())
                 powerReset()
                 enableLogging()
                 start()

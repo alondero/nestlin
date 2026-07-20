@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.Nestlin
+import com.github.alondero.nestlin.testutil.TestRoms
 import com.github.alondero.nestlin.toUnsignedInt
 import com.github.alondero.nestlin.ui.FrameListener
 import com.github.alondero.nestlin.ppu.Frame
@@ -163,14 +164,9 @@ class Mapper4Verification {
 
     @Test
     fun testNestestOutput() {
-        // Test nestest (mapper 0) to see baseline rendering
-        val romPath = Path.of("testroms/nestest.nes")
-        val romFile = Path.of(romPath.toString())
-        if (!java.nio.file.Files.exists(romFile)) {
-            System.err.println("[SKIP] nestest: ROM not found")
-            return
-        }
-
+        // Test nestest (mapper 0) to see baseline rendering. The ROM ships with the repo
+        // via TestRoms, so this test now actually runs on every invocation instead of
+        // silently early-returning for anyone whose CWD was not the project root (issue #21).
         val nestlin = Nestlin().apply {
             config.speedThrottlingEnabled = false
         }
@@ -195,7 +191,7 @@ class Mapper4Verification {
             }
         })
 
-        nestlin.load(romPath)
+        nestlin.loadBytes(TestRoms.nestestBytes())
         nestlin.powerReset()
         nestlin.start()
     }

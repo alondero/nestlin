@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.rewind
 
 import com.github.alondero.nestlin.Nestlin
+import com.github.alondero.nestlin.testutil.TestRoms
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -8,7 +9,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.nio.file.Paths
 
 /**
  * Integration tests for the rewind capture path (issue #52) wired through the real
@@ -20,7 +20,7 @@ class RewindCaptureTest {
 
     private fun newNestlinAtReset(): Nestlin {
         val nes = Nestlin()
-        nes.load(Paths.get("testroms/nestest.nes"))
+        nes.loadBytes(TestRoms.nestestBytes())
         nes.powerReset()
         return nes
     }
@@ -71,7 +71,7 @@ class RewindCaptureTest {
         val nes = newNestlinAtReset()
         runFrames(nes, 25)
         assertTrue(nes.rewindBufferSize() > 0)
-        nes.load(Paths.get("testroms/nestest.nes"))
+        nes.loadBytes(TestRoms.nestestBytes())
         assertThat("swapping ROMs drops the previous ROM's history",
             nes.rewindBufferSize(), equalTo(0))
     }

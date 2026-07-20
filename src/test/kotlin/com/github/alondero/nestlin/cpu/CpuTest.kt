@@ -2,6 +2,7 @@ package com.github.alondero.nestlin.cpu
 
 import com.github.alondero.nestlin.Memory
 import com.github.alondero.nestlin.gamepak.GamePak
+import com.github.alondero.nestlin.testutil.TestRoms
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
 import com.natpryce.hamkrest.assertion.assertThat
@@ -12,18 +13,15 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 
 class CpuTest {
 
     @Test
     fun startsNesTestRomInAutomationByProgramCounter0xC000() {
-        val path = Paths.get("testroms/nestest.nes")
-
         // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
         // the IRQ-check path reads it on every tick.
         val cpu = Cpu(Memory.createWithApu().first).apply {
-            this.currentGame = GamePak(Files.readAllBytes(path))
+            this.currentGame = GamePak(TestRoms.nestestBytes())
             this.reset()
         }
 

@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.ui
 
 import com.github.alondero.nestlin.Nestlin
+import com.github.alondero.nestlin.testutil.TestRoms
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -11,7 +12,6 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.nio.file.NoSuchFileException
 import javax.imageio.ImageIO
 
@@ -32,7 +32,7 @@ class SaveStateSlotManagerTest {
 
     private fun newNestlinAtReset(): Nestlin {
         val nes = Nestlin()
-        nes.load(Paths.get("testroms/nestest.nes"))
+        nes.loadBytes(TestRoms.nestestBytes())
         nes.powerReset()
         return nes
     }

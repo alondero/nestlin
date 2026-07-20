@@ -3,13 +3,13 @@ package com.github.alondero.nestlin.movie
 import com.github.alondero.nestlin.Controller.Button
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.file.load
+import com.github.alondero.nestlin.testutil.TestRoms
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
-import java.nio.file.Paths
 
 /**
  * End-to-end tests for the FM2 movie record/replay engine.
@@ -20,7 +20,10 @@ import java.nio.file.Paths
  */
 class MovieRoundTripTest {
 
-    private val romPath = Paths.get("testroms/nestest.nes")
+    // MoviePlayer.replay takes a Path (it computes the ROM's checksum then boots via
+    // Path.load(). GamePak). Use the classpath-derived temp path so this works from
+    // any working directory. See issue #21.
+    private val romPath = TestRoms.nestestPath()
 
     /** A deterministic, frame-varying input script so the recorded movie isn't a wall of all-zeros. */
     private fun scriptedInput(frame: Int): MovieInput {
