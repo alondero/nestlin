@@ -23,6 +23,19 @@ class PpuAddressedMemory : NmiSource {
     var address: Byte = 0                  // $2006
     var data: Byte = 0                     // $2007
 
+    /**
+     * Internal CPU-PPU data-bus "open-bus" decay (issue #227).
+     *
+     * $2002's low 5 bits are not backed by any register; on hardware they decay
+     * to whatever byte last appeared on the internal data bus. Every PPU write
+     * ($2000-$2007) updates this value, and $2002 reads pull the low 5 bits from
+     * here. Nestlin used to return status.register's low 5 bits — always zero —
+     * which is a deterministic but inaccurate value.
+     *
+     * Default 0: a cold-boot PPU has a 0-valued bus (no previous write).
+     */
+    var openBus: Byte = 0
+
     private var writeToggle = false
 
     val ppuInternalMemory = PpuInternalMemory()
@@ -104,6 +117,7 @@ class PpuAddressedMemory : NmiSource {
         scroll = 0
         address = 0
         data = 0
+        openBus = 0
 
         writeToggle = false
     }
@@ -176,7 +190,12 @@ class PpuAddressedMemory : NmiSource {
             1 -> mask.register
             2 -> {
                 writeToggle = false
-                val value = status.register
+                // Open-bus decay: bits 5-7 come from the status register (sprite
+                // overflow, sprite-0 hit, vblank); bits 0-4 come from the open-bus
+                // value (last byte written to any PPU register). Nestlin used to
+                // return the full status.register, leaving the low 5 bits always
+                // zero (issue #227).
+                val value = ((status.register.toInt() and 0xE0) or (openBus.toInt() and 0x1F)).toSignedByte()
                 status.clearVBlank()
                 // Reading $2002 also clears the NMI flag?
                 // NESdev: "Reading $2002... will also acknowledge the interrupt"
@@ -214,6 +233,10 @@ class PpuAddressedMemory : NmiSource {
 
     operator fun set(addr: Int, value: Byte) {
 //        println("Setting PPU Addressed data ${addr.toHexString()}, with ${value.toHexString()}")
+        // Every PPU write places the byte on the internal data bus. Subsequent
+        // reads of registers with undefined bits pull those bits from this open-bus
+        // value (issue #227). $2002 reads in particular use bits 0-4 from here.
+        openBus = value
         when (addr) {
             0 -> {
                 val previousNmiEnabled = controller.generateNmi()

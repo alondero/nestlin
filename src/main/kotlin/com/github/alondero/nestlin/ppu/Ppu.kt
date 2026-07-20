@@ -145,16 +145,21 @@ class Ppu(var memory: Memory) {
 
         if (renderingActive) {
             if (cycle == 0) {
-                // Copy horizontal scroll from temp register BEFORE preloading
-                with(memory.ppuAddressedMemory) {
-                    if (scanline in 0..239 || scanline == region.preRenderScanline) {
-                        vRamAddress.coarseXScroll = tempVRamAddress.coarseXScroll
-                        vRamAddress.horizontalNameTable = tempVRamAddress.horizontalNameTable
-                    }
-                }
                 // Pre-load the first two BG tiles for this scanline (reads pattern table 0/1
                 // depending on PPUCTRL bit 4 — drives A12 low for typical MMC3 setups).
                 preloadFirstTwoTiles()
+            }
+
+            // Horizontal scroll copy (v <- t) happens at NES dot 257 == Nestlin
+            // cycle 256 (issue #227). It used to fire at cycle 0 of the rendering
+            // line, which is one scanline late: a $2005/$2006 write during the
+            // sprite-fetch window (cycles 257..319 of the previous line) would be
+            // picked up for THIS scanline's BG fetch instead of the NEXT.
+            if (cycle == 256) {
+                with(memory.ppuAddressedMemory) {
+                    vRamAddress.coarseXScroll = tempVRamAddress.coarseXScroll
+                    vRamAddress.horizontalNameTable = tempVRamAddress.horizontalNameTable
+                }
             }
 
             // Sprite evaluation for the *next* scanline happens at NES dot 65. Nestlin's
@@ -318,14 +323,23 @@ class Ppu(var memory: Memory) {
      * Sprite evaluation: scan primary OAM, pick up to 8 sprites visible on the target scanline.
      * Stores their resolved tile-Y offset (with vertical-flip applied) in secondaryOam.
      * No pattern-table accesses occur here, so A12 is not affected.
+     *
+     * The hardware rotates the scan so it STARTS at the current OAMADDR (issue #227),
+     * not always at sprite 0. This is what games exploit for sprite-cycling flicker
+     * tricks (Galaga, Pac-Man, etc.) — the OAM byte read offset is preserved across
+     * the eval pass.
      */
     private fun evaluateSpritesForTargetScanline(target: Int) {
         secondaryOam.clear()
         val oam = memory.ppuAddressedMemory.objectAttributeMemory
         val spriteSize = memory.ppuAddressedMemory.controller.spriteSize()
         val spriteHeight = if (spriteSize == Control.SpriteSize.X_8_16) 16 else 8
+        // OAMADDR is a byte offset (4 bytes per sprite); divide by 4 to get the
+        // starting sprite index. The hardware scans OAM in rotated order from there.
+        val startIndex = (memory.ppuAddressedMemory.oamAddress.toUnsignedInt() shr 2) and 0x3F
 
-        for (i in 0 until 64) {
+        for (n in 0 until 64) {
+            val i = (startIndex + n) and 0x3F
             val s = oam.getSprite(i)
             val y = s.y
             // NES Y semantics: sprite at Y appears at scanlines Y+1 through Y+spriteHeight

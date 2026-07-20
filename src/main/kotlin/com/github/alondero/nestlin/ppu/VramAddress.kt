@@ -59,17 +59,24 @@ class VramAddress {
         fineYScroll++
 
         if (fineYScroll > 7) {
-            coarseYScroll++
             fineYScroll = 0
 
-            if (coarseYScroll > 29) {
-                // Y Scroll now out of bounds
-                if (coarseYScroll < 32) {
-                    //  Hasn't overflowed therefore switch vertical nametable
+            // Canonical loopy-register vertical-wrap algorithm (nesdev wiki):
+            // check coarseYScroll BEFORE incrementing. Only the 29 -> 0 transition
+            // toggles the vertical nametable; 31 -> 0 wraps silently. The 30 -> 31
+            // transition is a plain increment (no toggle, no reset) — the previous
+            // implementation toggled AND zeroed at 30, which is wrong.
+            when (coarseYScroll) {
+                29 -> {
+                    coarseYScroll = 0
                     verticalNameTable = !verticalNameTable
                 }
-
-                coarseYScroll = 0
+                31 -> {
+                    coarseYScroll = 0
+                }
+                else -> {
+                    coarseYScroll++
+                }
             }
         }
     }
