@@ -5,50 +5,46 @@ import java.io.DataInput
 import java.io.DataOutput
 
 /**
- * Mapper 2 (CNROM/UNROM) - CHR and PRG bank switching.
+ * Mapper 2 (UxROM: UNROM/UOROM) - 16KB PRG bank switching.
  *
- * CNROM cartridges have:
- * - Fixed PRG ROM at $8000-$FFFF
- * - CHR ROM switched in 8KB banks via $8000-$9FFF writes
- * - Fixed mirroring based on header
+ * - `$8000-$BFFF`: switchable 16KB PRG bank.
+ * - `$C000-$FFFF`: fixed to the last 16KB PRG bank.
+ * - UNROM boards expose up to 3 bank bits (128KB); UOROM exposes 4 (256KB).
+ * - Bank values wrap to the available PRG size, matching Mesen2's page mapping.
+ * - Mirroring is fixed by the cartridge header.
  *
- * UNROM (variant used by many commercial games like Castlevania, Contra):
- * - 16KB PRG bank switching at $8000-$BFFF via writes to $8000-$FFFF
- * - $C000-$FFFF fixed to last PRG bank (bank 7 for 128KB, bank 3 for 64KB)
- * - CHR banking: bits 0-2 of written value select bank
+ * Standard UxROM boards provide 8KB of CHR-RAM. The optional banked CHR-ROM
+ * path is retained for compatibility with existing nonstandard dumps.
  */
 class Mapper2(private val gamePak: GamePak) : Mapper {
 
     private val programRom = gamePak.programRom
     private val chrRom = gamePak.chrRom
-    // CNROM/UNROM: when CHR-ROM is empty, the chip exposes 8KB of CHR-RAM
-    // (some CNROM homebrew relies on this).
+    // UxROM exposes 8KB of CHR-RAM when the cart ships no CHR ROM.
     private val chrMemory: ChrMemory = ChrMemory.default(chrRom)
     private val prgBankCount = programRom.size / 0x4000
     private var chrBank = 0
-    // UNROM: $8000-$BFFF switchable, $C000-$FFFF fixed to last bank
+    // $8000-$BFFF switchable, $C000-$FFFF fixed to last bank.
     private var prgBank = (prgBankCount - 1).coerceAtLeast(1)
 
+    private fun prgByte(bankIndex: Int, windowBase: Int, address: Int): Byte {
+        return programRom[((bankIndex * 0x4000) + (address - windowBase)) % programRom.size]
+    }
+
     override fun cpuRead(address: Int): Byte {
-        return when {
-            address < 0x8000 -> 0
-            address < 0xC000 -> {
-                val bankOffset = prgBank * 0x4000
-                val offset = address - 0x8000
-                programRom[bankOffset + offset]
-            }
-            else -> {
-                val bankOffset = (prgBankCount - 1) * 0x4000
-                val offset = address - 0xC000
-                programRom[bankOffset + offset]
-            }
+        if (address < 0x8000) return 0
+        return if (address < 0xC000) {
+            prgByte(prgBank, 0x8000, address)
+        } else {
+            prgByte(prgBankCount - 1, 0xC000, address)
         }
     }
 
     override fun cpuWrite(address: Int, value: Byte) {
         if (address in 0x8000..0xFFFF) {
-            prgBank = value.toUnsignedInt() and 0x07
-            chrBank = (value.toUnsignedInt() shr 3) and 0x03
+            val v = value.toUnsignedInt()
+            prgBank = v
+            chrBank = (v shr 3) and 0x03
         }
     }
 
@@ -73,6 +69,15 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
             Header.Mirroring.VERTICAL -> Mapper.MirroringMode.VERTICAL
         }
     }
+
+    override fun snapshot(): MapperStateSnapshot = MapperStateSnapshot(
+        mapperId = 2,
+        type = "UxROM",
+        banks = mapOf("prgBank" to prgBank, "chrBank" to chrBank),
+        registers = emptyMap(),
+        irqState = null,
+        chrRam = chrMemory.snapshotBytes()
+    )
 
     override val saveStateVersion: Int = 2
 

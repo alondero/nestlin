@@ -2,6 +2,7 @@ package com.github.alondero.nestlin.compare
 
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.ppu.Frame
+import com.github.alondero.nestlin.testutil.failTest
 import com.github.alondero.nestlin.ui.FrameListener
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -140,17 +141,46 @@ abstract class MapperRegressionTestBase {
 
         println("$reportName frame $frame render-output: ${if (problems.isEmpty()) "MATCH" else "MISMATCH"}")
         if (problems.isNotEmpty()) {
-            // JUnit 5's fail(Supplier<String>) overload has a phantom <V> type
-            // variable Kotlin cannot infer for a multi-line string concat — bypass
-            // fail() and throw AssertionFailedError directly (that's what
-            // fail(String) does internally anyway).
             val failMessage = "Render output diverged from Mesen2 oracle:\n  " +
                 problems.joinToString("\n  ") +
                 (if (divergence.classifications.isNotEmpty())
                     "\nLIKELY CAUSE:\n  " + divergence.classifications.joinToString("\n  ")
                  else "") +
                 "\nSee: ${reportsDir.resolve("divergence-report.txt")}"
-            throw org.opentest4j.AssertionFailedError(failMessage)
+            failTest(failMessage)
         }
+    }
+
+    /**
+     * CHR-only Mesen2 oracle for games whose OAM is structurally incomparable
+     * between captures — for example, an NMI handler rewrites it between frame
+     * boundaries, or unused sprite bytes retain different power-on values. The
+     * full snapshot + diff still go to
+     * `build/reports/state-diffs/<reportName>-frame-<frame>/` alongside the
+     * focused assertion.
+     */
+    protected fun assertChrMatchesMesen2(rom: Path, frame: Int, reportName: String) {
+        val reportsDir = Paths.get("build/reports/state-diffs/$reportName-frame-$frame")
+
+        val nestlinState = NestlinStateCapturer.captureState(rom, frame)
+        val mesen2State = Mesen2StateCapturer.captureState(rom, frame)
+
+        Files.createDirectories(reportsDir)
+        val fullDiff = StateComparator.compare(nestlinState, mesen2State)
+        StateComparator.writeReport(fullDiff, nestlinState, mesen2State, reportsDir.resolve("diff-report.txt"))
+        DivergenceLocalizer.report(nestlinState, mesen2State, reportsDir)
+
+        val chrDiffs = nestlinState.chr.indices.filter {
+            nestlinState.chr[it] != mesen2State.chr[it]
+        }
+        if (chrDiffs.isNotEmpty()) {
+            val sample = chrDiffs.take(8).joinToString(", ") {
+                "[0x%04X] N=0x%02X M=0x%02X".format(it, nestlinState.chr[it], mesen2State.chr[it])
+            }
+            val diffPath = reportsDir.resolve("diff-report.txt").toString()
+            val message = "CHR diverged from Mesen2 oracle in " + chrDiffs.size + " byte(s): " + sample + " | " + diffPath
+            failTest(message)
+        }
+        println("$reportName frame $frame CHR: MATCH")
     }
 }
