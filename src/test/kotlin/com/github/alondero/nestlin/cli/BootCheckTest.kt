@@ -1,12 +1,12 @@
 package com.github.alondero.nestlin.cli
 
+import com.github.alondero.nestlin.testutil.TestRoms
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
-import java.nio.file.Paths
 
 /**
  * Tests for the oracle-free `bootcheck` verdict. The grading branches are exercised purely
@@ -87,7 +87,7 @@ class BootCheckTest {
 
     @Test
     fun `boots nestest end-to-end and reports a verdict`() {
-        val rom = Paths.get("testroms/nestest.nes")
+        val rom = TestRoms.nestestPath()
         assumeTrue(Files.exists(rom), "nestest.nes not found at $rom")
 
         val out = StringBuilder()

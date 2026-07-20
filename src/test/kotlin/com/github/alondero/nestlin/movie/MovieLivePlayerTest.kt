@@ -3,10 +3,10 @@ package com.github.alondero.nestlin.movie
 import com.github.alondero.nestlin.Controller
 import com.github.alondero.nestlin.Controller.Button
 import com.github.alondero.nestlin.Nestlin
+import com.github.alondero.nestlin.testutil.TestRoms
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.nio.file.Paths
 
 /**
  * Tests for [MovieLivePlayer] — the real-time variant of the movie replay engine.
@@ -18,12 +18,10 @@ import java.nio.file.Paths
  */
 class MovieLivePlayerTest {
 
-    private val romPath = Paths.get("testroms/nestest.nes")
-
     private fun freshNestlin(): Nestlin =
         Nestlin().apply {
             config.speedThrottlingEnabled = false
-            load(romPath)
+            loadBytes(TestRoms.nestestBytes())
         }.also { it.powerReset() }
 
     @Test

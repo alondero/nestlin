@@ -1,15 +1,15 @@
 package com.github.alondero.nestlin.compare
 
+import com.github.alondero.nestlin.testutil.TestRoms
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
-import java.nio.file.Paths
 
 @org.junit.jupiter.api.Tag("mesen")
 class Mesen2StateCapturerSmokeTest {
     @Test
     fun capturesNestestStateViaTestRunner() {
         assumeTrue(Mesen2StateCapturer.isMesen2Available(), "Mesen2 not available")
-        val rom = Paths.get("testroms/nestest.nes")
+        val rom = TestRoms.nestestPath()
         val state = Mesen2StateCapturer.captureState(rom, 60)
         println("Mesen2 nestest.nes frame 60: PC=0x${state.cpu.pc.toString(16).uppercase()} " +
             "A=0x${state.cpu.a.toString(16).uppercase()} " +

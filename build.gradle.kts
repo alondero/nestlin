@@ -203,8 +203,11 @@ tasks.register("verifyTestEnv") {
         println("mesen2.path property:       ${mesen2Prop ?: "(not set)"}")
         println("Resolved Mesen2 path:       ${resolvedFile.absolutePath}")
         println("Mesen2 exists:              ${resolvedFile.exists()}")
-        println("testroms/nestest.nes:       ${file("testroms/nestest.nes").exists()}")
-        println("Parent testroms dir:        ${file("X:/src/nestlin/testroms").exists()} (X:/src/nestlin/testroms)")
+        // The bundled nestest.nes now ships from src/test/resources/ via the standard Gradle
+        // test-classpath contract (GH #21). The earlier path was CWD-relative and broke any
+        // JVM that didn't start with the repo as user.dir.
+        println("nestest.nes bundled ROM:    ${file("src/test/resources/nestest.nes").exists()} (src/test/resources/nestest.nes)")
+        println("External ROMs dir:          ${file("X:/src/nestlin/testroms").exists()} (X:/src/nestlin/testroms — parent-only, not in git)")
         println("NESTLIN_REQUIRE_MESEN2 set: ${!System.getenv("NESTLIN_REQUIRE_MESEN2").isNullOrBlank()}")
         println()
         println("Reminder: the Gradle daemon may hold STALE env vars from a previous shell.")

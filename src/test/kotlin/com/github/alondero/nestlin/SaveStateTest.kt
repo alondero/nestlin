@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin
 
+import com.github.alondero.nestlin.testutil.TestRoms
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -8,7 +9,6 @@ import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.nio.file.Paths
 
 /**
  * Round-trip tests for the save state subsystem.
@@ -23,7 +23,7 @@ class SaveStateTest {
 
     private fun newNestlinAtReset(): Nestlin {
         val nes = Nestlin()
-        nes.load(Paths.get("testroms/nestest.nes"))
+        nes.loadBytes(TestRoms.nestestBytes())
         nes.powerReset()
         return nes
     }

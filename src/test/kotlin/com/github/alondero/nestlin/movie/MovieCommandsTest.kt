@@ -2,12 +2,11 @@ package com.github.alondero.nestlin.movie
 
 import com.github.alondero.nestlin.Controller.Button
 import com.github.alondero.nestlin.Nestlin
-import com.github.alondero.nestlin.file.load
+import com.github.alondero.nestlin.testutil.TestRoms
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.containsSubstring
 import com.natpryce.hamkrest.equalTo
 import org.junit.jupiter.api.Test
-import java.nio.file.Paths
 
 /**
  * Regression tests for issue #125: the FM2 movie replayer must honour the per-frame
@@ -25,12 +24,10 @@ import java.nio.file.Paths
  */
 class MovieCommandsTest {
 
-    private val romPath = Paths.get("testroms/nestest.nes")
-
     private fun freshNestlin(): Nestlin =
         Nestlin().apply {
             config.speedThrottlingEnabled = false
-            load(romPath)
+            loadBytes(TestRoms.nestestBytes())
         }.also { it.powerReset() }
 
     // ------------------------------------------------------------------------------------------- //
