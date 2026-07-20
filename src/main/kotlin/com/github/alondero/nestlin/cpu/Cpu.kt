@@ -51,6 +51,11 @@ class Cpu(
     private var _nmiCount = 0
     private var _irqCount = 0
     private var _pageBoundaryFlag = false
+    // Cumulative CPU cycles elapsed since the last reset. Incremented at the
+    // END of every tick (issue #17 / GoldenLogTest cycle comparison). The
+    // Logger multiplies by 3 for nestest.log's PPU-cycle format; other
+    // consumers (frame counters, audio scheduling) can read the raw CPU count.
+    private var _cycleCount = 0
     private val _registers = Registers()
     private val _processorStatus = ProcessorStatus()
     private var _idle = false
@@ -95,6 +100,17 @@ class Cpu(
     /** Internal mutator for the IRQ diagnostic counter. Not exposed via a public setter. */
     internal fun incrementIrqCount() { _irqCount++ }
 
+    /**
+     * Cumulative CPU cycles elapsed since the last [reset] / [softReset].
+     * Incremented at the end of every [tick]. The trace [Logger] multiplies
+     * this by 3 to produce nestest.log's PPU-cycle column; the raw CPU count
+     * is exposed here for any consumer that wants CPU-cycle timing. Not part
+     * of save-state serialisation — it's emulation telemetry, not architected
+     * state. See issue #17.
+     */
+    val cycleCount: Int
+        get() = _cycleCount
+
     fun getCurrentPc(): Short = registers.programCounter
     // TODO: Development-only feature - Remove undocumented opcode logging once emulator stability is proven
     // This allows us to identify missing opcodes without crashing, useful for game compatibility debugging
@@ -133,6 +149,7 @@ class Cpu(
         _workCyclesLeft = 0
         _nmiCount = 0
         _irqCount = 0
+        _cycleCount = 0
         currentGame?.let {
             memory.readCartridge(it)
             _registers.initialise(memory)
@@ -172,72 +189,93 @@ class Cpu(
         // per CPU cycle, before instruction/interrupt processing for this cycle.
         memory.mapper?.tickCpuCycle()
 
-        if (readyForNextInstruction()) {
-            // Ask the controller what (if anything) to dispatch RIGHT NOW.
-            // The controller owns the 1-instruction NMI latency and the NMI>IRQ
-            // ordering — see InterruptController for the contract. Idle is
-            // passed in so a parked CPU (spin loop) skips the latency, which is
-            // what breaks the loop.
-            when (interruptController.pendingInterrupt(idle, processorStatus.interruptDisable)) {
-                InterruptKind.NMI -> {
-                    interruptController.acknowledge(InterruptKind.NMI)
-                    dispatchInterrupt(InterruptKind.NMI, memory[0xFFFA, 0xFFFB])
-                    // An interrupt redirects the PC, breaking any spin loop.
-                    idle = false
-                    workCyclesLeft--
-                    return
+        try {
+            if (readyForNextInstruction()) {
+                // Ask the controller what (if anything) to dispatch RIGHT NOW.
+                // The controller owns the 1-instruction NMI latency and the NMI>IRQ
+                // ordering — see InterruptController for the contract. Idle is
+                // passed in so a parked CPU (spin loop) skips the latency, which is
+                // what breaks the loop.
+                when (interruptController.pendingInterrupt(idle, processorStatus.interruptDisable)) {
+                    InterruptKind.NMI -> {
+                        interruptController.acknowledge(InterruptKind.NMI)
+                        dispatchInterrupt(InterruptKind.NMI, memory[0xFFFA, 0xFFFB])
+                        // An interrupt redirects the PC, breaking any spin loop.
+                        idle = false
+                        workCyclesLeft--
+                        return
+                    }
+                    InterruptKind.IRQ -> {
+                        interruptController.acknowledge(InterruptKind.IRQ)
+                        dispatchInterrupt(InterruptKind.IRQ, memory[0xFFFE, 0xFFFF])
+                        idle = false
+                        workCyclesLeft--
+                        return
+                    }
+                    null -> {
+                        // No interrupt pending — fall through to opcode dispatch
+                        // (or stay parked if idle).
+                    }
                 }
-                InterruptKind.IRQ -> {
-                    interruptController.acknowledge(InterruptKind.IRQ)
-                    dispatchInterrupt(InterruptKind.IRQ, memory[0xFFFE, 0xFFFF])
-                    idle = false
-                    workCyclesLeft--
-                    return
-                }
-                null -> {
-                    // No interrupt pending — fall through to opcode dispatch
-                    // (or stay parked if idle).
-                }
-            }
 
-            // The CPU has branched/jumped to its own address — a spin loop that
-            // can only be broken by an interrupt (handled above). Re-decoding the
-            // same instruction every cycle just burns the host CPU, so park here.
-            // workCyclesLeft stays at 0 so the interrupt checks keep running each
-            // tick, and the PPU/APU keep advancing in the main loop to deliver one.
-            if (idle) return
+                // The CPU has branched/jumped to its own address — a spin loop that
+                // can only be broken by an interrupt (handled above). Re-decoding the
+                // same instruction every cycle just burns the host CPU, so park here.
+                // workCyclesLeft stays at 0 so the interrupt checks keep running each
+                // tick, and the PPU/APU keep advancing in the main loop to deliver one.
+                if (idle) return
 
-            val initialPC = registers.programCounter
-            val opcodeVal = readByteAtPC().toUnsignedInt()
-            if (traceAfterVBlank && instructionCount < 50) {
-                println("[CPU] PC=$${String.format("%04X", initialPC.toInt())}, opcode=$${String.format("%02X", opcodeVal)}")
-            }
-            instructionCount++
-
-            // Record instruction trace if enabled
-            instructionTrace?.let { trace ->
-                if (maxTraceInstructions <= 0 || trace.size < maxTraceInstructions) {
-                    trace.add(Pair(initialPC.toUnsignedInt(), opcodeVal))
+                val initialPC = registers.programCounter
+                val opcodeVal = readByteAtPC().toUnsignedInt()
+                if (traceAfterVBlank && instructionCount < 50) {
+                    println("[CPU] PC=$${String.format("%04X", initialPC.toInt())}, opcode=$${String.format("%02X", opcodeVal)}")
                 }
-            }
+                instructionCount++
 
-            opcodes[opcodeVal]?.also {
-                logger?.cpuTick(initialPC, opcodeVal, this)
-                it.evaluate(this)
-            } ?: run {
-                // For test ROMs, throw exception to maintain test compatibility
-                // For regular games, log and treat as 2-cycle NOP
-                // TODO: Development-only feature - Remove this fallback once opcode coverage is complete
-                if (currentGame?.isTestRom() == true) {
-                    throw UnhandledOpcodeException(opcodeVal)
-                } else {
-                    logUndocumentedOpcode(opcodeVal, initialPC)
-                    workCyclesLeft = 2
+                // Record instruction trace if enabled
+                instructionTrace?.let { trace ->
+                    if (maxTraceInstructions <= 0 || trace.size < maxTraceInstructions) {
+                        trace.add(Pair(initialPC.toUnsignedInt(), opcodeVal))
+                    }
                 }
-            }
+
+                opcodes[opcodeVal]?.also {
+                    // Reset pageBoundaryFlag before each opcode's addressing
+                    // mode runs. The flag is write-only from the
+                    // Addressing class's perspective: an indexed mode may
+                    // set it to true if the effective address crosses a
+                    // page; non-indexed modes leave it as-is. Without this
+                    // reset, a +1 cycle bonus from a previous indexed
+                    // instruction would leak into a subsequent
+                    // non-indexed one (e.g. CMP #imm right after LDA
+                    // ($zp),Y with page cross). Issue #17 / #172.
+                    pageBoundaryFlag = false
+                    logger?.cpuTick(initialPC, opcodeVal, this)
+                    it.evaluate(this)
+                } ?: run {
+                    // For test ROMs, throw exception to maintain test compatibility
+                    // For regular games, log and treat as 2-cycle NOP
+                    // TODO: Development-only feature - Remove this fallback once opcode coverage is complete
+                    if (currentGame?.isTestRom() == true) {
+                        throw UnhandledOpcodeException(opcodeVal)
+                    } else {
+                        logUndocumentedOpcode(opcodeVal, initialPC)
+                        workCyclesLeft = 2
+                    }
+                }
         }
 
         if (workCyclesLeft > 0) workCyclesLeft--
+        } finally {
+            // Bump the cumulative CPU cycle counter exactly once per tick.
+            // The `try { ... } finally { ... }` ensures the increment runs
+            // on every code path — including the early `return` after an
+            // NMI/IRQ dispatch, and an uncaught `UnhandledOpcodeException`
+            // from a test ROM. Without this, the cycle counter would stall
+            // mid-frame and the trace would diverge from nestest.log.
+            // Issue #17 / GoldenLogTest cycle comparison.
+            _cycleCount++
+        }
     }
 
     /**

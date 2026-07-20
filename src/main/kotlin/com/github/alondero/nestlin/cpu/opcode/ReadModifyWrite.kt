@@ -56,7 +56,9 @@ class MemoryShiftRotate(
         cpu.memory[addr] = result
         cpu.processorStatus.carry = newCarry
         cpu.processorStatus.resolveZeroAndNegativeFlags(result)
-        cpu.workCyclesLeft = cycles
+        // Issue #17 / #172: +1 cycle on page cross for abs,X (only indexed
+        // RMW variant — zp,X is zero-page, so no page can be crossed).
+        cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -79,6 +81,8 @@ class MemoryIncDec(
         val result = ((original + delta) and 0xFF).toSignedByte()
         cpu.memory[addr] = result
         cpu.processorStatus.resolveZeroAndNegativeFlags(result)
-        cpu.workCyclesLeft = cycles
+        // INC/DEC abs,X is the only indexed variant — zp,X is zero-page,
+        // so the page-cross flag only fires for abs,X.
+        cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }

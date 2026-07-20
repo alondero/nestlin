@@ -81,7 +81,6 @@ data class ZeroPage(val x: Boolean = false, val y: Boolean = false) : Addressing
  * Optionally indexed by X or Y (added in 16-bit space, then masked to
  * 16 bits — real-6502 behaviour).
  * Cycles: abs=4, abs,X=4 (+1 on page cross), abs,Y=4 (+1 on page cross).
- * Page-cross +1 cycle is out of scope here (issue #172).
  *
  * **Issue #207 quirk fix.** The original `absolute()` (value-returning)
  * masked the indexed address to 16 bits, but `absoluteAdr()`
@@ -91,6 +90,12 @@ data class ZeroPage(val x: Boolean = false, val y: Boolean = false) : Addressing
  * `set` (out-of-range returns 0 / no-op). Real 6502 wraps to low
  * memory. Now [address] consistently masks to 16 bits, matching
  * hardware and aligning with [value].
+ *
+ * **Page-cross +1 cycle (issue #17 / issue #172).** When the indexed
+ * address lands in a different high-byte page than the base, sets
+ * `cpu.pageBoundaryFlag` so the calling Opcode can add 1 cycle. The
+ * +1 lives on the Opcode subclass (not the Addressing class) so the
+ * Addressing stays stateless across ticks.
  */
 data class Absolute(val x: Boolean = false, val y: Boolean = false) : Addressing() {
     override val isIndexed: Boolean get() = x || y
@@ -102,7 +107,11 @@ data class Absolute(val x: Boolean = false, val y: Boolean = false) : Addressing
         val raw = if (x) base + cpu.registers.indexX.toUnsignedInt()
                   else if (y) base + cpu.registers.indexY.toUnsignedInt()
                   else base
-        return raw and 0xFFFF
+        val effective = raw and 0xFFFF
+        if ((x || y) && (effective and 0xFF00) != (base and 0xFF00)) {
+            cpu.pageBoundaryFlag = true
+        }
+        return effective
     }
 }
 
@@ -110,6 +119,9 @@ data class Absolute(val x: Boolean = false, val y: Boolean = false) : Addressing
  * Indexed indirect X: operand is a zero-page address, indexed by X with
  * zero-page wrap; the 16-bit pointer at the wrapped address is the target.
  * Mode: `($xx,X)`  Cycles: 6.
+ *
+ * No page-cross penalty applies — the index step happens within the zero
+ * page, and the resulting pointer is dereferenced as a single 16-bit read.
  */
 object IndirectX : Addressing() {
     override val isIndexed: Boolean get() = true
@@ -128,6 +140,12 @@ object IndirectX : Addressing() {
  * Indirect indexed Y: 16-bit pointer at the operand zero-page address,
  * then add Y in 16-bit space.
  * Mode: `($xx),Y`  Cycles: 5 (+1 on page cross).
+ *
+ * The 6502 takes one extra cycle when the indexed address lands in a
+ * different page than the base pointer — i.e. when `(base + Y) >> 8`
+ * differs from `base >> 8`. Surfaces as a GoldenLogTest cycle mismatch
+ * until issue #172's page-cross accounting is wired through (issue #17
+ * unblocks the cycle comparison that surfaces this gap).
  */
 object IndirectY : Addressing() {
     override val isIndexed: Boolean get() = true
@@ -138,6 +156,10 @@ object IndirectY : Addressing() {
         val lo = cpu.memory[zp].toUnsignedInt()
         val hi = cpu.memory[(zp + 1) and 0xFF].toUnsignedInt()
         val base = lo or (hi shl 8)
-        return (base + cpu.registers.indexY.toUnsignedInt()) and 0xFFFF
+        val effective = (base + cpu.registers.indexY.toUnsignedInt()) and 0xFFFF
+        if ((effective and 0xFF00) != (base and 0xFF00)) {
+            cpu.pageBoundaryFlag = true
+        }
+        return effective
     }
 }

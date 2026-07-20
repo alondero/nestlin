@@ -23,6 +23,8 @@ class Logic(
         cpu.registers.accumulator = op(acc, mem).toSignedByte().apply {
             cpu.processorStatus.resolveZeroAndNegativeFlags(this)
         }
-        cpu.workCyclesLeft = cycles
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y. AND / ORA / EOR use all three indexed variants.
+        cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
