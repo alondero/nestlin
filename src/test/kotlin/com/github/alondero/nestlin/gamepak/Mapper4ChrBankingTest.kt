@@ -110,4 +110,89 @@ class Mapper4ChrBankingTest {
         mmc3Write(mapper, 0x80 or 1, 185)
         assertThat(mapper.ppuRead(0x1800).toUnsignedInt(), equalTo(184))
     }
+
+    // ---- Issue #98: latent crash on 1-bank (8KB) PRG ROM ----
+
+    /**
+     * Build a valid iNES GamePak then shrink [Mapper4.programRom] to 8KB via
+     * reflection so `prgBankCount == 1`. This is the only path to exercise the
+     * `(prgBankCount - 2)` defensive branch in [Mapper4.cpuRead] — the normal
+     * GamePak constructor rejects iNES byte 4 = 0 (GH #212: zero-PRG dump
+     * protection), so an 8KB programRom cannot be created through the public
+     * API. The smallest valid iNES PRG is 16KB (byte 4 = 1), which gives
+     * `prgBankCount = 2` and never trips the bug.
+     *
+     * Pre-fix this threw `ArrayIndexOutOfBoundsException`: with prgBankCount = 1
+     * the fixed-bank formula `prgBankCount - 2` is -1, and the array index
+     * `(-1 * 0x2000 + offset) % programRom.size` produces a negative remainder
+     * (Kotlin's `%` is sign-of-dividend) that is out of bounds. The fix mirrors
+     * Mapper206: wrap the index with `coerceAtLeast(0)`.
+     */
+    private fun mapper4WithOneBankPrg(): Mapper4 {
+        val header = ByteArray(16).apply {
+            this[0] = 'N'.code.toByte(); this[1] = 'E'.code.toByte()
+            this[2] = 'S'.code.toByte(); this[3] = 0x1A.toByte()
+            this[4] = 1                            // 1 × 16KB PRG (minimum allowed)
+            this[5] = 1                            // 1 × 8KB CHR
+            this[6] = (4 shl 4).toByte()           // mapper 4, low nibble
+            this[7] = 0                            // mapper 4, high nibble
+        }
+        // 16KB PRG + 8KB CHR — GamePak will accept this. We then replace
+        // Mapper4.programRom with an 8KB array to force prgBankCount = 1.
+        val gp = GamePak(header + ByteArray(0x4000) + ByteArray(0x2000))
+        val mapper = Mapper4(gp)
+
+        val programRomField = Mapper4::class.java.getDeclaredField("programRom")
+        programRomField.isAccessible = true
+        programRomField.set(mapper, ByteArray(0x2000))
+
+        val prgBankCountField = Mapper4::class.java.getDeclaredField("prgBankCount")
+        prgBankCountField.isAccessible = true
+        prgBankCountField.setInt(mapper, 1)
+
+        return mapper
+    }
+
+    @Test
+    fun `1-bank PRG does not throw on cpuRead of 8000 and A000 windows`() {
+        // The switchable windows (R6 at $8000, R7 at $A000) don't reference
+        // prgBankCount, so they were never broken — but the issue's test plan
+        // explicitly asks we cover them too, since they're part of the same
+        // defense-in-depth sweep.
+        val mapper = mapper4WithOneBankPrg()
+        mapper.cpuRead(0x8000)
+        mapper.cpuRead(0x9FFF)
+        mapper.cpuRead(0xA000)
+        mapper.cpuRead(0xBFFF)
+    }
+
+    @Test
+    fun `1-bank PRG does not throw on cpuRead of C000 window in prgMode 0`() {
+        // $C000 with prgMode = 0: bank = (prgBankCount - 2) = -1 → CRASH pre-fix.
+        val mapper = mapper4WithOneBankPrg()
+        // Default prgMode is false (constructor). The fixed-bank path is the
+        // one that exercises prgBankCount - 2.
+        mapper.cpuRead(0xC000)
+        mapper.cpuRead(0xDFFF)
+    }
+
+    @Test
+    fun `1-bank PRG does not throw on cpuRead of 8000 window in prgMode 1`() {
+        // $8000 with prgMode = 1: bank = (prgBankCount - 2) = -1 → CRASH pre-fix.
+        val mapper = mapper4WithOneBankPrg()
+        // Set prgMode via the standard $8000 bank-select write.
+        mapper.cpuWrite(0x8000, 0x40.toSignedByte())    // bankSelect=0, prgMode=1
+        mapper.cpuRead(0x8000)
+        mapper.cpuRead(0x9FFF)
+    }
+
+    @Test
+    fun `1-bank PRG does not throw on cpuRead of E000 window`() {
+        // $E000 uses (prgBankCount - 1), which is 0 when prgBankCount = 1 —
+        // so this window was already safe. Listed in the issue's test plan
+        // for completeness; we assert it stays non-throwing.
+        val mapper = mapper4WithOneBankPrg()
+        mapper.cpuRead(0xE000)
+        mapper.cpuRead(0xFFFF)
+    }
 }
