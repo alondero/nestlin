@@ -58,19 +58,25 @@ class GoldenLogTest {
                 .filter { !(it == 5 && currLogTokens[it].contains("=")) }
                 .filter { !(it == 6 && currLogTokens[1].equals("29")) }
 
+        // nestest.log columns are fixed-width — see the format string in
+        // Logger.cpuTick(). The cycle column lives at positions 74..80:
+        // "CYC:" at 74-77 and a 3-char right-aligned value at 78-80.
+        // nestest's largest cycle value is well under 1000, so 3 chars
+        // never overflows for this log; if the value ever grows, switch
+        // to a numeric comparison instead of a string one.
         private fun split(line: String) = arrayOf(
-                line.substring(0, 4),
-                line.substring(6, 8),
-                line.substring(9, 11),
-                line.substring(12, 14),
-                line.substring(16, 19),
-                line.substring(20, 48),
-                line.substring(50, 52),
-                line.substring(55, 57),
-                line.substring(60, 62),
-                line.substring(65, 67),
-                line.substring(71, 73))
-                // Ignore cycles for now
+                line.substring(0, 4),    // PC
+                line.substring(6, 8),    // O# (opcode byte)
+                line.substring(9, 11),   // M1 (operand byte 1)
+                line.substring(12, 14),  // M2 (operand byte 2)
+                line.substring(16, 19),  // M3 (operand byte 3)
+                line.substring(20, 48),  // OP (mnemonic display)
+                line.substring(50, 52),  // A
+                line.substring(55, 57),  // X
+                line.substring(60, 62),  // Y
+                line.substring(65, 67),  // P
+                line.substring(71, 73),  // SP
+                line.substring(74, 81))  // CYC:NNN (cycle column, 7 chars)
     }
 
     private fun Int.tokenName() =

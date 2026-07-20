@@ -35,7 +35,8 @@ class NopAbsX : Opcode(cycles = 4) {
     override val mnemonic = "NOP abs,X"
     override fun evaluate(cpu: Cpu) {
         Absolute(x = true).value(cpu)
-        cpu.workCyclesLeft = 4
+        // Issue #17 / #172: +1 cycle on page cross for abs,X NOPs.
+        cpu.workCyclesLeft = 4 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 

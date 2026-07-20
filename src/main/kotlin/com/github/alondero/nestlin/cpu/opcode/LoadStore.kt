@@ -23,7 +23,10 @@ class Load(
         val value = addressing.value(cpu)
         setter(cpu, value)
         cpu.processorStatus.resolveZeroAndNegativeFlags(value)
-        cpu.workCyclesLeft = cycles
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y. The Addressing class set `cpu.pageBoundaryFlag` during
+        // its address() call when the indexed address crossed a page.
+        cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -43,6 +46,10 @@ class Store(
     override fun evaluate(cpu: Cpu) {
         val addr = addressing.address(cpu)
         cpu.memory[addr] = source(cpu)
+        // Stores (STA/STX/STY) do NOT add a cycle on page cross — only
+        // read operations do. Real 6502 STA abs,X is always 5 cycles
+        // regardless of whether the indexed address crosses a page
+        // boundary. See issue #17 / #172.
         cpu.workCyclesLeft = cycles
     }
 }

@@ -32,7 +32,9 @@ class Adc(
             ((currentAccumulator.toUnsignedInt() xor cpu.registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
         cpu.processorStatus.resolveZeroAndNegativeFlags(cpu.registers.accumulator)
 
-        cpu.workCyclesLeft = cycles
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y (ADC uses indexed variants).
+        cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -62,7 +64,9 @@ class Sbc(
             ((currentAccumulator.toUnsignedInt() xor cpu.registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
         cpu.processorStatus.resolveZeroAndNegativeFlags(cpu.registers.accumulator)
 
-        cpu.workCyclesLeft = cycles
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y (SBC uses indexed variants).
+        cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -88,7 +92,9 @@ class Compare(
             zero = comparison == 0
             carry = reg.toUnsignedInt() >= memValue.toUnsignedInt()
         }
-        cpu.workCyclesLeft = cycles
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y (CMP uses indexed variants; CPX/CPY use zp/abs only).
+        cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -110,6 +116,8 @@ class Bit(
             negative = (mem and 0b10000000) != 0
             overflow = (mem and 0b01000000) != 0
         }
+        // BIT uses zp / abs only — no indexed variants, so no page-cross
+        // +1 to apply.
         cpu.workCyclesLeft = cycles
     }
 }
