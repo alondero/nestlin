@@ -61,6 +61,14 @@ class TestRomBuilder {
     var verticalMirroring: Boolean = false
 
     /**
+     * iNES "four-screen VRAM" flag — byte 6 bit 3. Set by boards that
+     * carry on-cartridge VRAM (UNROM 512 = mapper 30 uses this bit as a
+     * "1-screen switchable vs 4-screen fixed" selector). Default false
+     * to keep existing tests untouched.
+     */
+    var fourScreen: Boolean = false
+
+    /**
      * PRG ROM size in KB. Must be a multiple of 16 (the iNES PRG unit).
      * Re-assigning replaces [prg] with a fresh zeroed array of the new size.
      */
@@ -148,7 +156,8 @@ class TestRomBuilder {
         header[5] = (chrKb / 8).toByte()   // 8KB CHR units (0 = CHR-RAM)
         header[6] = (((mapper and 0x0F) shl 4) or
             (if (battery) 0x02 else 0x00) or
-            (if (verticalMirroring) 0x01 else 0x00)).toByte()
+            (if (verticalMirroring) 0x01 else 0x00) or
+            (if (fourScreen) 0x08 else 0x00)).toByte()
         // Byte 7 bits 4-7 are mapper bits D4-D7 — bit 4 included (it is NOT a flag).
         // Bits 2-3 = 0b10 marks NES 2.0.
         header[7] = ((mapper and 0xF0) or (if (nes20) 0x08 else 0x00)).toByte()
