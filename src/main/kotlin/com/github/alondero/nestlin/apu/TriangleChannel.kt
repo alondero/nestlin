@@ -86,8 +86,13 @@ class TriangleChannel {
         if (!isEnabled) return 0
         if (lengthCounter.value == 0) return 0
         if (linearCounter == 0) return 0
-        if (timerPeriod < 2) return 7  // Ultrasonic returns mid-level
 
+        // Hardware keeps the sequencer running at every timer rate, including
+        // ultrasonic. We don't model the DAC slew-rate limit, so the sequence
+        // value at the current step is the right answer. The pre-fix
+        // `timerPeriod < 2 → return 7` shortcut pinned the output to a single
+        // constant; the issue (#230) is that this is a tonal deviation, not
+        // a faithful reproduction of the sequencer's behaviour.
         return triangleSequence[sequenceStep]
     }
 
