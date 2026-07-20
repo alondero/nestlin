@@ -61,6 +61,12 @@ class TestRomBuilder {
     var verticalMirroring: Boolean = false
 
     /**
+     * Four-screen VRAM flag — byte 6 bit 3 (`0x08`). When set the board wires an
+     * extra 2 KB of nametable RAM and the H/V bit is ignored. See GH #105.
+     */
+    var fourScreen: Boolean = false
+
+    /**
      * PRG ROM size in KB. Must be a multiple of 16 (the iNES PRG unit).
      * Re-assigning replaces [prg] with a fresh zeroed array of the new size.
      */
@@ -148,6 +154,7 @@ class TestRomBuilder {
         header[5] = (chrKb / 8).toByte()   // 8KB CHR units (0 = CHR-RAM)
         header[6] = (((mapper and 0x0F) shl 4) or
             (if (battery) 0x02 else 0x00) or
+            (if (fourScreen) 0x08 else 0x00) or
             (if (verticalMirroring) 0x01 else 0x00)).toByte()
         // Byte 7 bits 4-7 are mapper bits D4-D7 — bit 4 included (it is NOT a flag).
         // Bits 2-3 = 0b10 marks NES 2.0.

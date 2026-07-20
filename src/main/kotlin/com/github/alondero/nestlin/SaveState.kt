@@ -11,7 +11,7 @@ import java.io.OutputStream
  * Save state file format ("NSTL"):
  *
  *   magic       4 bytes  "NSTL" (0x4E 0x53 0x54 0x4C)
- *   version     int      currently 5; bump on breaking format change.
+ *   version     int      currently 6; bump on breaking format change.
  *                        Version 2 added a per-mapper version byte inside the
  *                        mapper block (see below) so individual mappers can
  *                        evolve their own field order without invalidating
@@ -25,6 +25,11 @@ import java.io.OutputStream
  *                        plugged into each controller port. v4 files load with
  *                        both ports defaulting to STANDARD_GAMEPAD. Issue: 2-player
  *                        support.
+ *                        Version 6 added optional 4-screen VRAM (two extra 1 KB
+ *                        nametables) inside the PPU block. These bytes are only
+ *                        present when the PPU mirroring is FOUR_SCREEN, so v4/v5
+ *                        saves — and any v6 save of a non-4-screen game — are
+ *                        byte-for-byte identical and load unchanged. GH #105.
  *   romCrc      long     CRC32 of the loaded ROM at save time
  *   romMapper   int      mapper id (validated on load)
  *   cpu         block    written by Cpu.saveState
@@ -51,7 +56,7 @@ import java.io.OutputStream
  */
 object SaveState {
     private const val MAGIC = 0x4E53544C  // "NSTL"
-    const val VERSION = 5
+    const val VERSION = 6
 
     /** Highest version this code can read. */
     private const val MIN_SUPPORTED_VERSION = 4

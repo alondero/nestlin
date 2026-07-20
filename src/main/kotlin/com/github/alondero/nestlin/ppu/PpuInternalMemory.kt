@@ -9,6 +9,11 @@ class PpuInternalMemory {
     private val patternTable1 = ByteArray(0x1000)
     private val nameTable0 = ByteArray(0x400)
     private val nameTable1 = ByteArray(0x400)
+    // Two extra 1 KB nametables used ONLY in FOUR_SCREEN mode (the cartridge's
+    // on-board 2 KB VRAM). In H/V/one-screen modes they stay zeroed and are not
+    // serialized. See GH #105.
+    private val nameTable2 = ByteArray(0x400)
+    private val nameTable3 = ByteArray(0x400)
     private val paletteRam = PaletteRam()
 
     var mirroring = Mirroring.HORIZONTAL
@@ -73,7 +78,11 @@ class PpuInternalMemory {
         HORIZONTAL,
         VERTICAL,
         ONE_SCREEN_LOWER,
-        ONE_SCREEN_UPPER
+        ONE_SCREEN_UPPER,
+        // Four-screen: the cartridge's extra 2 KB VRAM makes all four nametables
+        // distinct. Appended LAST so existing ordinals (persisted as
+        // `mirroring.ordinal` in saveState) are unchanged. See GH #105.
+        FOUR_SCREEN
     }
 
     private fun mapNametableAddress(addr: Int): Pair<ByteArray, Int> {
@@ -91,8 +100,16 @@ class PpuInternalMemory {
             }
             Mirroring.ONE_SCREEN_LOWER -> 0
             Mirroring.ONE_SCREEN_UPPER -> 1
+            // Four-screen: each 1 KB window maps to its own distinct table, so
+            // $2000->NT0, $2400->NT1, $2800->NT2, $2C00->NT3 with no aliasing.
+            Mirroring.FOUR_SCREEN -> normalizedAddr / 0x400
         }
-        val table = if (tableIndex == 0) nameTable0 else nameTable1
+        val table = when (tableIndex) {
+            0 -> nameTable0
+            1 -> nameTable1
+            2 -> nameTable2
+            else -> nameTable3
+        }
         return Pair(table, addr % 0x400)
     }
 
@@ -202,6 +219,14 @@ class PpuInternalMemory {
         out.write(nameTable1)
         paletteRam.saveState(out)
         out.writeInt(mirroring.ordinal)
+        // Self-describing 4-screen VRAM: only FOUR_SCREEN saves carry the two
+        // extra nametables, so pre-4-screen and non-4-screen saves are byte-for-byte
+        // identical to before and load unchanged (GH #105). The load path reads
+        // them back conditioned on the mirroring value it just read.
+        if (mirroring == Mirroring.FOUR_SCREEN) {
+            out.write(nameTable2)
+            out.write(nameTable3)
+        }
         out.writeBoolean(lastA12High)
         out.writeInt(m2CyclesSinceA12Low)
     }
@@ -213,6 +238,11 @@ class PpuInternalMemory {
         input.readFully(nameTable1)
         paletteRam.loadState(input)
         mirroring = Mirroring.values()[input.readInt()]
+        // Mirror of saveState: only a FOUR_SCREEN save carries the extra tables.
+        if (mirroring == Mirroring.FOUR_SCREEN) {
+            input.readFully(nameTable2)
+            input.readFully(nameTable3)
+        }
         lastA12High = input.readBoolean()
         m2CyclesSinceA12Low = input.readInt()
     }

@@ -30,16 +30,19 @@ class Mapper206Test {
     private fun createTestGamePak(
         prg8k: Int = 8,
         chr1k: Int = 32,
-        mirroring: Header.Mirroring = Header.Mirroring.VERTICAL
+        mirroring: Header.Mirroring = Header.Mirroring.VERTICAL,
+        fourScreen: Boolean = false
     ): GamePak {
         val header = ByteArray(16)
         header[0] = 'N'.code.toByte(); header[1] = 'E'.code.toByte()
         header[2] = 'S'.code.toByte(); header[3] = 0x1A.toByte()
         header[4] = (prg8k / 2).toByte()           // PRG ROM size in 16KB units
         header[5] = (chr1k / 8).toByte()           // CHR ROM size in 8KB units
-        // mapper 206 = 0xCE. flags6 = mapper-low nibble in upper 4 bits, plus bit 0 = mirror.
+        // mapper 206 = 0xCE. flags6 = mapper-low nibble in upper 4 bits, plus bit 0 = mirror,
+        // plus bit 3 = 4-screen VRAM.
         val mirrorBit = if (mirroring == Header.Mirroring.VERTICAL) 0x01 else 0x00
-        header[6] = (((206 and 0x0F) shl 4) or mirrorBit).toByte()
+        val fourScreenBit = if (fourScreen) 0x08 else 0x00
+        header[6] = (((206 and 0x0F) shl 4) or fourScreenBit or mirrorBit).toByte()
         header[7] = (206 and 0xF0).toByte()
         val prg = ByteArray(prg8k * 0x2000) { ((it / 0x2000) and 0xFF).toByte() }
         val chr = ByteArray(chr1k * 0x400) { ((it / 0x400) and 0xFF).toByte() }
@@ -271,6 +274,21 @@ class Mapper206Test {
 
         val h = Mapper206(createTestGamePak(mirroring = Header.Mirroring.HORIZONTAL))
         assertThat(h.currentMirroring(), equalTo(Mapper.MirroringMode.HORIZONTAL))
+    }
+
+    @Test
+    fun `currentMirroring returns FOUR_SCREEN when header 4-screen bit is set`() {
+        // DRROM Gauntlet: the 4-screen VRAM bit (byte 6 bit 3) makes the board
+        // expose four distinct nametables, overriding the H/V bit. See GH #105.
+        val m = Mapper206(createTestGamePak(fourScreen = true))
+        assertThat(m.currentMirroring(), equalTo(Mapper.MirroringMode.FOUR_SCREEN))
+    }
+
+    @Test
+    fun `4-screen bit wins over the H-V bit`() {
+        // Even with the vertical bit also set, 4-screen takes precedence.
+        val m = Mapper206(createTestGamePak(mirroring = Header.Mirroring.VERTICAL, fourScreen = true))
+        assertThat(m.currentMirroring(), equalTo(Mapper.MirroringMode.FOUR_SCREEN))
     }
 
     // ---- No scanline IRQ ----

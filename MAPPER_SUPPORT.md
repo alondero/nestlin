@@ -962,8 +962,10 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33,
     `$0000-$0FFF` (low bit ignored, so adjacent 1 KB pages pair), R2-R5 select
     four 1 KB banks at `$1000-$1FFF`. Bit 7 of the bank-select register is ignored.
   - **Mirroring is hardwired** from the iNES header — there is no `$A000` mirroring
-    register. (DRROM Gauntlet uses 4-screen, signalled via the header's 4-screen bit;
-    the cartridge board wires it physically.)
+    register. DRROM Gauntlet uses **4-screen** VRAM, signalled by the header's
+    4-screen bit (byte 6 bit 3); the cartridge board wires the extra 2 KB physically.
+    That bit is honoured (GH #105): `currentMirroring()` returns `FOUR_SCREEN` and the
+    PPU exposes four distinct nametables instead of an H/V mirror.
   - **No scanline IRQ counter** — writes to `$C000`/`$C001` (latch/reload) and
     `$E000`/`$E001` (enable/disable) are accepted as no-ops. Mapper 206 inherits
     Mapper's default `isIrqPending() = false` and `acknowledgeIrq() = {}`.
@@ -982,9 +984,16 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 33,
   ignored, R2-R5 1 KB), the bank-select/data protocol across the full `$8000-$FFFF`
   decode, hardwired PRG/CHR modes (writes with bits 6/7 set in `$8000` do not flip
   into mode 1 / invert), header-driven mirroring, PRG-RAM read/write, the missing
-  IRQ, CHR-RAM fallback, and save/load round-trip. End-to-end ROM boot/render
-  verification is left for a follow-up Mesen2 comparison (see `MapperVerificationTest`
-  pattern) — Gauntlet and RBI Baseball are the natural oracles.
+  IRQ, CHR-RAM fallback, and save/load round-trip. `currentMirroring()` returning
+  `FOUR_SCREEN` when the header 4-screen bit is set (and 4-screen winning over the
+  H/V bit) is covered too; the four-independent-nametable resolution itself is tested
+  in `NametableMirroringTest`. End-to-end ROM boot/render verification is left for a
+  follow-up Mesen2 comparison (see `MapperVerificationTest` pattern) — Gauntlet and
+  RBI Baseball are the natural oracles.
+- **Real-ROM boot gate:** Gauntlet's NO-INTRO dump is mislabelled mapper 4 (see the
+  `tools/rom_info.py patch-namco108` recipe); after patching to mapper 206,
+  `./gradlew bootcheck -Prom=<gauntlet.mapper206.nes> -Pframes=120` returns **PASS**
+  (loads as Mapper206, 116 NMIs in 120 frames).
 
 ---
 

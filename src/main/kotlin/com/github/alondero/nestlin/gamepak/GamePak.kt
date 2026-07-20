@@ -224,6 +224,18 @@ class Header(headerData: ByteArray) {
     val hasBattery: Boolean = headerData[6].toUnsignedInt() and 0x02 != 0
 
     /**
+     * iNES byte 6 bit 3 (`0x08`) — the 4-screen VRAM flag. When set, the cartridge
+     * solders on an extra 2 KB of nametable RAM so all four PPU nametable slots
+     * ($2000/$2400/$2800/$2C00) are physically distinct, and the horizontal/vertical
+     * [mirroring] bit is ignored by the board. Reported separately from [mirroring]
+     * (which stays a two-value H/V enum) so that the ~20 mappers pattern-matching
+     * `when (header.mirroring)` exhaustively don't have to grow a fourth arm each.
+     * A mapper whose board honours 4-screen (e.g. Mapper 206 / DRROM Gauntlet)
+     * checks this and returns [Mapper.MirroringMode.FOUR_SCREEN]. See GH #105.
+     */
+    val fourScreen: Boolean = headerData[6].toUnsignedInt() and 0x08 != 0
+
+    /**
      * Submapper number from the NES 2.0 header byte 8 (high nibble). For
      * iNES 1.0 headers this is byte 8 of the header (the "PRG-RAM size" byte),
      * which is unrelated; we treat it as 0 unless the header is actually NES 2.0.

@@ -3,6 +3,10 @@ package com.github.alondero.nestlin.ppu
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.jupiter.api.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 
 class NametableMirroringTest {
 
@@ -119,5 +123,105 @@ class NametableMirroringTest {
         // NT1 should have 0x20 at offset 0 (accessed via 0x2400 or 0x2C00)
         assertThat(memory[0x2400], equalTo(0x20.toByte()))
         assertThat(memory[0x2C00], equalTo(0x20.toByte()))
+    }
+
+    // Four-screen mirroring tests (used by DRROM Gauntlet / Mapper 206, GH #105).
+    // With 4-screen VRAM there is NO mirroring: each of the four 1 KB windows
+    // ($2000/$2400/$2800/$2C00) is its own independent nametable.
+    @Test
+    fun `four-screen mirroring - all four nametables are independent`() {
+        val memory = PpuInternalMemory()
+        memory.mirroring = PpuInternalMemory.Mirroring.FOUR_SCREEN
+
+        memory[0x2000] = 0x11.toByte()  // NT0
+        memory[0x2400] = 0x22.toByte()  // NT1
+        memory[0x2800] = 0x33.toByte()  // NT2
+        memory[0x2C00] = 0x44.toByte()  // NT3
+
+        // No cross-aliasing: each window keeps its own value.
+        assertThat(memory[0x2000], equalTo(0x11.toByte()))
+        assertThat(memory[0x2400], equalTo(0x22.toByte()))
+        assertThat(memory[0x2800], equalTo(0x33.toByte()))
+        assertThat(memory[0x2C00], equalTo(0x44.toByte()))
+    }
+
+    @Test
+    fun `four-screen mirroring - 0x2000 and 0x2400 do NOT alias (unlike horizontal)`() {
+        val memory = PpuInternalMemory()
+        memory.mirroring = PpuInternalMemory.Mirroring.FOUR_SCREEN
+
+        memory[0x2000] = 0x42.toByte()
+        memory[0x2400] = 0x99.toByte()
+
+        // Under horizontal mirroring these two share NT0; under 4-screen they don't.
+        assertThat(memory[0x2000], equalTo(0x42.toByte()))
+        assertThat(memory[0x2400], equalTo(0x99.toByte()))
+    }
+
+    @Test
+    fun `four-screen mirroring - 0x2000 and 0x2800 do NOT alias (unlike vertical)`() {
+        val memory = PpuInternalMemory()
+        memory.mirroring = PpuInternalMemory.Mirroring.FOUR_SCREEN
+
+        memory[0x2000] = 0x42.toByte()
+        memory[0x2800] = 0x99.toByte()
+
+        // Under vertical mirroring these two share NT0; under 4-screen they don't.
+        assertThat(memory[0x2000], equalTo(0x42.toByte()))
+        assertThat(memory[0x2800], equalTo(0x99.toByte()))
+    }
+
+    @Test
+    fun `four-screen mirroring - offsets within a table are addressed correctly`() {
+        val memory = PpuInternalMemory()
+        memory.mirroring = PpuInternalMemory.Mirroring.FOUR_SCREEN
+
+        // Last byte of each 1 KB window is distinct and within its own table.
+        memory[0x23FF] = 0x1F.toByte()  // NT0 tail
+        memory[0x27FF] = 0x2F.toByte()  // NT1 tail
+        memory[0x2BFF] = 0x3F.toByte()  // NT2 tail
+        memory[0x2FFF] = 0x4F.toByte()  // NT3 tail
+
+        assertThat(memory[0x23FF], equalTo(0x1F.toByte()))
+        assertThat(memory[0x27FF], equalTo(0x2F.toByte()))
+        assertThat(memory[0x2BFF], equalTo(0x3F.toByte()))
+        assertThat(memory[0x2FFF], equalTo(0x4F.toByte()))
+    }
+
+    // Save-state format tests (GH #105). The two extra 4-screen nametables are
+    // written ONLY when mirroring == FOUR_SCREEN, so non-4-screen state stays
+    // byte-for-byte identical to the pre-4-screen format.
+    @Test
+    fun `four-screen state round-trips all four nametables`() {
+        val original = PpuInternalMemory()
+        original.mirroring = PpuInternalMemory.Mirroring.FOUR_SCREEN
+        original[0x2000] = 0xA1.toByte()
+        original[0x2400] = 0xB2.toByte()
+        original[0x2800] = 0xC3.toByte()
+        original[0x2C00] = 0xD4.toByte()
+
+        val bytes = ByteArrayOutputStream().also { original.saveState(DataOutputStream(it)) }.toByteArray()
+
+        val restored = PpuInternalMemory()
+        restored.loadState(DataInputStream(ByteArrayInputStream(bytes)))
+
+        assertThat(restored.mirroring, equalTo(PpuInternalMemory.Mirroring.FOUR_SCREEN))
+        assertThat(restored[0x2000], equalTo(0xA1.toByte()))
+        assertThat(restored[0x2400], equalTo(0xB2.toByte()))
+        assertThat(restored[0x2800], equalTo(0xC3.toByte()))
+        assertThat(restored[0x2C00], equalTo(0xD4.toByte()))
+    }
+
+    @Test
+    fun `non-four-screen state does not carry the extra nametables`() {
+        // A horizontal-mirroring save must be smaller than a 4-screen one by
+        // exactly the two extra 1 KB tables, proving they are omitted.
+        val horizontal = PpuInternalMemory().apply { mirroring = PpuInternalMemory.Mirroring.HORIZONTAL }
+        val fourScreen = PpuInternalMemory().apply { mirroring = PpuInternalMemory.Mirroring.FOUR_SCREEN }
+
+        val hBytes = ByteArrayOutputStream().also { horizontal.saveState(DataOutputStream(it)) }.toByteArray()
+        val fBytes = ByteArrayOutputStream().also { fourScreen.saveState(DataOutputStream(it)) }.toByteArray()
+
+        assertThat(fBytes.size - hBytes.size, equalTo(0x800))
     }
 }
