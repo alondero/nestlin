@@ -82,7 +82,7 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
         return when (address and 0xE000) {
             0x8000 -> {
                 // $8000-$9FFF: second-to-last (fixed) in mode 1, R6 (prgBank6, switchable) in mode 0
-                val bank = if (prgMode) (prgBankCount - 2) else prgBank6
+                val bank = if (prgMode) (prgBankCount - 2).coerceAtLeast(0) else prgBank6
                 programRom[(bank * 0x2000 + (address - 0x8000)) % programRom.size]
             }
             0xA000 -> {
@@ -91,7 +91,7 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
             }
             0xC000 -> {
                 // $C000-$DFFF: R8 (second-to-last) or R6 depending on prgMode
-                val bank = if (prgMode) prgBank6 else (prgBankCount - 2)
+                val bank = if (prgMode) prgBank6 else (prgBankCount - 2).coerceAtLeast(0)
                 programRom[(bank * 0x2000 + (address - 0xC000)) % programRom.size]
             }
             0xE000 -> {
