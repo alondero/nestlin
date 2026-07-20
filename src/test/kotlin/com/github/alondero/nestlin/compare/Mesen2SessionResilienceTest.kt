@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.compare
 
+import com.github.alondero.nestlin.testutil.TestRoms
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import com.natpryce.hamkrest.startsWith
@@ -19,7 +20,10 @@ class Mesen2SessionResilienceTest {
 
     @Test
     fun `scriptBaseName is prefixed and derived from the rom filename`() {
-        val name = Mesen2ProcessInstance.scriptBaseName(Paths.get("testroms/nestest.nes"))
+        // The basename derives from the Path's filename component, so any Path ending in
+        // `nestest.nes` produces the same server-suffix. Using TestRoms.nestestPath()
+        // makes this CWD-independent (issue #21); the assertion only checks the suffix.
+        val name = Mesen2ProcessInstance.scriptBaseName(TestRoms.nestestPath())
         assertThat(name, equalTo("session_server_nestest_nes"))
     }
 

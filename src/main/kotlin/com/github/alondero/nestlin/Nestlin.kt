@@ -143,6 +143,24 @@ class Nestlin {
         rewind.clearBuffer()
     }
 
+    /**
+     * Bytes-oriented companion to [load] for callers that already have the iNES image in hand
+     * (test helpers that read from `src/test/resources/`, in-memory `GamePak` builders, FM2
+     * replay tools that synthesise ROMs from disk + patch arrays, etc.).
+     *
+     * No filesystem IO, no working-directory assumption — the caller owns the bytes and the
+     * display name. There is intentionally no [Path] associated with the loaded ROM, so
+     * [loadedRom] is set without a [LoadedRom.path]; downstream code that needs the path
+     * falls back to the caller-supplied [displayName].
+     */
+    fun loadBytes(romData: ByteArray, displayName: String = "nestest") {
+        val gamePak = GamePak(romData, displayName)
+        loadedRom = LoadedRom(gamePak, /* path = */ null)
+        cpu.currentGame = gamePak
+        applyRegion()
+        rewind.clearBuffer()
+    }
+
     /** The region currently in effect (after override + detection). */
     fun currentRegion(): Region = regionConfig.region
 

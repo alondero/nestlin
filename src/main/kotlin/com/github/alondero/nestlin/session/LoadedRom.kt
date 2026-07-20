@@ -12,5 +12,11 @@ import java.nio.file.Path
  *
  * Constructed by [com.github.alondero.nestlin.Nestlin.load] and exposed via
  * `Nestlin.loadedRom` (null before the first `load()`).
+ *
+ * [sourcePath] is nullable so bytes-only loads (test fixtures that read from
+ * `src/test/resources/`, callers that synthesise ROMs in memory) can participate without
+ * claiming a synthetic `/dev/null` path. Operations that genuinely need a disk path
+ * (battery-RAM autosave at shutdown, FM2 movie recording) already guard with `?:` — so
+ * nullable here just expresses what the existing call sites already assume.
  */
-data class LoadedRom(val gamePak: GamePak, val sourcePath: Path)
+data class LoadedRom(val gamePak: GamePak, val sourcePath: Path?)

@@ -1428,7 +1428,15 @@ class NestlinApplication : FrameListener, Application() {
         chooser.initialFileName = defaultMovieFileName()
         val file = chooser.showSaveDialog(stage) ?: return
 
-        val rom = nestlin.loadedRom!!.sourcePath
+        val rom = nestlin.loadedRom!!.sourcePath ?: run {
+            // Bytes-only loads (test fixtures, NSTL replay tooling) have no on-disk path,
+            // and recording a movie needs to re-open the ROM to checksum it and reset
+            // cleanly. Refuse up front with a clear message rather than NPE later.
+            showError("No ROM File",
+                "Recording requires a ROM loaded from a file (the current ROM was " +
+                    "loaded from in-memory bytes and has no path).")
+            return
+        }
         val romImage = rom.load() ?: run {
             showError("Recording Failed", "Could not load ROM: $rom")
             return
@@ -1550,7 +1558,12 @@ class NestlinApplication : FrameListener, Application() {
         // sees whatever state the user happened to be in when they hit Ctrl+Shift+P —
         // which won't match the boot state the recording started from, so the replay
         // diverges on frame 1.
-        val rom = nestlin.loadedRom!!.sourcePath
+        val rom = nestlin.loadedRom!!.sourcePath ?: run {
+            showError("No ROM File",
+                "Playing a movie requires the ROM to be loaded from a file " +
+                    "(the current ROM has no on-disk path).")
+            return
+        }
         performWithEmulationPaused {
             resetRomForMovieSession(rom)
         }
@@ -1710,7 +1723,16 @@ class NestlinApplication : FrameListener, Application() {
         // playback doesn't get get out of sync with the new boot state.
         cancelMovieSession()
         stopEmulation()
-        resetRomForMovieSession(nestlin.loadedRom!!.sourcePath)
+        resetRomForMovieSession(
+            nestlin.loadedRom!!.sourcePath ?: run {
+                val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
+                alert.title = "No ROM File"
+                alert.contentText = "Hard-reset during a movie session needs to re-load " +
+                    "the ROM from disk; the current ROM has no on-disk path."
+                alert.showAndWait()
+                return
+            }
+        )
         clearPauseState()
         updateTitle()
         // CRC is unchanged by a hard reset, but refresh the slot menu

@@ -3,6 +3,7 @@ package com.github.alondero.nestlin.cli
 import com.github.alondero.nestlin.movie.Fm2Format
 import com.github.alondero.nestlin.movie.Movie
 import com.github.alondero.nestlin.movie.MovieInput
+import com.github.alondero.nestlin.testutil.TestRoms
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.containsSubstring
 import com.natpryce.hamkrest.equalTo
@@ -10,7 +11,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 
 /**
  * Exercises the headless `replay` command — the agentic "ROM + FM2 reproduces a bug" loop
@@ -20,7 +20,10 @@ import java.nio.file.Paths
  */
 class ReplayCommandTest {
 
-    private val nestest: Path = Paths.get("testroms/nestest.nes")
+    // ReplayCommand.Options takes a real Path (it must pass it on to BootCheck / checksum
+    // hashing that opens the file). Use the classpath-derived temp path so the lookup
+    // is hermetic from any working directory. See issue #21.
+    private val nestest: Path = TestRoms.nestestPath()
 
     /** Write a {@code frames}-long FM2 of empty input next to {@code dir}. */
     private fun writeMovie(dir: Path, frames: Int, checksum: String = ""): Path {

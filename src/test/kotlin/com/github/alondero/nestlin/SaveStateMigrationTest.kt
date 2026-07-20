@@ -1,13 +1,13 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.input.InputDevice
+import com.github.alondero.nestlin.testutil.TestRoms
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 
 /**
  * Save-state format migration test for the v4 → v5 transition (issue: 2-player support).
@@ -28,14 +28,13 @@ import java.nio.file.Paths
  */
 class SaveStateMigrationTest {
 
-    private val nestest: Path = Paths.get("testroms/nestest.nes")
-
     @Test
-    fun `SaveState VERSION is 5 to record the new ports block`() {
+    fun `SaveState VERSION is 6 to record the optional 4-screen VRAM block`() {
         // Sanity check — fails fast if someone bumps or forgets the version
         // migration. The kdoc on SaveState and the load() version branch both
-        // hinge on this constant.
-        assertThat(SaveState.VERSION, equalTo(5))
+        // hinge on this constant. v6 (GH #105) adds two optional 1 KB nametables
+        // to the PPU block, written only when mirroring is FOUR_SCREEN.
+        assertThat(SaveState.VERSION, equalTo(6))
     }
 
     @Test
@@ -44,7 +43,7 @@ class SaveStateMigrationTest {
 
         // Save with port 0 set to Zapper and port 1 set to NONE.
         Nestlin().apply {
-            load(nestest)
+            loadBytes(TestRoms.nestestBytes())
             powerReset()
             memory.setPortType(0, InputDevice.DeviceType.ZAPPER)
             memory.setPortType(1, InputDevice.DeviceType.NONE)
@@ -53,7 +52,7 @@ class SaveStateMigrationTest {
 
         // Load into a fresh Nestlin and verify both ports come back correctly.
         Nestlin().apply {
-            load(nestest)
+            loadBytes(TestRoms.nestestBytes())
             powerReset()
             SaveState.load(this, Files.newInputStream(savePath))
 
@@ -70,14 +69,14 @@ class SaveStateMigrationTest {
         val savePath = dir.resolve("state.nstl")
 
         Nestlin().apply {
-            load(nestest)
+            loadBytes(TestRoms.nestestBytes())
             powerReset()
             // Both ports are STANDARD_GAMEPAD by default — no setPortType call.
             SaveState.save(this, Files.newOutputStream(savePath))
         }
 
         Nestlin().apply {
-            load(nestest)
+            loadBytes(TestRoms.nestestBytes())
             powerReset()
             // Pre-condition: ports are at their construction-time default.
             assertThat(memory.portType(0), equalTo(InputDevice.DeviceType.STANDARD_GAMEPAD))
@@ -100,7 +99,7 @@ class SaveStateMigrationTest {
         val savePath = dir.resolve("state.nstl")
 
         Nestlin().apply {
-            load(nestest)
+            loadBytes(TestRoms.nestestBytes())
             powerReset()
             memory.setPortType(0, InputDevice.DeviceType.ZAPPER)
             memory.controller2.setButton(Controller.Button.A, true)
@@ -108,7 +107,7 @@ class SaveStateMigrationTest {
         }
 
         Nestlin().apply {
-            load(nestest)
+            loadBytes(TestRoms.nestestBytes())
             powerReset()
             SaveState.load(this, Files.newInputStream(savePath))
 

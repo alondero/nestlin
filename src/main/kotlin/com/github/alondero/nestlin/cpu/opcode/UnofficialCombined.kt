@@ -30,7 +30,10 @@ class Dcp(
         cpu.processorStatus.carry = comparison >= 0
         cpu.processorStatus.zero = comparison == 0
         cpu.processorStatus.negative = comparison.toSignedByte().isBitSet(7)
-        cpu.workCyclesLeft = 6
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / ($zp),Y.
+        // zp / zp,X / abs / abs,X / zp,Y / (ind,X) — only the indexed
+        // forms can cross a page (zp can't).
+        cpu.workCyclesLeft = 6 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -61,7 +64,8 @@ class Isc(
             ((currentAccumulator.toUnsignedInt() xor result.toUnsignedInt()) and 0x80 == 0x80) &&
             ((currentAccumulator.toUnsignedInt() xor cpu.registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
         cpu.processorStatus.resolveZeroAndNegativeFlags(cpu.registers.accumulator)
-        cpu.workCyclesLeft = 6
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / ($zp),Y.
+        cpu.workCyclesLeft = 6 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -84,7 +88,9 @@ class Rla(
         cpu.registers.accumulator =
             (cpu.registers.accumulator.toUnsignedInt() and rotated.toUnsignedInt()).toSignedByte()
         cpu.processorStatus.resolveZeroAndNegativeFlags(cpu.registers.accumulator)
-        cpu.workCyclesLeft = 5
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y.
+        cpu.workCyclesLeft = 5 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -113,7 +119,9 @@ class Rra(
             ((currentAccumulator.toUnsignedInt() xor rotated.toUnsignedInt()) and 0x80 == 0x00) &&
             ((currentAccumulator.toUnsignedInt() xor cpu.registers.accumulator.toUnsignedInt()) and 0x80 == 0x80)
         cpu.processorStatus.resolveZeroAndNegativeFlags(cpu.registers.accumulator)
-        cpu.workCyclesLeft = 5
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y.
+        cpu.workCyclesLeft = 5 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -134,7 +142,9 @@ class Slo(
         cpu.registers.accumulator =
             (cpu.registers.accumulator.toUnsignedInt() or shifted.toUnsignedInt()).toSignedByte()
         cpu.processorStatus.resolveZeroAndNegativeFlags(cpu.registers.accumulator)
-        cpu.workCyclesLeft = 5
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y.
+        cpu.workCyclesLeft = 5 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -155,7 +165,9 @@ class Sre(
         cpu.registers.accumulator =
             (cpu.registers.accumulator.toUnsignedInt() xor shifted.toUnsignedInt()).toSignedByte()
         cpu.processorStatus.resolveZeroAndNegativeFlags(cpu.registers.accumulator)
-        cpu.workCyclesLeft = 5
+        // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
+        // ($zp),Y.
+        cpu.workCyclesLeft = 5 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 

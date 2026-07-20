@@ -181,7 +181,7 @@ This is the production pattern, not optional defensive programming. Lua silently
 
 1. `emu.getState()` returns a FLAT table with dotted string keys (`state["cpu.pc"]`, `state["ppu.frameCount"]`, …), not a nested table. The old `Mesen2StateCapturer` Lua used `state.cpu.pc` which throws nil-index — silently aborts the callback so `emu.stop()` never fires and the process zombies. Strategy doc section 3.2 had this wrong; corrected now.
 2. `emu.getScriptDataFolder()` returns NO trailing separator. The old code concatenated `basePath .. "screenshot.png"` and wrote to `LuaScriptData/capturescreenshot.png` — Kotlin then looked at `LuaScriptData/capture/screenshot.png`, found nothing, threw. All three runners now insert `"/"` explicitly.
-3. ROM paths passed to Mesen2 must be **absolute**. The Kotlin runners set the Mesen2 process working dir to the Mesen install dir, so a relative `testroms/nestest.nes` resolves to `<mesen>/testroms/nestest.nes` and Mesen exits non-zero. All three runners now call `romPath.toAbsolutePath()` before passing it through.
+3. ROM paths passed to Mesen2 must be **absolute**. The Kotlin runners set the Mesen2 process working dir to the Mesen install dir, so a relative `src/test/resources/nestest.nes` (or any other bundled test ROM) passed through would resolve inside the Mesen install dir. All three runners now call `romPath.toAbsolutePath()` before passing it through.
 
 **New regression test added:** `Mesen2StateCapturerSmokeTest` — uses the in-repo `nestest.nes` so it's the first Mesen2-backed test that can actually run in CI when Mesen2 is available. Lives in the `testMesenComparison` task (not the default `test`).
 

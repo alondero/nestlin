@@ -4,9 +4,9 @@ import com.github.alondero.nestlin.Controller
 import com.github.alondero.nestlin.Controller.Button
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.file.load
+import com.github.alondero.nestlin.testutil.TestRoms
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import java.nio.file.Paths
 
 /**
  * Tests for [MovieLiveRecorder] — the real-time variant of the movie record engine.
@@ -23,12 +23,15 @@ import java.nio.file.Paths
  */
 class MovieLiveRecorderTest {
 
-    private val romPath = Paths.get("testroms/nestest.nes")
+    // MoviePlayer.replay takes a Path (ROM checksum is computed from on-disk bytes).
+    // Lazy to avoid creating a temp file when this class is constructed but the test
+    // doesn't reach the round-trip branch (issue #21).
+    private val romPath by lazy { TestRoms.nestestPath() }
 
     private fun freshNestlin(): Nestlin =
         Nestlin().apply {
             config.speedThrottlingEnabled = false
-            load(romPath)
+            loadBytes(TestRoms.nestestBytes())
         }.also { it.powerReset() }
 
     /**

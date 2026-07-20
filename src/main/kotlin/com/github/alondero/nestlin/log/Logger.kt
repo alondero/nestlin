@@ -230,7 +230,15 @@ class Logger {
                 "Y:${format(cpu.registers.indexY)} " +
                 "P:${format(cpu.processorStatus.asByte())} " +
                 "SP:${format(cpu.registers.stackPointer)} " +
-                "CYC:${"%1$3s".format(cpu.workCyclesLeft.toString())}")
+                // CYC column reports PPU cycles (3× CPU cycles) modulo 341 to
+                // match nestest.log's convention. The 341 wrap is a quirk of
+                // the original nestest author's reference emulator: each
+                // "test section" runs for ~113 CPU cycles (~341 PPU cycles),
+                // then the displayed counter rolls over to 0. cpu.cycleCount
+                // is the cumulative CPU cycles elapsed before this
+                // instruction's first tick — multiplied by 3 gives the PPU
+                // cycle value the golden log expects. See issue #17.
+                "CYC:${"%1$3s".format((cpu.cycleCount * 3 % 341).toString())}")
     }
 
     private fun format(byte: Byte): String = "%02X".format(byte.toUnsignedInt())

@@ -110,6 +110,43 @@ class GamePakTest {
         assertThat(h.mapper, equalTo(0x12))
     }
 
+    // --- GH #105: 4-screen VRAM flag (iNES byte 6 bit 3). ---
+
+    @Test
+    fun fourScreenBitIsSurfacedFromByte6Bit3() {
+        // byte 6 = 0x08 -> 4-screen bit set, H/V bit (bit 0) clear.
+        val header = ByteArray(16)
+        header[0] = 0x4E; header[1] = 0x45; header[2] = 0x53; header[3] = 0x1A
+        header[6] = 0x08.toByte()
+        val h = Header(header)
+        assertThat(h.fourScreen, equalTo(true))
+    }
+
+    @Test
+    fun fourScreenIsFalseWhenBit3Clear() {
+        // byte 6 = 0x01 -> vertical mirroring, no 4-screen.
+        val header = ByteArray(16)
+        header[0] = 0x4E; header[1] = 0x45; header[2] = 0x53; header[3] = 0x1A
+        header[6] = 0x01.toByte()
+        val h = Header(header)
+        assertThat(h.fourScreen, equalTo(false))
+        // The H/V bit is decoded independently of the 4-screen bit.
+        assertThat(h.mirroring, equalTo(Header.Mirroring.VERTICAL))
+    }
+
+    @Test
+    fun fourScreenAndMirroringBitsAreIndependent() {
+        // byte 6 = 0x09 -> both bit 3 (4-screen) and bit 0 (vertical) set. The
+        // header surfaces both raw bits; deciding that 4-screen wins is the
+        // mapper's job, not the header's.
+        val header = ByteArray(16)
+        header[0] = 0x4E; header[1] = 0x45; header[2] = 0x53; header[3] = 0x1A
+        header[6] = 0x09.toByte()
+        val h = Header(header)
+        assertThat(h.fourScreen, equalTo(true))
+        assertThat(h.mirroring, equalTo(Header.Mirroring.VERTICAL))
+    }
+
     // --- GitHub issue #16: GamePak must validate iNES header magic + size. ---
     // Each test below uses `assertBadHeader { ... }` (defined at top of file)
     // so the assertion fails cleanly with the message we asked for, instead of

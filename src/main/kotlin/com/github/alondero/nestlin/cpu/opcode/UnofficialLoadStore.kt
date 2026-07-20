@@ -23,7 +23,8 @@ class Lax(
         cpu.registers.accumulator = value
         cpu.registers.indexX = value
         cpu.processorStatus.resolveZeroAndNegativeFlags(value)
-        cpu.workCyclesLeft = cycles
+        // Issue #17 / #172: +1 cycle on page cross for abs,Y / ($zp),Y.
+        cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -45,6 +46,8 @@ class Sax(
         cpu.memory[addr] =
             (cpu.registers.accumulator.toUnsignedInt() and
              cpu.registers.indexX.toUnsignedInt()).toSignedByte()
+        // SAX is a store — no page-cross +1 cycle (real 6502 behaviour).
+        // zp / abs / zp,Y / (ind,X) all keep their base cycle count.
         cpu.workCyclesLeft = cycles
     }
 }
@@ -66,6 +69,7 @@ class Ahx(
         val value = (cpu.registers.accumulator.toUnsignedInt() and
                      cpu.registers.indexX.toUnsignedInt()).toSignedByte()
         cpu.memory[addressing.address(cpu)] = value
+        // AHX is a store — no page-cross +1 cycle.
         cpu.workCyclesLeft = 4
     }
 }
@@ -102,7 +106,8 @@ class Las(
         cpu.registers.indexX = value
         cpu.registers.stackPointer = value
         cpu.processorStatus.resolveZeroAndNegativeFlags(value)
-        cpu.workCyclesLeft = 4
+        // LAS abs,Y — +1 cycle on page cross.
+        cpu.workCyclesLeft = 4 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
 }
 
@@ -115,6 +120,10 @@ class Las(
  *  - 0x9B = TAS abs,Y
  *  - 0x9C = SHY abs,X
  *  - 0x9E = SHX abs,Y
+ *
+ * All three are store-like and do NOT add a cycle on page cross
+ * (real 6502 behaviour). The base cycle count already reflects the
+ * indexed addressing mode's cost.
  */
 class Tas(
     val addressing: Addressing,
@@ -125,6 +134,7 @@ class Tas(
         cpu.registers.stackPointer = cpu.registers.accumulator
         // Original helper ignored the address value; we replicate that.
         @Suppress("UNUSED_VARIABLE") val addr = addressing.address(cpu)
+        // TAS is a store-side effect on SP — no page-cross +1.
         cpu.workCyclesLeft = cycles
     }
 }
@@ -139,6 +149,7 @@ class Shx(
         val highByte = ((addr shr 8) + 1) and 0xFF
         cpu.memory[addr] =
             (cpu.registers.indexX.toUnsignedInt() and highByte).toSignedByte()
+        // SHX is a store — no page-cross +1.
         cpu.workCyclesLeft = cycles
     }
 }
@@ -153,6 +164,7 @@ class Shy(
         val highByte = ((addr shr 8) + 1) and 0xFF
         cpu.memory[addr] =
             (cpu.registers.indexY.toUnsignedInt() and highByte).toSignedByte()
+        // SHY is a store — no page-cross +1.
         cpu.workCyclesLeft = cycles
     }
 }

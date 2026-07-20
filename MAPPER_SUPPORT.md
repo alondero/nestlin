@@ -59,6 +59,16 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
   - CHR banking (normal mode): R0-R1 = 2KB at $0000-$0FFF, R2-R5 = four 1KB at $1000-$1FFF
   - CHR banking (inverted mode): R2-R5 = four 1KB at $0000-$0FFF, R0-R1 = 2KB at $1000-$1FFF
   - Scanline IRQ via PPU A12 rising edge detection (wired 2026-04-17)
+- **Edge cases / quirks:**
+  - **1-bank (8KB) PRG ROM (issue #98):** the `(prgBankCount - 2)` expressions in
+    `cpuRead` for the $8000/$C000 windows are wrapped with `coerceAtLeast(0)`. With
+    prgBankCount = 1, the formula `-1` would otherwise produce a negative array
+    index and throw `ArrayIndexOutOfBoundsException`. No commercial MMC3 game has
+    a 1-bank PRG (the smallest MMC3 titles ship 32KB+), so this is a defensive
+    guard, not a real-game fix. Mirrors the existing `coerceAtLeast(0)` in
+    `Mapper206.cpuRead`. Regression test lives in `Mapper4ChrBankingTest`
+    (uses reflection to shrink `programRom` to 8KB, since the normal GamePak
+    constructor rejects iNES byte 4 = 0 per GH #212).
 - **Fixes Applied (2026-05-18):**
   - PPU sprite-fetch pipeline rewritten: sprite evaluation now happens at cycle 65 (no pattern reads) and sprite tile fetches happen at cycles 257-320 of the previous scanline, matching real PPU. Removed eager sprite reads at cycle 0 that were producing a second spurious A12 rising edge per scanline.
   - 8x16 sprite mode: pattern table now resolved per-sprite (PPUCTRL bit 3 was being used for all sprites, which is only correct for 8x8 mode).
@@ -997,8 +1007,10 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
     `$0000-$0FFF` (low bit ignored, so adjacent 1 KB pages pair), R2-R5 select
     four 1 KB banks at `$1000-$1FFF`. Bit 7 of the bank-select register is ignored.
   - **Mirroring is hardwired** from the iNES header — there is no `$A000` mirroring
-    register. (DRROM Gauntlet uses 4-screen, signalled via the header's 4-screen bit;
-    the cartridge board wires it physically.)
+    register. DRROM Gauntlet uses **4-screen** VRAM, signalled by the header's
+    4-screen bit (byte 6 bit 3); the cartridge board wires the extra 2 KB physically.
+    That bit is honoured (GH #105): `currentMirroring()` returns `FOUR_SCREEN` and the
+    PPU exposes four distinct nametables instead of an H/V mirror.
   - **No scanline IRQ counter** — writes to `$C000`/`$C001` (latch/reload) and
     `$E000`/`$E001` (enable/disable) are accepted as no-ops. Mapper 206 inherits
     Mapper's default `isIrqPending() = false` and `acknowledgeIrq() = {}`.
@@ -1017,9 +1029,16 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
   ignored, R2-R5 1 KB), the bank-select/data protocol across the full `$8000-$FFFF`
   decode, hardwired PRG/CHR modes (writes with bits 6/7 set in `$8000` do not flip
   into mode 1 / invert), header-driven mirroring, PRG-RAM read/write, the missing
-  IRQ, CHR-RAM fallback, and save/load round-trip. End-to-end ROM boot/render
-  verification is left for a follow-up Mesen2 comparison (see `MapperVerificationTest`
-  pattern) — Gauntlet and RBI Baseball are the natural oracles.
+  IRQ, CHR-RAM fallback, and save/load round-trip. `currentMirroring()` returning
+  `FOUR_SCREEN` when the header 4-screen bit is set (and 4-screen winning over the
+  H/V bit) is covered too; the four-independent-nametable resolution itself is tested
+  in `NametableMirroringTest`. End-to-end ROM boot/render verification is left for a
+  follow-up Mesen2 comparison (see `MapperVerificationTest` pattern) — Gauntlet and
+  RBI Baseball are the natural oracles.
+- **Real-ROM boot gate:** Gauntlet's NO-INTRO dump is mislabelled mapper 4 (see the
+  `tools/rom_info.py patch-namco108` recipe); after patching to mapper 206,
+  `./gradlew bootcheck -Prom=<gauntlet.mapper206.nes> -Pframes=120` returns **PASS**
+  (loads as Mapper206, 116 NMIs in 120 frames).
 
 ---
 

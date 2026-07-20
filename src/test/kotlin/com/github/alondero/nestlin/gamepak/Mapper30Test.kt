@@ -53,6 +53,11 @@ class Mapper30Test {
 
     @Test
     fun `mapper 30 is selected for header mapper 30`() {
+        // Same tautological-shape assertion Mapper7Test/Mapper33Test/Mapper65Test/
+        // Mapper71Test use — the alternative `is Mapper30` check is a compile-time
+        // tautology, but the test's job is to prove GamePak.createMapper() returns
+        // *something* of this concrete type, not a generic Mapper.
+        @Suppress("USELESS_IS_CHECK")
         assertThat(newMapper() is Mapper30, equalTo(true))
     }
 
@@ -341,7 +346,10 @@ class Mapper30Test {
         // bit 5 alone gives (v>>5) & 3 = 0b110 & 0b11 = 2, not 3 — both bits
         // must be set for chrBank = 3.
         m.cpuWrite(0x8000, 0xE1.toSignedByte())
-        val snap = m.snapshot()!!
+        // Mapper30.snapshot() overrides the base class's nullable signature
+        // with a non-null return; the local Kotlin compiler can see that, so
+        // the `!!` from the original draft is just a warning. Direct bind.
+        val snap = m.snapshot()
         assertThat(snap.mapperId, equalTo(30))
         assertThat(snap.type, equalTo("UNROM512"))
         assertThat(snap.banks["prgBank"], equalTo(1))

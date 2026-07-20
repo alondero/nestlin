@@ -1,8 +1,8 @@
 package com.github.alondero.nestlin.compare
 
+import com.github.alondero.nestlin.testutil.TestRoms
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
-import java.nio.file.Paths
 
 /**
  * End-to-end smoke test for the [Mesen2Session] pool (issue #61).
@@ -39,7 +39,7 @@ class Mesen2SessionSmokeTest {
 
     @Test
     fun sessionReusesOneProcessForTwoCapturesOnSameRom() {
-        val rom = Paths.get("testroms/nestest.nes")
+        val rom = TestRoms.nestestPath()
 
         val first = Mesen2Session.forRom(rom).runToAndCaptureState(60)
         println("[session] nestest frame 60 PC=0x${first.cpu.pc.toString(16).uppercase()} " +
@@ -70,7 +70,7 @@ class Mesen2SessionSmokeTest {
      */
     @Test
     fun forRomReplacesADeadInstance() {
-        val rom = Paths.get("testroms/nestest.nes")
+        val rom = TestRoms.nestestPath()
 
         val dead = Mesen2Session.forRom(rom)
         dead.close(force = true)

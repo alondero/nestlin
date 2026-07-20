@@ -235,13 +235,14 @@ class Header(headerData: ByteArray) {
     val byte6Flags: Int = headerData[6].toUnsignedInt() and 0x0F
 
     /**
-     * iNES "four-screen VRAM" flag (byte 6 bit 3). True when the cartridge
-     * carries extra on-board VRAM so all four nametables ($2000/$2400/$2800/
-     * $2C00) are independently addressable. UNROM 512 (mapper 30) repurposes
-     * this bit as a "single-screen switchable / four-screen fixed" selector —
-     * see `Mapper30.init` for the decode. The existing [mirroring] field only
-     * covers bit 0 (H/V), so a dedicated accessor avoids forcing every
-     * mapper that reads byte 6 to also reach for `headerData[6]` directly.
+     * iNES byte 6 bit 3 (`0x08`) — the 4-screen VRAM flag. When set, the cartridge
+     * solders on an extra 2 KB of nametable RAM so all four PPU nametable slots
+     * ($2000/$2400/$2800/$2C00) are physically distinct, and the horizontal/vertical
+     * [mirroring] bit is ignored by the board. Reported separately from [mirroring]
+     * (which stays a two-value H/V enum) so that the ~20 mappers pattern-matching
+     * `when (header.mirroring)` exhaustively don't have to grow a fourth arm each.
+     * A mapper whose board honours 4-screen (e.g. Mapper 206 / DRROM Gauntlet)
+     * checks this and returns [Mapper.MirroringMode.FOUR_SCREEN]. See GH #105.
      */
     val fourScreen: Boolean = headerData[6].toUnsignedInt() and 0x08 != 0
 
