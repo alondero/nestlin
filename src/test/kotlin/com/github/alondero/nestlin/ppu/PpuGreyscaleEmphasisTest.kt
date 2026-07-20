@@ -78,4 +78,73 @@ class PpuGreyscaleEmphasisTest {
 
         assertThat(frame.scanlines[120][128], equalTo(NesPalette.getRgb(backdropIndex)))
     }
+
+    @Test
+    fun `green emphasis attenuates red and blue channels`() {
+        val memory = Memory()
+        val ppu = Ppu(memory)
+        memory.ppuAddressedMemory.ppuInternalMemory[0x3F00] = backdropIndex.toByte()
+        memory.ppuAddressedMemory.mask.register = 0b0100_0000.toByte() // green emphasis, rendering off
+
+        val frame = runOneFrame(ppu)
+        val pixel = frame.scanlines[120][128]
+        val base = NesPalette.getRgb(backdropIndex)
+
+        val r = (pixel shr 16) and 0xFF
+        val g = (pixel shr 8) and 0xFF
+        val b = pixel and 0xFF
+        val baseR = (base shr 16) and 0xFF
+        val baseG = (base shr 8) and 0xFF
+        val baseB = base and 0xFF
+
+        assertThat("red attenuated", r < baseR, equalTo(true))
+        assertThat("green channel unchanged", g, equalTo(baseG))
+        assertThat("blue attenuated", b < baseB, equalTo(true))
+    }
+
+    @Test
+    fun `blue emphasis attenuates red and green channels`() {
+        val memory = Memory()
+        val ppu = Ppu(memory)
+        memory.ppuAddressedMemory.ppuInternalMemory[0x3F00] = backdropIndex.toByte()
+        memory.ppuAddressedMemory.mask.register = 0b1000_0000.toByte() // blue emphasis, rendering off
+
+        val frame = runOneFrame(ppu)
+        val pixel = frame.scanlines[120][128]
+        val base = NesPalette.getRgb(backdropIndex)
+
+        val r = (pixel shr 16) and 0xFF
+        val g = (pixel shr 8) and 0xFF
+        val b = pixel and 0xFF
+        val baseR = (base shr 16) and 0xFF
+        val baseG = (base shr 8) and 0xFF
+        val baseB = base and 0xFF
+
+        assertThat("red attenuated", r < baseR, equalTo(true))
+        assertThat("green attenuated", g < baseG, equalTo(true))
+        assertThat("blue channel unchanged", b, equalTo(baseB))
+    }
+
+    @Test
+    fun `all-three emphasis bits attenuate every channel`() {
+        val memory = Memory()
+        val ppu = Ppu(memory)
+        memory.ppuAddressedMemory.ppuInternalMemory[0x3F00] = backdropIndex.toByte()
+        memory.ppuAddressedMemory.mask.register = 0b1110_0000.toByte() // red+green+blue emphasis
+
+        val frame = runOneFrame(ppu)
+        val pixel = frame.scanlines[120][128]
+        val base = NesPalette.getRgb(backdropIndex)
+
+        val r = (pixel shr 16) and 0xFF
+        val g = (pixel shr 8) and 0xFF
+        val b = pixel and 0xFF
+        val baseR = (base shr 16) and 0xFF
+        val baseG = (base shr 8) and 0xFF
+        val baseB = base and 0xFF
+
+        assertThat("red attenuated", r < baseR, equalTo(true))
+        assertThat("green attenuated", g < baseG, equalTo(true))
+        assertThat("blue attenuated", b < baseB, equalTo(true))
+    }
 }
