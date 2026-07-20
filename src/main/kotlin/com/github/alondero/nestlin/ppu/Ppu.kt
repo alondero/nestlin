@@ -171,6 +171,7 @@ class Ppu(var memory: Memory) {
                 in 256..319 -> fetchSpriteTile()
                 in 320..335 -> fetchData() // Ready for next scanline
             }
+            if (scanline < RESOLUTION_HEIGHT && cycle in 1..256) renderPixel()
             checkAndSetVerticalAndHorizontalData()
 
         } else if (scanline < RESOLUTION_HEIGHT && cycle in 1..256) {
@@ -333,8 +334,10 @@ class Ppu(var memory: Memory) {
                 if (secondaryOam.size >= 8) {
                     // A 9th in-range sprite sets PPUSTATUS bit 5 (sprite overflow),
                     // cleared at pre-render dot 1 alongside the other status flags.
-                    // (The hardware's buggy diagonal-scan false positives/negatives
-                    // are not modelled — only the documented >8-real-sprites case.)
+                    // The hardware's cycle-by-cycle diagonal-OAM scan can produce
+                    // false positives and negatives. That quirk is intentionally not
+                    // modelled here: it requires a per-dot evaluation state machine,
+                    // while this one-shot scan covers the documented >8-sprite case.
                     memory.ppuAddressedMemory.status.register =
                         memory.ppuAddressedMemory.status.register.setBit(5)
                     break
@@ -543,131 +546,127 @@ class Ppu(var memory: Memory) {
 //
 //        While all of this is going on, sprite evaluation for the next scanline is taking place as a seperate process, independent to what's happening here.
 
-        // Render pixel during visible scanline and cycles 1-256
-        // NES renders first pixel at NES dot 10 (not dot 1), so we shift our rendering by
-        // 1 cycle: our cycle 1 corresponds to NES dot 2 (the first visible dot after the
-        // pre-render 2-tile preload). With the cycle counter now 0-indexed (cycle 0 ==
-        // NES dot 1), the visible range is cycle 1..256, mapping to x = 0..255.
-        if (scanline < RESOLUTION_HEIGHT && cycle >= 1 && cycle <= 256) {
-            val x = cycle - 1
+    }
 
-            // Extract pixel from shift registers
-            val fineX = memory.ppuAddressedMemory.fineXScroll
-            val shiftAmount = 15 - fineX
+    /** Render one visible pixel. Called independently of the background/sprite fetch window. */
+    private fun renderPixel() {
+        val x = cycle - 1
 
-            val patternBit0 = (patternShiftLow shr shiftAmount) and 1
-            val patternBit1 = (patternShiftHigh shr shiftAmount) and 1
-            val pixelValue = (patternBit1 shl 1) or patternBit0
+        // Extract pixel from shift registers
+        val fineX = memory.ppuAddressedMemory.fineXScroll
+        val shiftAmount = 15 - fineX
 
-            // Extract palette bits
-            val paletteBit0 = (paletteShiftLow shr shiftAmount) and 1
-            val paletteBit1 = (paletteShiftHigh shr shiftAmount) and 1
-            val paletteIndex = (paletteBit1 shl 1) or paletteBit0
+        val patternBit0 = (patternShiftLow shr shiftAmount) and 1
+        val patternBit1 = (patternShiftHigh shr shiftAmount) and 1
+        val pixelValue = (patternBit1 shl 1) or patternBit0
 
-            // Shift registers every cycle to advance to next pixel
-            // Keep only lower 16 bits (shift registers are 16-bit, not 32-bit)
-            patternShiftLow = (patternShiftLow shl 1) and 0xFFFF
-            patternShiftHigh = (patternShiftHigh shl 1) and 0xFFFF
-            paletteShiftLow = (paletteShiftLow shl 1) and 0xFFFF
-            paletteShiftHigh = (paletteShiftHigh shl 1) and 0xFFFF
+        // Extract palette bits
+        val paletteBit0 = (paletteShiftLow shr shiftAmount) and 1
+        val paletteBit1 = (paletteShiftHigh shr shiftAmount) and 1
+        val paletteIndex = (paletteBit1 shl 1) or paletteBit0
 
-            // Update sprite X counters and shift only active sprites
-            // On NES hardware, each sprite has an X position counter that counts down each cycle.
-            // When counter reaches 0, the sprite becomes "active" and its shift registers output pixels.
-            activeSpriteBuffer.forEach { sprite ->
-                if (sprite.xCounter > 0) {
-                    // Counter not yet zero, decrement it
-                    sprite.xCounter--
-                    if (sprite.xCounter == 0) {
-                        // Counter reached 0, sprite is now active
-                        sprite.isActive = true
-                    }
-                } else {
-                    // Sprite is active (counter already at 0), shift its registers
-                    sprite.shiftLow = (sprite.shiftLow shl 1) and 0xFF
-                    sprite.shiftHigh = (sprite.shiftHigh shl 1) and 0xFF
+        // Shift registers every cycle to advance to next pixel
+        // Keep only lower 16 bits (shift registers are 16-bit, not 32-bit)
+        patternShiftLow = (patternShiftLow shl 1) and 0xFFFF
+        patternShiftHigh = (patternShiftHigh shl 1) and 0xFFFF
+        paletteShiftLow = (paletteShiftLow shl 1) and 0xFFFF
+        paletteShiftHigh = (paletteShiftHigh shl 1) and 0xFFFF
+
+        // Update sprite X counters and shift only active sprites
+        // On NES hardware, each sprite has an X position counter that counts down each cycle.
+        // When counter reaches 0, the sprite becomes "active" and its shift registers output pixels.
+        activeSpriteBuffer.forEach { sprite ->
+            if (sprite.xCounter > 0) {
+                // Counter not yet zero, decrement it
+                sprite.xCounter--
+                if (sprite.xCounter == 0) {
+                    // Counter reached 0, sprite is now active
+                    sprite.isActive = true
                 }
-            }
-
-
-            // Look up color in palette RAM
-            var finalPixel = 0
-            var finalPalette = 0
-            var usedBackground = false
-
-            // Extract background pixel. PPUMASK bit 3 gates the background layer
-            // on its own (independent of bit 4) — a disabled background renders
-            // as pixel value 0 (the backdrop) even while sprites are showing.
-            val showBg = memory.ppuAddressedMemory.mask.showBackground()
-            val showBgLeft = memory.ppuAddressedMemory.mask.backgroundInLeftmost8px()
-            val pixelValueVisible = if (!showBg || (x < 8 && !showBgLeft)) 0 else pixelValue
-
-            val paletteAddr = if (pixelValueVisible == 0) {
-                0x3F00  // Universal background color
             } else {
-                usedBackground = true
-                0x3F00 + (paletteIndex shl 2) + pixelValueVisible
+                // Sprite is active (counter already at 0), shift its registers
+                sprite.shiftLow = (sprite.shiftLow shl 1) and 0xFF
+                sprite.shiftHigh = (sprite.shiftHigh shl 1) and 0xFF
             }
-
-            var rgbColor = resolveColor(paletteAddr)
-
-            // Check sprites (in order, first non-transparent sprite wins).
-            // PPUMASK bit 4 gates the sprite layer on its own: with sprites
-            // disabled, no sprite pixels and no sprite-0 hit.
-            val showSprites = memory.ppuAddressedMemory.mask.showSprites()
-            val showSpritesLeft = memory.ppuAddressedMemory.mask.spritesInLeftmost8px()
-            if (showSprites) for (sprite in activeSpriteBuffer) {
-                // Skip if clipping leftmost 8px
-                val pixelX = cycle - 1
-                if (pixelX < 8 && !showSpritesLeft) continue
-
-                // Only render sprites that are actively outputting pixels
-                // (xCounter reached 0 and we're within the 8-pixel output window)
-                if (!sprite.isActive) continue
-
-                // Extract sprite pixel from shift register MSB
-                // Since shift registers shift left, the MSB (bit 7) is the current pixel
-                val spriteBit0 = (sprite.shiftLow shr 7) and 1
-                val spriteBit1 = (sprite.shiftHigh shr 7) and 1
-                val spritePixel = (spriteBit1 shl 1) or spriteBit0
-
-                // Skip transparent sprite pixels
-                if (spritePixel == 0) continue
-
-                // Sprite 0 Hit detection
-                if (sprite.data.index == 0 && usedBackground && pixelX < 255) {
-                    val mask = memory.ppuAddressedMemory.mask
-                    var canHit = true
-                    if (pixelX < 8) {
-                        if (!mask.backgroundInLeftmost8px() || !mask.spritesInLeftmost8px()) {
-                            canHit = false
-                        }
-                    }
-                    if (canHit) {
-                        memory.ppuAddressedMemory.status.register = 
-                            memory.ppuAddressedMemory.status.register.setBit(6)
-                    }
-                }
-
-                // First non-transparent sprite in OAM order always wins the sprite-sprite priority contest
-                if (sprite.data.priority == 0 || !usedBackground) {
-                    // In front of background OR background is transparent
-                    finalPixel = spritePixel
-                    finalPalette = sprite.data.paletteIndex
-                }
-                
-                // Even if hidden by background, this sprite blocks lower-indexed sprites
-                break 
-            }
-
-            // Look up final color
-            if (finalPixel != 0) {
-                // Sprite pixel is visible
-                rgbColor = resolveColor(0x3F10 + (finalPalette shl 2) + finalPixel)
-            }
-
-            frame[x, scanline] = rgbColor
         }
+
+        // Look up color in palette RAM
+        var finalPixel = 0
+        var finalPalette = 0
+        var usedBackground = false
+
+        // Extract background pixel. PPUMASK bit 3 gates the background layer
+        // on its own (independent of bit 4) — a disabled background renders
+        // as pixel value 0 (the backdrop) even while sprites are showing.
+        val showBg = memory.ppuAddressedMemory.mask.showBackground()
+        val showBgLeft = memory.ppuAddressedMemory.mask.backgroundInLeftmost8px()
+        val pixelValueVisible = if (!showBg || (x < 8 && !showBgLeft)) 0 else pixelValue
+
+        val paletteAddr = if (pixelValueVisible == 0) {
+            0x3F00  // Universal background color
+        } else {
+            usedBackground = true
+            0x3F00 + (paletteIndex shl 2) + pixelValueVisible
+        }
+
+        var rgbColor = resolveColor(paletteAddr)
+
+        // Check sprites (in order, first non-transparent sprite wins).
+        // PPUMASK bit 4 gates the sprite layer on its own: with sprites
+        // disabled, no sprite pixels and no sprite-0 hit.
+        val showSprites = memory.ppuAddressedMemory.mask.showSprites()
+        val showSpritesLeft = memory.ppuAddressedMemory.mask.spritesInLeftmost8px()
+        if (showSprites) for (sprite in activeSpriteBuffer) {
+            // Skip if clipping leftmost 8px
+            val pixelX = cycle - 1
+            if (pixelX < 8 && !showSpritesLeft) continue
+
+            // Only render sprites that are actively outputting pixels
+            // (xCounter reached 0 and we're within the 8-pixel output window)
+            if (!sprite.isActive) continue
+
+            // Extract sprite pixel from shift register MSB
+            // Since shift registers shift left, the MSB (bit 7) is the current pixel
+            val spriteBit0 = (sprite.shiftLow shr 7) and 1
+            val spriteBit1 = (sprite.shiftHigh shr 7) and 1
+            val spritePixel = (spriteBit1 shl 1) or spriteBit0
+
+            // Skip transparent sprite pixels
+            if (spritePixel == 0) continue
+
+            // Sprite 0 Hit detection
+            if (sprite.data.index == 0 && usedBackground && pixelX < 255) {
+                val mask = memory.ppuAddressedMemory.mask
+                var canHit = true
+                if (pixelX < 8) {
+                    if (!mask.backgroundInLeftmost8px() || !mask.spritesInLeftmost8px()) {
+                        canHit = false
+                    }
+                }
+                if (canHit) {
+                    memory.ppuAddressedMemory.status.register =
+                        memory.ppuAddressedMemory.status.register.setBit(6)
+                }
+            }
+
+            // First non-transparent sprite in OAM order always wins the sprite-sprite priority contest
+            if (sprite.data.priority == 0 || !usedBackground) {
+                // In front of background OR background is transparent
+                finalPixel = spritePixel
+                finalPalette = sprite.data.paletteIndex
+            }
+
+            // Even if hidden by background, this sprite blocks lower-indexed sprites
+            break
+        }
+
+        // Look up final color
+        if (finalPixel != 0) {
+            // Sprite pixel is visible
+            rgbColor = resolveColor(0x3F10 + (finalPalette shl 2) + finalPixel)
+        }
+
+        frame[x, scanline] = rgbColor
     }
 
     /**
@@ -854,7 +853,11 @@ class ObjectAttributeMemory {
 
     operator fun get(addr: Int): Byte = memory[addr and 0xFF]
     operator fun set(addr: Int, value: Byte) {
-        memory[addr and 0xFF] = value
+        val index = addr and 0xFF
+        // Attribute bits 2-4 are not wired on the 2C02 and read back as zero.
+        memory[index] = if ((index and 0x03) == 2) {
+            (value.toUnsignedInt() and 0xE3).toSignedByte()
+        } else value
     }
 
     /**
@@ -873,7 +876,12 @@ class ObjectAttributeMemory {
     }
 
     fun saveState(out: DataOutput) { out.write(memory) }
-    fun loadState(input: DataInput) { input.readFully(memory) }
+    fun loadState(input: DataInput) {
+        input.readFully(memory)
+        for (i in 2 until memory.size step 4) {
+            memory[i] = (memory[i].toUnsignedInt() and 0xE3).toSignedByte()
+        }
+    }
 }
 
 /**

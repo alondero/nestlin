@@ -26,7 +26,7 @@ Today's regression net for rendering/mapper bugs is heavily weighted toward **pi
 | Test | File | What it checks | Cost | Notes |
 |---|---|---|---|---|
 | `GoldenLogTest` | `src/test/kotlin/.../GoldenLogTest.kt:10-91` | CPU instruction-by-instruction trace vs `src/test/resources/nestest.log` | ~10–30s | The gold standard for CPU. Byte-precise, no display, no Mesen2 process. **This is the shape every test should aspire to.** |
-| `StateComparisonTest.compareStates` (×3) | `.../compare/StateComparisonTest.kt:1-68` | CPU + PPU regs + RAM + OAM + palette at target frame | ~30s for 3 cases (Mesen2 boots once per case) | Already non-pixel. Just needs the runner to stop booting cold per test. |
+| `StateComparisonTest.compareStates` (×3) | `.../compare/StateComparisonTest.kt:1-76` | Full CPU + PPU + RAM snapshots at nominal frame N | Disabled | Mesen2 captures at scanline 240 pre-NMI while Nestlin captures at scanline 261 post-NMI, so full-state equality is invalid. Mapper regressions compare stable render outputs instead. |
 | `StateCaptureIntegrationTest` (×3) | `.../compare/StateCaptureIntegrationTest.kt:1-57` | Same shape as above, Tetris @ frame 60 | ~10s per case | Diagnostic variant. |
 
 ### 2.3 Helper infrastructure

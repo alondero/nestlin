@@ -25,9 +25,8 @@ import org.junit.jupiter.api.Test
  * spends the next 513 ticks decrementing workCyclesLeft instead of
  * fetching new instructions — exactly as real hardware does.
  *
- * The OAM content is identical to before the fix (the byte copy is still
- * synchronous), so the *result* of the DMA is unchanged; only the timing
- * is corrected.
+ * DMA still uses the ordinary OAM write path: Y/tile/X bytes are copied exactly,
+ * while unwired attribute bits 2-4 read back as zero, matching the 2C02.
  */
 class MemoryOamDmaTest {
 
@@ -62,10 +61,12 @@ class MemoryOamDmaTest {
             equalTo(513)
         )
 
-        // And the OAM must still contain the copied bytes (correctness unchanged).
+        // OAM receives every byte; attribute bytes additionally clear the 2C02's
+        // unwired bits 2-4.
         for (i in 0 until 256) {
             val oamByte = memory.ppuAddressedMemory.objectAttributeMemory[i].toUnsignedInt()
-            assertThat("OAM[$i]", oamByte, equalTo(i and 0xFF))
+            val expected = if ((i and 0x03) == 2) i and 0xE3 else i
+            assertThat("OAM[$i]", oamByte, equalTo(expected))
         }
     }
 

@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.compare
 
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
@@ -15,7 +16,12 @@ import java.nio.file.Paths
  * are method parameters now), and the data source is a `List<Arguments>`
  * discovered by `@MethodSource("data")`. The test name template moves from
  * `@Parameterized.Parameters(name = ...)` to `@ParameterizedTest(name = ...)`.
+ *
+ * Disabled because the available frame hooks are not synchronized: Mesen2 captures
+ * at scanline 240 before NMI, while Nestlin captures at scanline 261 after NMI.
+ * Mapper regression tests compare the stable render-output subset instead.
  */
+@Disabled("Cross-emulator full state is captured at different points in the frame")
 @org.junit.jupiter.api.Tag("mesen")
 class StateComparisonTest {
 
