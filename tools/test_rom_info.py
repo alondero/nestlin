@@ -158,6 +158,25 @@ class PlainInesDecodeTest(unittest.TestCase):
         self.assertIn("patch recipe", w.lower())
         self.assertIn("if your rom", w.lower())
 
+    def test_mapper_4_sunsoft2_verification_prompt(self):
+        # As of issue #204 the mapper-4 family includes Sunsoft-2/Sunsoft-4
+        # titles (NESdev mapper 68). The full warning list should mention
+        # both Namco 108 AND Sunsoft-2 alongside their respective patch
+        # recipes. Most mapper-4 games are still real MMC3, so the warning
+        # is a heads-up, not a mislabel claim.
+        rom = make_rom(b6=0x40, b7=0x00)
+        h = rom_info.decode_bytes(rom, full_crc=False)
+        self.assertEqual(h.mapper, 4)
+        warnings_text = " ".join(h.mislabel_warnings).lower()
+        self.assertIn("namco 108", warnings_text)
+        self.assertIn("sunsoft", warnings_text)
+        # Both patch recipes must appear so the user can copy/paste.
+        self.assertIn("0xe0", warnings_text)
+        self.assertIn("0x40", warnings_text)
+        # And both target mappers must be named (206 and 68).
+        self.assertIn("206", " ".join(h.mislabel_warnings))
+        self.assertIn("68", " ".join(h.mislabel_warnings))
+
 
 # ---------------------------------------------------------------------------
 # Header decode — NES 2.0
@@ -517,6 +536,129 @@ class PatchNamco108Test(unittest.TestCase):
                 rom_info.patch_namco108(bad)
         finally:
             os.unlink(bad)
+
+
+# ---------------------------------------------------------------------------
+# Sunsoft-2 patch (mapper 4 -> 68; issue #204)
+# ---------------------------------------------------------------------------
+
+class PatchSunsoft2Test(unittest.TestCase):
+
+    def test_patch_changes_byte7_only_when_byte6_already_0x40(self):
+        # Valkyrie's actual header pattern: b6 = 0x40 (mapper low nibble 4,
+        # horizontal mirroring, no battery), b7 = 0x00. After the patch,
+        # b6 stays 0x40 (only the high nibble is touched), b7 becomes 0x40.
+        rom = make_rom(b6=0x40, b7=0x00)
+        p = write_temp_rom(rom)
+        try:
+            out, diff = rom_info.patch_sunsoft2(str(p))
+            try:
+                self.assertEqual(diff["byte6_before"], "0x40")
+                self.assertEqual(diff["byte6_after"], "0x40")
+                self.assertEqual(diff["byte7_before"], "0x00")
+                self.assertEqual(diff["byte7_after"], "0x40")
+                self.assertEqual(diff["mapper_after"], 68)
+                # Output must decode as mapper 68.
+                h = rom_info.decode_header(str(out), full_crc=False)
+                self.assertEqual(h.mapper, 68)
+            finally:
+                if out.exists():
+                    out.unlink()
+        finally:
+            p.unlink()
+
+    def test_patch_sets_both_high_nibbles_to_4(self):
+        # Variant with battery flag (b6 bit 1) + vertical mirroring flag
+        # already set in the low nibble — the recipe must PRESERVE them.
+        rom = make_rom(b6=0x43, b7=0x0C)  # battery + vertical; format bits in b7
+        p = write_temp_rom(rom)
+        try:
+            out, diff = rom_info.patch_sunsoft2(str(p))
+            try:
+                self.assertEqual(diff["byte6_after"], "0x43",
+                                 "low nibble of byte 6 (mirroring + battery) must be preserved")
+                self.assertEqual(diff["byte7_after"], "0x4C",
+                                 "low nibble of byte 7 (format bits) must be preserved")
+                h = rom_info.decode_header(str(out), full_crc=False)
+                self.assertEqual(h.mapper, 68)
+                self.assertTrue(h.has_battery,
+                                "battery flag (b6 bit 1) must survive the patch")
+                self.assertEqual(h.mirroring, "vertical",
+                                 "mirroring flag (b6 bit 0) must survive the patch")
+            finally:
+                if out.exists():
+                    out.unlink()
+        finally:
+            p.unlink()
+
+    def test_patch_preserves_other_bytes(self):
+        rom = make_rom(b6=0x40, b7=0x00, fill_prg=0xCD)
+        p = write_temp_rom(rom)
+        try:
+            out, _ = rom_info.patch_sunsoft2(str(p))
+            try:
+                with open(out, "rb") as f:
+                    patched = f.read()
+                # Header bytes 0..5 (magic + bank counts) must be unchanged.
+                self.assertEqual(patched[0:6], rom[0:6])
+                # Header bytes 8..15 must be unchanged.
+                self.assertEqual(patched[8:16], rom[8:16])
+                # PRG body must be unchanged.
+                self.assertEqual(patched[16:], rom[16:])
+            finally:
+                if out.exists():
+                    out.unlink()
+        finally:
+            p.unlink()
+
+    def test_patch_does_not_modify_source(self):
+        # The "never touches the source" guarantee is the whole point of
+        # using a sibling copy; lock it in with a hash check.
+        rom = make_rom(b6=0x40, b7=0x00)
+        p = write_temp_rom(rom)
+        try:
+            source_hash_before = zlib.crc32(rom) & 0xFFFFFFFF
+            out, _ = rom_info.patch_sunsoft2(str(p))
+            try:
+                with open(p, "rb") as f:
+                    source_bytes_after = f.read()
+                source_hash_after = zlib.crc32(source_bytes_after) & 0xFFFFFFFF
+                self.assertEqual(source_hash_after, source_hash_before)
+                # And the file on disk is byte-identical to the original.
+                self.assertEqual(source_bytes_after, rom)
+            finally:
+                if out.exists():
+                    out.unlink()
+        finally:
+            p.unlink()
+
+    def test_patch_rejects_non_ines(self):
+        with tempfile.NamedTemporaryFile(suffix=".nes", delete=False) as f:
+            f.write(b"NOPE\x00" + b"\x00" * 100)
+            bad = f.name
+        try:
+            with self.assertRaises(rom_info.BadRomFile):
+                rom_info.patch_sunsoft2(bad)
+        finally:
+            os.unlink(bad)
+
+    def test_patch_output_default_suffix_is_mapper68(self):
+        # The default output path appends ".mapper68" before the extension,
+        # mirroring the .mapper206 convention for Namco 108. Lock the naming
+        # in so a future refactor can't silently change it (test pipelines
+        # rely on the predictable suffix).
+        rom = make_rom(b6=0x40, b7=0x00)
+        p = write_temp_rom(rom, suffix=".nes")
+        try:
+            out, _ = rom_info.patch_sunsoft2(str(p))
+            try:
+                self.assertTrue(out.name.endswith(".mapper68.nes"),
+                                f"expected .mapper68.nes suffix, got {out.name}")
+            finally:
+                if out.exists():
+                    out.unlink()
+        finally:
+            p.unlink()
 
 
 # ---------------------------------------------------------------------------
