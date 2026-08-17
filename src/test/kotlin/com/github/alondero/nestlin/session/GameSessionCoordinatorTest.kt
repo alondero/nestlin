@@ -517,10 +517,17 @@ class GameSessionCoordinatorTest {
     fun `loadRom surfaces an I-O error from the underlying load`() {
         val nestlin = Nestlin()
         val (coord, _) = coordinator(nestlin)
-        // A path that does not exist — the underlying loader raises a
-        // checked-style exception (IOOBE) via the RomLoader.
-        val missing = Paths.get("Z:/no/such/rom.nes")
-        assertThrowsWithMessage<Exception>("Z:\\no\\such\\rom.nes") {
+        // A path under a fresh, unique temp directory that does not
+        // exist on any platform. The underlying loader's
+        // `Files.readAllBytes` raises `NoSuchFileException` (a subclass
+        // of IOException) for a missing file; we match on the file
+        // name only, because path separators differ between Linux
+        // (`/tmp/.../missing.nes`) and Windows (`C:\Users\...\missing.nes`)
+        // and the JDK's NoSuchFileException message echoes whatever
+        // path it was constructed with.
+        val tmp = java.nio.file.Files.createTempDirectory("nestlin-coord-test-")
+        val missing = tmp.resolve("definitely-not-here.nes")
+        assertThrowsWithMessage<java.io.IOException>("definitely-not-here.nes") {
             coord.loadRom(missing)
         }
     }
