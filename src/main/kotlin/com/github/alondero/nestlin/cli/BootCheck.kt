@@ -1,6 +1,8 @@
 package com.github.alondero.nestlin.cli
 
 import com.github.alondero.nestlin.Nestlin
+import com.github.alondero.nestlin.session.GameSessionCoordinator
+import com.github.alondero.nestlin.session.NoOpRetroAchievementsService
 import com.github.alondero.nestlin.movie.runOneFrame
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
@@ -113,8 +115,15 @@ object BootCheck {
                 config.speedThrottlingEnabled = false
                 // Headless boot check never rewinds — skip per-frame savestate capture.
                 config.rewindEnabled = false
-                load(opts.romPath)
-                powerReset()
+                // Issue #266: route the load through the coordinator so the
+                // battery-flush + service-unload + install-and-reset +
+                // battery-restore + service-prepare sequence is the same
+                // one the UI uses. For the CLI the coordinator's hooks are
+                // no-ops (GameSessionHooks.NONE + NoOpRetroAchievementsService),
+                // so the observable behavior is byte-identical to the
+                // previous direct `load + powerReset` chain — the bootcheck
+                // fingerprints and exit codes are preserved.
+                GameSessionCoordinator(this, NoOpRetroAchievementsService).loadRom(opts.romPath)
             }
         } catch (t: Throwable) {
             return failedToBoot(opts, threw = true, threwMessage = t.message ?: t.javaClass.simpleName, loaded = false)

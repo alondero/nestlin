@@ -216,6 +216,44 @@ class Nestlin {
     }
 
     /**
+     * Clear the active ROM back to the empty boot screen. No cartridge, no
+     * mapper, no expansion audio channels, no rewind history, no transient
+     * engine state (CPU registers, internal RAM $0000-$07FF, controller
+     * `pendingButtons`, etc. all return to power-on defaults). The service
+     * state machine and any pending save-RAM flush are the caller's
+     * responsibility — use
+     * [com.github.alondero.nestlin.session.GameSessionCoordinator.unloadRom]
+     * to coordinate the full sequence (which calls this as the last
+     * emulator-level step after `service.unloadGame()`).
+     *
+     * Idempotent: calling [unload] when no ROM is loaded is a no-op.
+     */
+    fun unload() {
+        if (loadedRom == null) return
+        // Engine reset FIRST so the next loaded ROM doesn't see stale RAM,
+        // a phantom controller press, or a wedged IRQ source from the
+        // previous game. cpu.reset() (the same primitive powerReset uses)
+        // zeroes work RAM, clears pendingButtons, and drops all
+        // interrupt sources — leaving the engine in a true boot-screen
+        // state before we tear down the cartridge below.
+        cpu.reset()
+        cpu.currentGame = null
+        // Drop the mapper so $4020-$FFFF reads return open-bus, and so any
+        // mapper-driven IRQ source stops asserting.
+        memory.mapper = null
+        // Drop any cart's expansion-audio channels (Mapper 19 / 24 / 26 / 5
+        // / 16-submapper-5 etc.); without this an unloaded cart's voices
+        // would keep ticking against the silent APU.
+        apu.clearExpansionChannels()
+        loadedRom = null
+        // Back to the default region — there's no ROM header to derive
+        // from. NTSC is the conservative default; the user can re-override
+        // once they load a new ROM.
+        applyRegion()
+        rewind.clearBuffer()
+    }
+
+    /**
      * Soft reset: equivalent to pressing the NES RESET button. The CPU is redirected to
      * its RESET vector and registers are zeroed, but **internal RAM ($0000-$07FF) and
      * PPU registers are preserved** — the RESET line on real hardware does NOT

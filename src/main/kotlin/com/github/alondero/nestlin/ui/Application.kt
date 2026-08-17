@@ -13,6 +13,9 @@ import com.github.alondero.nestlin.movie.Fm2Format
 import com.github.alondero.nestlin.movie.Movie
 import com.github.alondero.nestlin.movie.MovieLivePlayer
 import com.github.alondero.nestlin.movie.MovieLiveRecorder
+import com.github.alondero.nestlin.session.GameSessionCoordinator
+import com.github.alondero.nestlin.session.GameSessionHooks
+import com.github.alondero.nestlin.session.NoOpRetroAchievementsService
 import com.github.alondero.nestlin.movie.MovieState
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
@@ -78,6 +81,70 @@ class NestlinApplication : FrameListener, Application() {
     private val canvasGroup = Group(canvas)
     private val canvasHolder = StackPane(canvasGroup)
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
+
+    // Game-session coordinator (issue #266): every ROM-load / reset / unload /
+    // shutdown path goes through this single orchestration point so the
+    // battery-flush / service-unload / install-and-reset / battery-restore /
+    // service-prepare sequence is correct in exactly one place. The hooks
+    // observe the boundary; the application still owns the emulation thread
+    // (per the coordinator's contract — its `onBeforeRomChange` /
+    // `onAfterRomChange` are notification points, not thread-management
+    // hooks). The default service is the no-op until #267 ships the real
+    // client; production behavior is unchanged for users.
+    //
+    // **Why `clearPauseState` is NOT in the hook:** it must run SYNCHRONOUSLY
+    // before the caller invokes `startEmulation()` (the emulation thread
+    // reads `config.paused` on its first iteration; if it's still true the
+    // game boots into a paused state). The hook is fired via Platform.runLater
+    // to be safe across caller threads (the boot path's worker thread, the
+    // movie record/play path inside performWithEmulationPaused, or a
+    // MenuItem handler on the JavaFX thread) — but that deferral races
+    // startEmulation. Production call sites that need the pause-clear must
+    // do it themselves, between the coordinator call and startEmulation().
+    private val sessionCoordinator: GameSessionCoordinator by lazy {
+        GameSessionCoordinator(
+            nestlin = nestlin,
+            service = NoOpRetroAchievementsService,
+            hooks = GameSessionHooks(
+                onBeforeRomChange = {
+                    // Per-ROM UI teardown. cancelMovieSession must run
+                    // BEFORE any emulator state mutates — a recording
+                    // against ROM A is meaningless once ROM B's mapper
+                    // is installed, and playback must restart from a
+                    // freshly-cold-booted game.
+                    cancelMovieSession()
+                },
+                onAfterRomChange = { _ ->
+                    // UI refresh against the new ROM identity. Hopped to
+                    // the JavaFX thread because the coordinator's hooks
+                    // may fire from any caller thread, and these mutations
+                    // touch scene-graph nodes. clearPauseState is
+                    // deliberately NOT here — see the comment above.
+                    Platform.runLater {
+                        // Drop any stale "Saved/Loaded slot N" toast from
+                        // the previous ROM — the slot CRC changes
+                        // underneath the user.
+                        toastController.clear()
+                        updateTitle()
+                        // Refresh the slot menu: new ROM = new CRC =
+                        // different slot files.
+                        updateSlotMenu()
+                        updateDebugMenu()
+                        // Flash the Memory Editor grid (issue #169) so
+                        // the user sees a full-tick highlight on every
+                        // visible cell — confirms the new ROM is
+                        // actually being observed.
+                        flashMemoryEditorIfOpen()
+                    }
+                },
+                onServiceCallStart = { /* emulation thread is managed
+                    around the entire coordinator call, not per service
+                    call — see stopEmulation() / startEmulation() at the
+                    production call sites. */ },
+                onServiceCallEnd = { /* see onServiceCallStart. */ },
+            ),
+        )
+    }
     // Hold-Tab fast-forward: disables throttling while held, restores it on release.
     private val fastForward = FastForwardController(nestlin.config)
     // On-screen fast-forward indicator. A scene-graph node (not pixels drawn into frameImage)
@@ -917,14 +984,21 @@ class NestlinApplication : FrameListener, Application() {
                 val romPathArg = nonFlagParams.firstOrNull()
                 if (romPathArg != null) {
                     val romPath = Paths.get(romPathArg)
-                    load(romPath)
-                    powerReset()
-                    loadBatteryRam(romPath)
+                    // Issue #266: route through the coordinator so the
+                    // battery-flush / service-unload / install-and-reset
+                    // / battery-restore / service-prepare sequence is
+                    // canonical. No "previous ROM" exists at boot, so the
+                    // outgoing-flush step inside the coordinator is a
+                    // no-op for this call.
+                    sessionCoordinator.loadRom(romPath)
                 }
-                // Both calls mutate JavaFX UI nodes, so they need to hop back
-                // to the JavaFX thread (we're inside a `thread { ... }` here). When no
-                // ROM is loaded, updateTitle() shows "Nestlin - No Game Loaded" and
-                // updateSlotMenu() disables every slot with a "(no ROM loaded)" label.
+                // Always hop back to JavaFX for the UI refresh — even
+                // when no ROM was loaded, updateTitle() shows
+                // "Nestlin - No Game Loaded" and updateSlotMenu()
+                // disables every slot with a "(no ROM loaded)" label.
+                // When the coordinator's onAfterRomChange fires for a
+                // successful load, it also schedules a Platform.runLater
+                // UI refresh — running it again here is idempotent.
                 Platform.runLater {
                     updateTitle()
                     updateSlotMenu()
@@ -997,30 +1071,23 @@ class NestlinApplication : FrameListener, Application() {
         val file = chooser.showOpenDialog(stage)
         if (file != null) {
             val romPath = file.toPath()
-            // Drop any active movie session — a recording against ROM A is meaningless
-            // once ROM B loads, and playback must restart from a freshly-cold-booted game.
-            cancelMovieSession()
+            // Issue #266: route through the coordinator so battery-flush /
+            // service-unload / install-and-reset / battery-restore /
+            // service-prepare runs in the canonical order. The coordinator's
+            // onBeforeRomChange hook cancels the active movie session; its
+            // onAfterRomChange hook hops to the JavaFX thread to refresh
+            // the title/slot/debug UI and flash the Memory Editor. We
+            // bracket the call with stopEmulation / startEmulation because
+            // the coordinator does not manage the emulation thread — the
+            // application owns it (per the GameSessionCoordinator contract).
             stopEmulation()
-            // Flush the previous ROM's SRAM before its mapper is replaced.
-            nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
-            nestlin.load(romPath)
-            nestlin.powerReset()
-            nestlin.loadBatteryRam(romPath)
+            sessionCoordinator.loadRom(romPath)
+            // Pause-clear must run SYNCHRONOUSLY before startEmulation;
+            // see the comment on sessionCoordinator above.
             clearPauseState()
-            // Drop any stale "Saved/Loaded slot N" message from the previous ROM
-            // before its slot CRC changes underneath the user.
-            toastController.clear()
-            updateTitle()
-            // Refresh the slot menu: new ROM = new CRC = different slot files.
-            updateSlotMenu()
-            updateDebugMenu()
+            startEmulation()
             EmulatorConfig.addRecentRom(romPath)
             updateRecentMenu(EmulatorConfig.getRecentRoms())
-            // Flash the Memory Editor grid (issue #169) so the user sees a
-            // full-tick highlight on every visible cell — confirms the new
-            // ROM is actually being observed.
-            flashMemoryEditorIfOpen()
-            startEmulation()
         }
     }
 
@@ -1197,25 +1264,20 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     private fun loadRom(path: Path) {
-        // Drop any active movie session — playback/recording is per-ROM.
-        cancelMovieSession()
+        // Issue #266: route through the coordinator. The coordinator's
+        // onBeforeRomChange hook cancels the active movie session; its
+        // onAfterRomChange hook refreshes the title / slot / debug UI
+        // and flashes the Memory Editor. Bracket the call with
+        // stopEmulation / startEmulation because the coordinator does
+        // not manage the emulation thread (the application owns it).
+        // Note: a recent-ROM load always reloads battery RAM (the
+        // coordinator's loadRom does loadBatteryRam internally), so
+        // this entry point matches handleLoadGame's semantics exactly.
         stopEmulation()
-        nestlin.load(path)
-        nestlin.powerReset()
+        sessionCoordinator.loadRom(path)
+        // Pause-clear must run SYNCHRONOUSLY before startEmulation;
+        // see the comment on sessionCoordinator above.
         clearPauseState()
-        // Drop any stale "Saved/Loaded slot N" toast from the previous ROM —
-        // the slot CRC changes underneath the user (parallel to handleLoadGame).
-        toastController.clear()
-        updateTitle()
-        // Refresh slot menu so each slot's label reflects disk state for
-        // the new ROM's CRC. Without this, a user loading ROM B would see
-        // ROM A's slot timestamps until they saved into a slot of their own.
-        updateSlotMenu()
-        updateDebugMenu()
-        // Flash the Memory Editor (issue #169) — same rationale as
-        // handleLoadGame: the user just transitioned to a different game and
-        // deserves visual confirmation in the editor window.
-        flashMemoryEditorIfOpen()
         startEmulation()
     }
 
@@ -1568,7 +1630,17 @@ class NestlinApplication : FrameListener, Application() {
             resetRomForMovieSession(rom)
         }
 
-        val player = MovieLivePlayer(nestlin, movie)
+        val player = MovieLivePlayer(
+            nestlin = nestlin,
+            movie = movie,
+            // Issue #266: route the FM2 row-level reset commands through
+            // the coordinator's serviceRuntime reset so the achievements
+            // service sees a `resetRuntime` event paired with each
+            // CPU-level reset the FM2 row carries. Without this seam,
+            // MovieLivePlayer's latch hook would fire nestlin.powerReset
+            // / softReset directly and bypass the service entirely.
+            serviceReset = { sessionCoordinator.resetServiceRuntime() },
+        )
         player.start()
         livePlayer = player
         activeMoviePath = file.toPath()
@@ -1655,29 +1727,34 @@ class NestlinApplication : FrameListener, Application() {
      * this method (see [performWithEmulationPaused] for the canonical wrapper).
      */
     private fun resetRomForMovieSession(romPath: Path) {
-        // Real cartridges keep their battery alive across a power-cycle. Mirror that:
-        // persist current SRAM, then reload it post-reset so the boot state matches
-        // what a real player would see after flicking the power switch.
-        nestlin.saveBatteryRam(romPath)
-        nestlin.load(romPath)
-        nestlin.powerReset()
-        nestlin.loadBatteryRam(romPath)
-        // powerReset() leaves the controllers untouched — the user may still have been
-        // holding a button when they hit the hotkey. For a movie session we want the
-        // game to see a "no buttons held" state on frame 0, otherwise the very first
-        // captured row of a recording (or the first latched row of a playback) would
-        // include a phantom press that wasn't part of the user's input. Clear both the
-        // live pad and the keyboard buffer.
+        // Issue #266: route through the coordinator for the canonical
+        // battery-flush + service-unload + install-and-reset +
+        // battery-restore + service-prepare sequence. Calling loadRom
+        // here is semantically identical to the previous direct
+        // `nestlin.saveBatteryRam + load + powerReset + loadBatteryRam`
+        // chain — the coordinator does the same work in the same order,
+        // with the extra step of telling the (currently no-op) RA
+        // service to unload and re-prepare. The coordinator's
+        // onBeforeRomChange hook is harmless here: by the time the
+        // caller reaches this method, cancelMovieSession has already
+        // fired (handleStartRecording / handlePlayMovie haven't installed
+        // the recorder/player yet; handleHardReset cancels first). The
+        // onAfterRomChange hook hops to JavaFX to refresh the UI and
+        // flash the Memory Editor (issue #169) — that flash is the one
+        // this method used to do inline, and the user-visible effect is
+        // the same.
+        sessionCoordinator.loadRom(romPath)
+        // powerReset() (which the coordinator called inside loadRom) leaves
+        // the controllers untouched — the user may still have been holding a
+        // button when they hit the hotkey. For a movie session we want the
+        // game to see a "no buttons held" state on frame 0, otherwise the
+        // very first captured row of a recording (or the first latched row
+        // of a playback) would include a phantom press that wasn't part of
+        // the user's input. Clear both the live pad and the keyboard buffer.
         nestlin.getController1().setButtonBitmap(0)
         nestlin.getController1().pendingButtons = 0
         nestlin.getController2().setButtonBitmap(0)
         nestlin.getController2().pendingButtons = 0
-        // Flash the Memory Editor (issue #169). The movie session just rewound
-        // to a known boot state — without the flash, the editor would show
-        // whatever the diff against the pre-reset state happened to produce,
-        // which is rarely a clean "everything is new" because a power-cycle
-        // leaves most static bytes (ROM, mapper regs) unchanged.
-        flashMemoryEditorIfOpen()
     }
 
     /**
@@ -1719,28 +1796,26 @@ class NestlinApplication : FrameListener, Application() {
             alert.showAndWait()
             return
         }
-        // Hard reset = same ROM, but a fresh boot. Drop any active movie session so
-        // playback doesn't get get out of sync with the new boot state.
+        val path = nestlin.loadedRom!!.sourcePath ?: run {
+            val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
+            alert.title = "No ROM File"
+            alert.contentText = "Hard-reset needs to re-load the ROM from disk; " +
+                "the current ROM has no on-disk path."
+            alert.showAndWait()
+            return
+        }
+        // Hard reset = same ROM, but a fresh boot. Drop any active movie
+        // session so playback doesn't get out of sync with the new boot
+        // state. Issue #266: the coordinator's onBeforeRomChange hook
+        // also cancels the movie session — we keep the explicit call here
+        // so the ordering reads naturally ("cancel movie first, then
+        // stop the thread"); it's idempotent.
         cancelMovieSession()
         stopEmulation()
-        resetRomForMovieSession(
-            nestlin.loadedRom!!.sourcePath ?: run {
-                val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
-                alert.title = "No ROM File"
-                alert.contentText = "Hard-reset during a movie session needs to re-load " +
-                    "the ROM from disk; the current ROM has no on-disk path."
-                alert.showAndWait()
-                return
-            }
-        )
+        resetRomForMovieSession(path)
+        // Pause-clear must run SYNCHRONOUSLY before startEmulation;
+        // see the comment on sessionCoordinator above.
         clearPauseState()
-        updateTitle()
-        // CRC is unchanged by a hard reset, but refresh the slot menu
-        // defensively in case future changes alter the GamePak identity.
-        updateSlotMenu()
-        // No explicit flashMemoryEditorIfOpen() here — resetRomForMovieSession
-        // already called it on the way through, and the flag is one-shot.
-        // A redundant second call would just re-set the same boolean.
         startEmulation()
     }
 
@@ -1754,11 +1829,28 @@ class NestlinApplication : FrameListener, Application() {
             cancelMovieSession()
         }
         stopEmulation()
-        nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
+        // Issue #266: route shutdown through the coordinator so the
+        // battery flush + service unload + service shutdown sequence is
+        // canonical (and future RA teardown is wired in one place). The
+        // coordinator's shutdown is idempotent — safe to call here even
+        // if handleStopMovie already touched some of the same state.
+        sessionCoordinator.shutdown()
         Platform.exit()
     }
 
     override fun stop() {
+        // Cancel any active movie session BEFORE the shutdown sequence
+        // runs. The recorder / player own background work (the latch hook
+        // for the recorder, the playback engine for the player) that the
+        // emulation-thread stop below would orphan without this — and the
+        // coordinator's shutdown is a no-op for any active movie session,
+        // so this is the only place to cancel it.
+        //
+        // handleExit() does the same thing explicitly above; this branch
+        // covers the JavaFX-runtime-initiated shutdown path (window
+        // close without going through handleExit, JVM tear-down).
+        cancelMovieSession()
+
         nestlin.stop()
         running = false
 
@@ -1770,7 +1862,9 @@ class NestlinApplication : FrameListener, Application() {
         // wasn't the entry point (e.g. JavaFX runtime tears us down through stop() directly).
         batteryFlushTimer?.cancel()
         batteryFlushTimer = null
-        nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
+        // Issue #266: same canonical shutdown as handleExit — flush
+        // battery, unload the game, tear down the service. Idempotent.
+        sessionCoordinator.shutdown()
 
         // Clean up gamepad
         gamepadInput.shutdown()
