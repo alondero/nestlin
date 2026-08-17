@@ -31,15 +31,28 @@ data class MovieInput(
      * Apply this row's [commands] to [nestlin]. When both reset bits are set, hard reset
      * dominates (a power-cycle obliterates whatever the soft reset would have done).
      *
+     * The CPU-level reset is fired directly on [nestlin] (`powerReset` zeroes RAM and
+     * re-vectors the CPU; `softReset` preserves RAM). The optional [serviceReset] hook
+     * is invoked AFTER the CPU reset so a production caller can fire
+     * [com.github.alondero.nestlin.session.GameSessionCoordinator.resetServiceRuntime]
+     * to keep the service's runtime condition progress in sync with the in-flight CPU
+     * reset. Defaults to a no-op so test / CLI callers that don't have a service seam
+     * can use the same helper without a coordinator instance.
+     *
      * Used by [MoviePlayer.replayInto], [MovieLivePlayer]'s latch hook, and
      * [com.github.alondero.nestlin.cli.ReplayCommand] — the FM2 commands field has one
      * interpretation regardless of which replay path drives the machine.
      */
-    fun applyCommands(nestlin: Nestlin) {
+    fun applyCommands(
+        nestlin: Nestlin,
+        serviceReset: () -> Unit = {},
+    ) {
         if (hasHardReset) {
             nestlin.powerReset()
+            serviceReset()
         } else if (hasSoftReset) {
             nestlin.softReset()
+            serviceReset()
         }
     }
 }

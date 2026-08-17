@@ -33,6 +33,22 @@ class GamePak(data: ByteArray, displayName: String = "") {
     val crc: CRC32
 
     /**
+     * Full iNES / NES 2.0 file bytes as read from disk, retained for the
+     * [com.github.alondero.nestlin.session.GameSessionCoordinator] so the
+     * RetroAchievements service can hash the canonical ROM image without
+     * re-reading the file. The data the parser split into [header] /
+     * [programRom] / [chrRom] is a strict subset of this; reconstructing from
+     * those slices would silently drop any bytes that lived in the original
+     * between or after the declared PRG/CHR regions (NES 2.0 extra header
+     * bytes, trainer bytes the parser ignored, trailing padding, etc.) and
+     * produce a different RA hash than the file the user actually loaded.
+     *
+     * Defensively copied on construction; callers receive a stable snapshot
+     * they can hand to the service without aliasing the parser's working set.
+     */
+    val rawBytes: ByteArray = data.copyOf()
+
+    /**
      * Effective timing region for this cartridge. The header is the authority when
      * it carries positive evidence; otherwise we fall back to the NO-INTRO region
      * marker in the ROM name, then default to NTSC. A user-facing override (see

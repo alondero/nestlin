@@ -27,6 +27,15 @@ import com.github.alondero.nestlin.Nestlin
 class MovieLivePlayer(
     private val nestlin: Nestlin,
     private val movie: Movie,
+    /**
+     * Optional per-row service-runtime reset hook (issue #266). When non-null,
+     * any FM2 `commands` bit the row carries will trigger this AFTER the
+     * CPU-level `nestlin.softReset()` / `nestlin.powerReset()` that
+     * [MovieInput.applyCommands] issues. Production wires
+     * `sessionCoordinator::resetServiceRuntime`; tests leave it null
+     * (default).
+     */
+    private val serviceReset: (() -> Unit)? = null,
 ) {
     /** The row index that the NEXT latch will use. Bumped to 1 immediately by [start] (after
      *  priming row 0), then advances by 1 each time the latch hook fires and writes a row. */
@@ -54,7 +63,7 @@ class MovieLivePlayer(
             // Order matches MoviePlayer.replayInto: commands fire FIRST so the upcoming
             // frame's first NMI sees post-reset state, then the latched input is the
             // thing the game polls.
-            row.applyCommands(nestlin)
+            row.applyCommands(nestlin, serviceReset ?: {})
             nestlin.getController1().setButtonBitmap(row.controller1)
             nestlin.getController2().setButtonBitmap(row.controller2)
             nextRow++
@@ -76,7 +85,7 @@ class MovieLivePlayer(
         val row0 = movie.inputs.firstOrNull()
         if (row0 != null) {
             // Same order as the latch hook: commands first, then input latch.
-            row0.applyCommands(nestlin)
+            row0.applyCommands(nestlin, serviceReset ?: {})
             nestlin.getController1().setButtonBitmap(row0.controller1)
             nestlin.getController2().setButtonBitmap(row0.controller2)
             nextRow = 1

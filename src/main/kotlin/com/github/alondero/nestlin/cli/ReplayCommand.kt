@@ -5,6 +5,8 @@ import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.movie.Fm2Format
 import com.github.alondero.nestlin.movie.Movie
 import com.github.alondero.nestlin.movie.runOneFrame
+import com.github.alondero.nestlin.session.GameSessionCoordinator
+import com.github.alondero.nestlin.session.NoOpRetroAchievementsService
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
 import com.github.alondero.nestlin.ppu.RESOLUTION_WIDTH
@@ -154,8 +156,16 @@ object ReplayCommand {
         config.speedThrottlingEnabled = false
         // Headless replay never rewinds — skip the per-frame savestate capture overhead.
         config.rewindEnabled = false
-        load(romPath)
-        powerReset()
+        // Issue #266: route the boot through the coordinator so the
+        // load + powerReset + battery-restore + service-prepare sequence
+        // is the same one the UI uses. For the CLI the coordinator's
+        // hooks are no-ops, so the observable behavior is byte-identical
+        // to the previous direct `load + powerReset` chain — replay
+        // fingerprints and PNG output are preserved exactly. The
+        // coordinator is constructed fresh per boot because the CLI is
+        // stateless: there's no "active game" to share with a longer-lived
+        // coordinator instance.
+        GameSessionCoordinator(this, NoOpRetroAchievementsService).loadRom(romPath)
     }
 
     /** Replay [movie], honouring an optional [frameLimit] (first N input rows). */
