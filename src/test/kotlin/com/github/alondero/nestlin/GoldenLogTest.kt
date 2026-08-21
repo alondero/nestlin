@@ -2,6 +2,8 @@ package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.cpu.UnhandledOpcodeException
 import com.github.alondero.nestlin.testutil.TestRoms
+import com.github.alondero.nestlin.testutil.assertThrowsWithMessage
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -12,21 +14,19 @@ class GoldenLogTest {
 
     @Test // TODO: Tidy up when more of a regression test
     fun compareToGoldenLog() {
-        val prevOut = System.out
-        var nestlinOut = ByteArrayOutputStream()
-        System.setOut(PrintStream(nestlinOut))
-        try {
-            Nestlin().apply {
-                loadBytes(TestRoms.nestestBytes())
-                powerReset()
-                enableLogging()
-                start()
+        val nestlinOut = ByteArrayOutputStream()
+        withRedirectedStdout(nestlinOut) {
+            try {
+                Nestlin().apply {
+                    loadBytes(TestRoms.nestestBytes())
+                    powerReset()
+                    enableLogging()
+                    start()
+                }
+            } catch (e: UnhandledOpcodeException) {
+                //  Do nothing
             }
-        } catch (e: UnhandledOpcodeException) {
-            //  Do nothing
         }
-
-        System.setOut(prevOut)
 
         println("START\n${nestlinOut}\nEND")
 
@@ -41,6 +41,62 @@ class GoldenLogTest {
                         throw AssertionError("Token mismatch on line ${line.line}, with address ${line.currLogTokens[0]}. Expected token:${it.tokenName()} to be ${line.goldenTokens[it]} but was ${line.currLogTokens[it]}.\nExpected line:\n${line.goldenLine}\nActual line:\n${line.currLogLine}")
                     }
                 }
+    }
+
+    /**
+     * Regression guard for issue #14.
+     *
+     * Redirects System.out to [buffer] for the duration of [block] and
+     * ALWAYS restores the original stream — even when [block] throws an
+     * exception the caller's catch block doesn't match.
+     *
+     * The previous in-test pattern restored stdout only AFTER the
+     * try/catch, so any uncaught exception (e.g. a malformed-ROM
+     * ArrayIndexOutOfBoundsException thrown out of `Nestlin().start()`)
+     * would leave System.out pointing at a dead ByteArrayOutputStream for
+     * the rest of the JVM's life, silently swallowing every subsequent
+     * test's stdout.
+     */
+    private inline fun withRedirectedStdout(buffer: ByteArrayOutputStream, block: () -> Unit) {
+        val prevOut = System.out
+        System.setOut(PrintStream(buffer))
+        try {
+            block()
+        } finally {
+            System.setOut(prevOut)
+        }
+    }
+
+    /**
+     * Regression test for issue #14: the redirect/restore must survive
+     * an exception the caller's `catch` block doesn't match. Without the
+     * `finally` inside [withRedirectedStdout], the original System.out
+     * stays pointed at a dead buffer for the rest of the JVM — which
+     * silently breaks every subsequent test's output and was the actual
+     * P0 hazard in the bug report.
+     *
+     * The thrown type is deliberately NOT [UnhandledOpcodeException] —
+     * that's the only catch in [compareToGoldenLog], so any other throw
+     * is the exact scenario that previously leaked the redirected stream.
+     */
+    @Test
+    fun redirectedStdoutIsRestoredOnUncaughtException() {
+        val originalOut = System.out
+        val buffer = ByteArrayOutputStream()
+
+        assertThrowsWithMessage<ArrayIndexOutOfBoundsException>("simulated bad ROM") {
+            withRedirectedStdout(buffer) {
+                throw ArrayIndexOutOfBoundsException("simulated bad ROM")
+            }
+        }
+
+        // The exception escaped `block`, but `finally` must have run anyway.
+        // Pre-fix: this assertion fails — System.out is still the buffer.
+        assertSame(
+            originalOut,
+            System.out,
+            "System.out should be restored even when the redirected block throws an uncaught exception",
+        )
     }
 
     class LogComparison(val golden: List<String>, val currLog: List<String>) {
