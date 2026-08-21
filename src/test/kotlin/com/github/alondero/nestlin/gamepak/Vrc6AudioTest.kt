@@ -227,18 +227,26 @@ class Vrc6AudioTest {
 
     @Test
     fun `vrc6 saw produces a fundamental at the expected frequency`() {
-        // Drive the saw at period=4095 (slow fundamental), route through the
-        // APU mixer, and check the spectrum has a peak at the expected bin.
+        // Drive the saw at a moderate period and route through the APU mixer,
+        // checking the spectrum has a peak at the expected fundamental bin.
         //
         // Saw divider clocks every other CPU cycle (2 CPU cycles per divider
         // tick). The 6-add-then-reset cycle gives 7 divider ticks per saw
-        // period. So f_saw = CPU / (2 * 4096 * 7) ≈ 31.2 Hz.
+        // period. So f_saw = CPU / (2 * period * 7).
+        //
+        // Period 256 → f_saw ≈ 499 Hz. This sits ABOVE the analog filter's
+        // 440 Hz HP cutoff (issue #229) so the fundamental survives the
+        // 90 Hz + 440 Hz high-pass stages — pre-#229 the test used the slowest
+        // possible period (4095 → 31.2 Hz) which is now filtered out of the
+        // post-mixer output, masking the saw's actual output. Choosing a
+        // period that survives the analog filter keeps the spectrum
+        // assertion meaningful.
         // Factory (issue #22): Memory and Apu are wired together so memory.apu is non-null.
         val (_, apu) = com.github.alondero.nestlin.Memory.createWithApu()
         val saw = Vrc6Saw()
         saw.writeB000(b(0x20))           // rate = 32 → nonzero output
-        saw.writeB001(b(0xFF))           // period low = 0xFF
-        saw.writeB002(b(0x8F))           // period high = 0xF, E=1 → period = 0xFFF
+        saw.writeB001(b(0x00))           // period low = 0x00
+        saw.writeB002(b(0x81))           // period high = 0x1, E=1 → period = 0x100
         apu.registerExpansionChannel(saw)
 
         val ntscCpuHz = 1_789_773.0
@@ -249,7 +257,7 @@ class Vrc6AudioTest {
         val samples = apu.getAudioSamples()
         assertThat("captured samples (got ${samples.size})", samples.size, greaterThanOrEqualTo(8_000))
 
-        val expectedHz = ntscCpuHz / (2.0 * 4096.0 * 7.0)
+        val expectedHz = ntscCpuHz / (2.0 * 256.0 * 7.0)
         val mag = goertzelMagnitude(samples, expectedHz, sampleRateHz)
         val magOff = goertzelMagnitude(samples, expectedHz * 2.5, sampleRateHz)
         assertThat("saw fundamental $mag vs off-band $magOff",
