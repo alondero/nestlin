@@ -31,6 +31,26 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
         return programRom[((bankIndex * 0x4000) + (address - windowBase)) % programRom.size]
     }
 
+    /**
+     * Bus-conflict AND mask (GH #236). The discrete-logic UxROM board shares
+     * its data bus between the PRG ROM and the 74HC161 bank-select latch, so
+     * a CPU write to the bank register is bitwise-ANDed with whatever PRG byte
+     * lives at the write address. The window split matters: writes to
+     * `$8000-$BFFF` see the switchable bank; writes to `$C000-$FFFF` see the
+     * fixed-last bank. Commercial games almost always write a value that
+     * matches the PRG byte at the write address (so the mask is a no-op), but
+     * a few titles can bank differently as a result.
+     */
+    private fun applyBusConflict(address: Int, value: Byte): Int {
+        val (bankIndex, windowBase) = if (address < 0xC000) {
+            prgBank to 0x8000
+        } else {
+            (prgBankCount - 1) to 0xC000
+        }
+        val romByte = prgByte(bankIndex, windowBase, address).toUnsignedInt()
+        return value.toUnsignedInt() and romByte
+    }
+
     override fun cpuRead(address: Int): Byte {
         if (address < 0x8000) return 0
         return if (address < 0xC000) {
@@ -42,7 +62,7 @@ class Mapper2(private val gamePak: GamePak) : Mapper {
 
     override fun cpuWrite(address: Int, value: Byte) {
         if (address in 0x8000..0xFFFF) {
-            val v = value.toUnsignedInt()
+            val v = applyBusConflict(address, value)
             prgBank = v
             chrBank = (v shr 3) and 0x03
         }

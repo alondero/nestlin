@@ -34,6 +34,18 @@ class Mapper66(private val gamePak: GamePak) : Mapper {
 
     private val prgBankCount = programRom.size / 0x8000
 
+    /**
+     * Bus-conflict AND mask (GH #236). The GxROM board shares its data bus
+     * between PRG ROM and the bank-select latch, so the CPU's write value is
+     * AND-ed with the PRG byte at the write address. The whole 32KB window
+     * is one bank.
+     */
+    private fun applyBusConflict(address: Int, value: Byte): Int {
+        val bankOffset = (prgBank % prgBankCount) * 0x8000
+        val romByte = programRom[bankOffset + (address - 0x8000)].toUnsignedInt()
+        return value.toUnsignedInt() and romByte
+    }
+
     override fun cpuRead(address: Int): Byte {
         if (address < 0x8000) return 0
         val bankOffset = (prgBank % prgBankCount) * 0x8000
@@ -42,7 +54,7 @@ class Mapper66(private val gamePak: GamePak) : Mapper {
 
     override fun cpuWrite(address: Int, value: Byte) {
         if (address in 0x8000..0xFFFF) {
-            val v = value.toUnsignedInt()
+            val v = applyBusConflict(address, value)
             prgBank = (v shr 4) and 0x03
             chrBank = v and 0x03
         }
