@@ -62,6 +62,18 @@ sealed class Opcode(val cycles: Int) {
  * inside [evaluate] per the 6502 spec — preserving the original
  * `Opcodes.kt:513-536` behaviour including the page-boundary check and
  * idle-loop detection.
+ *
+ * **Page-boundary +1 cycle (issue #11).** The flag-driven cycle
+ * pattern (`3 + (if pageBoundaryFlag) 1 else 0`) is the same one every
+ * other opcode family uses (Arithmetic, LoadStore, ReadModifyWrite,
+ * Logic, UnofficialNop, UnofficialLoadStore, UnofficialCombined). The
+ * Branch's own page-cross check sets [Cpu.pageBoundaryFlag] AFTER the
+ * PC has been updated; the cycle count is then computed from the
+ * flag. This makes the flag a real, read-side signal — the previous
+ * implementation set the flag and then ALSO set `workCyclesLeft = 4`
+ * inline, which left the flag write-only (issue #176 noted this; issue
+ * #11 is the cleanup). saveState/loadState still persist the flag for
+ * debug introspection.
  */
 class Branch(
     val condition: (Cpu) -> Boolean,
@@ -86,15 +98,13 @@ class Branch(
             cpu.registers.programCounter =
                 (cpu.readByteAtPC() + cpu.registers.programCounter).toSignedShort()
 
-            // Issue #176: taken relative branch costs 3 cycles; +1 on
-            // page boundary. Compute cycles directly in the taken-arm so
-            // the +1 reaches the scheduler — pageBoundaryFlag alone is
-            // write-only.
-            cpu.workCyclesLeft = 3
+            // Issue #11: set the flag, then read it for the cycle count.
+            // Sequence is important — the flag may have been pre-set by
+            // something upstream, in which case the +1 still applies.
             if (cpu.hasCrossedPageBoundary(previousCounter, cpu.registers.programCounter)) {
                 cpu.pageBoundaryFlag = true
-                cpu.workCyclesLeft = 4
             }
+            cpu.workCyclesLeft = 3 + (if (cpu.pageBoundaryFlag) 1 else 0)
             // Detect branch-to-self spin loop (see comment above).
             if ((previousCounter - 2).toSignedShort() == cpu.registers.programCounter) {
                 cpu.idle = true
