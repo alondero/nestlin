@@ -38,6 +38,18 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 tools/run-diag.ps1 -TestClass GoldenLogTest            # or tools/run-diag.sh from bash
 tools/run-diag.ps1 -TestClass Mapper10RegressionTest -Mesen
 
+# Compile + run the RetroAchievements native contract tests (issue #267).
+# Loads the rcheevos_facade shared library via JNA; requires the native
+# library to have been built (see RA_INTEGRATION.md).
+./gradlew testNativeRa
+
+# Compile the vendored rcheevos v12.4.0 + the small C façade into a
+# per-platform shared library (librcheevos_facade.so / rcheevos_facade.dll
+# / librcheevos_facade.dylib). Skip-on-missing-compiler: when no C
+# compiler is on PATH, the task is a no-op and the JNA service falls
+# back to NoOp at runtime.
+./gradlew buildNative
+
 # Run the emulator UI
 ./gradlew run --args="path/to/rom.nes"
 
@@ -129,6 +141,7 @@ testroms/                    # nestest.nes is the only ROM in git
 - PPU: full background + sprite rendering, sprite-0 hit, 8x16 sprites, A12 edge to mapper.
 - APU: 5 channels (Pulse×2, Triangle, Noise, DMC), PAL/NTSC tables, mixer.
 - Mappers: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 19, 24, 26, 30, 33, 34, 64, 65, 66, 68, 69, 113, 119, 153, 206, 228.** Details + per-mapper game coverage in `MAPPER_SUPPORT.md`.
+- RetroAchievements: Native capability via vendored rcheevos v12.4.0 + a small C façade + JNA. Softcore-only, no-network default. Status menu under "RetroAchievements". See `RA_INTEGRATION.md` for design + `native/README.md` for the build.
 - Region: NTSC + PAL auto-detect (iNES header → NO-INTRO filename → user override).
 - Save state (`.nstl`, F5/F8 + menu) and save RAM (`.sav`, FCEUX-compatible).
 - Battery RAM persistence for mappers 1/4/5 (mappers with `$6000-$7FFF` PRG-RAM).

@@ -97,11 +97,30 @@ class DefaultChrMemory(
         if (chrRom.isEmpty()) ByteArray(chrRamSize) else ByteArray(0)
     private val rom: ByteArray = chrRom
 
-    override fun read(offset: Int): Byte =
-        if (ram.isNotEmpty()) ram[offset] else rom[offset]
+    override fun read(offset: Int): Byte {
+        // Bounds-check before the array access so the exception message
+        // is descriptive across JDK versions. JDK 21 stopped including
+        // the "Index N out of bounds..." prefix for plain `array[i]`
+        // IOOBEs, so a ChrMemoryTest regression on JDK 21 surfaced this.
+        // (The original code relied on the JVM's ArrayIndexOutOfBoundsException
+        // text, which was implementation-defined.) The explicit check
+        // matches the documented "out-of-range throws" contract and gives
+        // a stable message ("Index N out of bounds for length M").
+        val storage = if (ram.isNotEmpty()) ram else rom
+        if (offset < 0 || offset >= storage.size) {
+            throw IndexOutOfBoundsException("Index $offset out of bounds for length ${storage.size}")
+        }
+        return storage[offset]
+    }
 
     override fun write(offset: Int, value: Byte) {
-        if (ram.isNotEmpty()) ram[offset] = value
+        // Same rationale as read(): surface a descriptive message rather
+        // than the JDK 21+ opaque IOOBE.
+        if (ram.isEmpty()) return  // ROM-backed memory is read-only; write is a no-op
+        if (offset < 0 || offset >= ram.size) {
+            throw IndexOutOfBoundsException("Index $offset out of bounds for length ${ram.size}")
+        }
+        ram[offset] = value
     }
 
     override fun serialize(out: DataOutput) {
