@@ -9,7 +9,25 @@ import java.io.DataOutput
 class Apu(private val dmaPort: DmaPort) {
     private val apuMemory = ApuAddressedMemory()
     private val frameCounter = FrameCounter()
-    private val audioBuffer = AudioBuffer(sampleRate = 44100, bufferSize = 8192)
+
+    /**
+     * APU output sample rate in Hz. Kept private and centralised here so the
+     * [AudioBuffer] and the [AnalogFilter] (issue #229) are constructed with
+     * the same rate — they're a matched pair, since the filter's bilinear
+     * coefficients are rate-dependent.
+     */
+    private val SAMPLE_RATE = 44100.0
+    private val audioBuffer = AudioBuffer(sampleRate = SAMPLE_RATE.toInt(), bufferSize = 8192)
+
+    /**
+     * Post-DAC analog filter chain (issue #229): 90 Hz HP → 440 Hz HP → 14 kHz
+     * LP. Modelled as three first-order IIR filters via the bilinear transform.
+     * The hardware passes the 2A03's mixed analog waveform through this RC chain
+     * before reaching the TV's audio input; without it the output is bassier
+     * and harsher than a real NES. Wired into [mixAndBuffer] between the
+     * digital mixer and the audio buffer write.
+     */
+    private val analogFilter = AnalogFilter(SAMPLE_RATE)
 
     val pulse1 = PulseChannel(channelId = 1)
     val pulse2 = PulseChannel(channelId = 2)
@@ -43,8 +61,6 @@ class Apu(private val dmaPort: DmaPort) {
      */
     @Volatile
     var outputMuted: Boolean = false
-
-    private val SAMPLE_RATE = 44100.0
 
     /**
      * Per-expansion-channel gain in the final mix. The 2A03 pulse+tnd path
@@ -186,7 +202,13 @@ class Apu(private val dmaPort: DmaPort) {
             mixed += expSum * EXPANSION_GAIN
         }
 
-        val sample = (mixed * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
+        // Issue #229: pass the digitally-mixed sample through the analog filter
+        // chain (90 Hz HP → 440 Hz HP → 14 kHz LP) before scaling to 16-bit.
+        // The filter represents the hardware RC network between the 2A03's
+        // analog output and the TV's audio input — a digital-only model
+        // sounds bassier and harsher without it.
+        val filtered = analogFilter.process(mixed)
+        val sample = (filtered * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
 
         // Drop samples while muted (rewind scrubbing) so the buffer drains to silence
         // rather than replaying forward audio per re-rendered frame. See [outputMuted].

@@ -121,7 +121,15 @@ class ExpansionAudioChannelTest {
         runCycles(apu, seconds = 0.05)
         apu.getAudioSamples()           // drain pre-clear samples
         apu.clearExpansionChannels()
-        runCycles(apu, seconds = 0.05)
+        // Issue #229: the analog filter chain (90 Hz HP etc.) is an IIR with a
+        // ~1.8 ms time constant on the slowest pole. After clearing, the input
+        // collapses to zero but the filter's internal capacitors discharge
+        // over a few time constants — the 0.2 s wait here is ~100τ of the 90 Hz
+        // HP, well past any audible transient. Without the filter (pre-#229)
+        // a 50 ms wait was enough; with the filter in place we need to give
+        // the IIR state time to drain so the post-clear spectrum really is
+        // zero.
+        runCycles(apu, seconds = 0.2)
         val postClear = apu.getAudioSamples()
         val mag = goertzelMagnitude(postClear, 1000.0, sampleRateHz)
         assertThat("After clear, 1 kHz magnitude should collapse (got $mag)",

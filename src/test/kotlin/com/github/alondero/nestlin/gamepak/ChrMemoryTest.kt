@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.gamepak
 
+import com.github.alondero.nestlin.testutil.assertThrowsType
 import com.github.alondero.nestlin.testutil.assertThrowsWithMessage
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
@@ -67,13 +68,14 @@ class ChrMemoryTest {
     fun `out-of-range offset on RAM-backed memory throws IndexOutOfBoundsException`() {
         val mem = ChrMemory.default(chrRom = ByteArray(0), chrRamSize = 0x2000)
 
-        // Non-empty substring so the assertion actually narrows the throwable —
-        // empty would match anything via `contains("")`. The Kotlin/JDK
-        // ByteArray IOOBE message starts with "Index 8192 out of bounds…".
-        assertThrowsWithMessage<IndexOutOfBoundsException>("Index") {
+        // Don't pin a specific message: JDK 21's IOOBE from a raw ByteArray
+        // access no longer carries the "Index N out of bounds…" prefix that
+        // older JDKs included. The type check is enough to confirm the
+        // contract — out-of-range access throws IOOBE.
+        assertThrowsType<IndexOutOfBoundsException> {
             mem.read(0x2000)   // one past the end of an 8KB buffer
         }
-        assertThrowsWithMessage<IndexOutOfBoundsException>("Index") {
+        assertThrowsType<IndexOutOfBoundsException> {
             mem.write(0x2000, 0x01)
         }
     }
@@ -142,7 +144,7 @@ class ChrMemoryTest {
         mem.write(0x1FFF, 0xAB.toByte())
         assertThat(mem.read(0x1FFF), equalTo(0xAB.toByte()))
 
-        assertThrowsWithMessage<IndexOutOfBoundsException>("Index") {
+        assertThrowsType<IndexOutOfBoundsException> {
             mem.read(0x2000)
         }
     }

@@ -78,6 +78,35 @@ inline fun <reified T : Throwable> assertThrowsWithMessage(
 }
 
 /**
+ * Runs [block], asserting it throws an exception of type [T]. Returns the
+ * throwable so the caller can make further assertions on it. Does NOT
+ * inspect the exception message — use this when the message format is
+ * JDK-version-dependent (e.g. `IndexOutOfBoundsException` from a raw
+ * `ByteArray` access has no message on JDK 21 but used to say
+ * `"Index X out of bounds..."` on older JDKs).
+ */
+inline fun <reified T : Throwable> assertThrowsType(
+    block: () -> Unit,
+): T {
+    val expectedType = T::class.java
+    try {
+        block()
+    } catch (e: Throwable) {
+        if (!expectedType.isInstance(e)) {
+            throw AssertionError(
+                "Expected ${expectedType.simpleName}, got ${e.javaClass.name}: ${e.message}",
+                e,
+            )
+        }
+        @Suppress("UNCHECKED_CAST")
+        return e as T
+    }
+    throw AssertionError(
+        "Expected ${expectedType.simpleName}, but no exception was thrown",
+    )
+}
+
+/**
  * Fails the current test with [message], bypassing JUnit 5's
  * `Assertions.fail(...)` overload-resolution bug for non-lambda String
  * arguments.
