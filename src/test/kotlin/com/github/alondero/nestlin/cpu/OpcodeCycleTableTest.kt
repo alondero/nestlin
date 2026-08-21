@@ -152,6 +152,12 @@ class OpcodeCycleTableTest {
                 { it.registers.indexX = 0x00 }, "ADC abs,X")
 
             // ===== SBC (8) ==================================================
+            // Issue #10 (SBC cycle count hardcoded to 6 for all addressing
+            // modes) closed by the #192 sealed-class refactor + #207 per-mode
+            // cycle counts + #17/#172 cycle accounting. These rows pin the
+            // real-6502 counts in place: imm=2, zp=3, abs=4, zp,X/abs,X/abs,Y=4
+            // (+1 on page cross, exercised by GoldenLogTest), (ind),Y=5,
+            // (ind,X)=6. Post-tick = real - 1.
             rows += OpcodeRow(0xE1, 5, listOf(b(POINTER_BASE and 0xFF)),
                 indirectXPointer(), "SBC (ind,X)")
             rows += OpcodeRow(0xE5, 2, listOf(b(0x42)), mnemonic = "SBC zp")
