@@ -42,6 +42,96 @@ tasks.register("uberJar") {
     dependsOn("shadowJar")
 }
 
+// ---------------------------------------------------------------------------
+// :buildNative — compile the RetroAchievements façade + vendored rcheevos
+// v12.4.0 into a per-platform shared library (librcheevos_facade.so /
+// rcheevos_facade.dll / librcheevos_facade.dylib). Issue #267.
+//
+// The output is placed under native/build/<host>/ and copied into
+// build/resources/main/native-ra/<host>/ so the runnable JAR picks it up
+// on the classpath. When the build environment has no C compiler, the
+// task no-ops (exit code 2 from the script) and the JNA service falls
+// back to NoOp — a missing native lib never blocks a Gradle build.
+//
+// Tests that need a real native library tag themselves with @Tag("nativeRa")
+// (excluded from `./gradlew test`); they run via `./gradlew testNativeRa`
+// which depends on this task and re-includes the tag.
+// ---------------------------------------------------------------------------
+val nativeRaOutputDir = layout.buildDirectory.dir("native-ra")
+val nativeRaHostDir = nativeRaOutputDir.map {
+    when {
+        org.gradle.internal.os.OperatingSystem.current().isWindows -> it.dir("windows")
+        org.gradle.internal.os.OperatingSystem.current().isMacOsX -> it.dir("macos")
+        else -> it.dir("linux")
+    }
+}
+
+tasks.register("buildNative") {
+    group = "build"
+    description = "Compiles the native RetroAchievements façade + vendored rcheevos v12.4.0"
+    val rchDir = file("${project.projectDir}/native/rcheevos")
+    val facadeDir = file("${project.projectDir}/native/ra_facade")
+    val script = file("${project.projectDir}/tools/build-native-ra.ps1")
+
+    outputs.dir(nativeRaHostDir)
+
+    doLast {
+        val outDir = nativeRaHostDir.get().asFile
+        outDir.mkdirs()
+
+        // Forward MESEN2_PATH / NESTLIN_* env vars (Gradle daemon may not
+        // inherit shell env vars between invocations — same caveat as the
+        // Mesen2 test task). Forwarded for future tools/ scripts that read
+        // them; the C build itself uses no env vars.
+        val cmd = listOf(
+            "powershell.exe", "-ExecutionPolicy", "Bypass",
+            "-File", script.absolutePath,
+            "-OutputDir", outDir.absolutePath,
+            "-RchDir", rchDir.absolutePath,
+            "-FacadeDir", facadeDir.absolutePath,
+        )
+        val proc = ProcessBuilder(cmd)
+            .redirectErrorStream(true)
+            .start()
+        proc.inputStream.bufferedReader().forEachLine { println(it) }
+        val rc = proc.waitFor()
+        if (rc == 2) {
+            // No compiler on PATH — graceful skip. The JNA side will see
+            // a missing native library and degrade to NoOp.
+            logger.warn("[buildNative] No C compiler on PATH; native RA lib not built. JNA will fall back to NoOp.")
+        } else if (rc != 0) {
+            throw GradleException("buildNative failed (exit=$rc). See output above.")
+        }
+    }
+}
+
+// Copy the freshly-built native library into the resources tree so the
+// runnable JAR ships with it. A no-op when buildNative skipped (no
+// compiler on the host).
+val copyNativeRa = tasks.register("copyNativeRa") {
+    group = "build"
+    description = "Copies the built native RA library into the resources tree"
+    dependsOn("buildNative")
+    val resDir = layout.buildDirectory.dir("resources/main/native-ra")
+    outputs.dir(resDir)
+    doLast {
+        val src = nativeRaHostDir.get().asFile
+        if (!src.exists()) {
+            logger.warn("[copyNativeRa] No built artifact at $src; skipping (JNA will fall back to NoOp).")
+            return@doLast
+        }
+        val dst = resDir.get().asFile
+        dst.mkdirs()
+        src.listFiles()?.forEach { f ->
+            if (f.isFile) f.copyTo(dst.resolve(f.name), overwrite = true)
+        }
+    }
+}
+
+tasks.named("processResources") {
+    dependsOn(copyNativeRa)
+}
+
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
     implementation("org.apache.commons:commons-compress:1.25.0")
@@ -53,6 +143,14 @@ dependencies {
 
     // JSON parsing for config files
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // RetroAchievements native client (issue #267). The JNA binding is
+    // resolved at runtime from a per-platform shared library built by
+    // :buildNative (see native/ra_facade). When the native library is
+    // unavailable, the JNA-side NativeRetroAchievementsService factory
+    // falls back to NoOpRetroAchievementsService — every existing flow
+    // works without lib loading.
+    implementation("net.java.dev.jna:jna:5.14.0")
 
     // JUnit 5 (Jupiter). The aggregator pulls in api/params/engine. Hamkrest is
     // framework-agnostic and works with Jupiter unchanged. (Issue #28)
@@ -83,9 +181,39 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 // lane, so "forgot to wire it up" is a red build, not a silent skip.
 
 tasks.test {
-    // Fast suite: no Mesen2, no external ROMs. Tags do the exclusion - no class list to maintain.
+    // Fast suite: no Mesen2, no external ROMs, no native RA library.
+    // Tags do the exclusion - no class list to maintain. @Tag("nativeRa")
+    // skips because the native façade may not be compiled on every host.
     useJUnitPlatform {
-        excludeTags("mesen", "externalRom")
+        excludeTags("mesen", "externalRom", "nativeRa")
+    }
+}
+
+// Separate task to run native-RA contract tests. These tests load JNA +
+// the rcheevos_facade shared library; the library is built by :buildNative
+// and copied into the test classpath. The system property the tests check
+// is set explicitly here so the @EnabledIf gate activates.
+tasks.register<Test>("testNativeRa") {
+    group = "verification"
+    description = "Runs native RetroAchievements contract tests (loads rcheevos_facade via JNA)"
+    dependsOn("buildNative")
+    useJUnitPlatform {
+        includeTags("nativeRa")
+    }
+    // Activate the JNA-side gate. The tests also re-check
+    // isNativeLibraryAvailable() at runtime, so the property alone
+    // isn't sufficient — but without it the @EnabledIf returns false.
+    systemProperty("nestlin.test.nativeRa", "true")
+    // Point JNA at the freshly built library so `Native.load("rcheevos_facade")`
+    // finds it without falling through to the classpath. The `build/native-ra/<host>`
+    // directory is the canonical output of :buildNative.
+    val nativeDir = nativeRaHostDir.get().asFile
+    if (nativeDir.exists()) {
+        systemProperty("jna.library.path", nativeDir.absolutePath)
+    }
+    testLogging {
+        events("passed", "failed", "skipped", "standard_out", "standard_error")
+        showStandardStreams = true
     }
 }
 
