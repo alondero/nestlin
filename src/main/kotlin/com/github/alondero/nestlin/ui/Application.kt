@@ -436,6 +436,18 @@ class NestlinApplication : FrameListener, Application() {
     // because Label has a [Tooltip] property; MenuItem doesn't.
     private var raStatusLabelRef: javafx.scene.control.Label? = null
 
+    // Sign-in actions (issue #268). The status label already exists above;
+    // these are the actionable items: Sign In, View Profile, Sign Out.
+    // Each is wired to a manager listener so the disable / text state
+    // tracks the documented Unavailable / SignedOut / Authenticating /
+    // SignedIn / Offline states.
+    private var raSignInItem: javafx.scene.control.MenuItem? = null
+    private var raProfileItem: javafx.scene.control.MenuItem? = null
+    private var raSignOutItem: javafx.scene.control.MenuItem? = null
+    private var raSignInManagerRef: com.github.alondero.nestlin.session.RaSignInManager? = null
+    private var raSignInListenerToken: com.github.alondero.nestlin.session.RaSignInManager.ListenerToken? = null
+    private var raProfileWindow: RaProfileWindow? = null
+
     // --- Movie record/playback state (issue #123) ---
     //
     // Exactly one of [liveRecorder] / [livePlayer] is non-null when a movie session is
@@ -629,10 +641,11 @@ class NestlinApplication : FrameListener, Application() {
             debugMenu.items.add(memoryEditorItem)
             menuBar.menus.add(debugMenu)
 
-            // RetroAchievements menu (issue #267). A single status item that
-            // reflects the availability of the native façade library. The
-            // menu's purpose right now is visibility — there are no actions
-            // to take until issue #268 lands login/token restoration.
+            // RetroAchievements menu (issue #267 + #268). Status item reflects the
+            // availability of the native façade library; the Sign In /
+            // Profile / Sign Out actions land in issue #268 and operate
+            // against the [RaSignInManager] tied to the same
+            // [GameSessionCoordinator].
             //
             // The label is updated on every refresh to reflect whether the
             // native library was successfully loaded. When it wasn't, the
@@ -653,10 +666,40 @@ class NestlinApplication : FrameListener, Application() {
             // the property setter avoids the boolean literal mismatch.
             raStatusItem.hideOnClickProperty().set(false)
             raStatusLabelRef = raStatusLabel
-            retroAchievementsMenu.items.add(raStatusItem)
+
+            // Sign In: opens the modal username/password dialog (issue #268).
+            val raSignInMenuItem = javafx.scene.control.MenuItem("Sign In...")
+            raSignInMenuItem.setOnAction { handleRaSignIn() }
+            raSignInItem = raSignInMenuItem
+
+            // View Profile: opens the non-modal profile window. Disabled
+            // until we're actually signed in (the window would just show a
+            // placeholder otherwise, which is a poor first impression).
+            val raProfileMenuItem = javafx.scene.control.MenuItem("View Profile...")
+            raProfileMenuItem.setOnAction { handleRaViewProfile() }
+            raProfileMenuItem.isDisable = true
+            raProfileItem = raProfileMenuItem
+
+            // Sign Out: tears down the session without stopping gameplay.
+            // Disabled unless we're signed in.
+            val raSignOutMenuItem = javafx.scene.control.MenuItem("Sign Out")
+            raSignOutMenuItem.setOnAction { handleRaSignOut() }
+            raSignOutMenuItem.isDisable = true
+            raSignOutItem = raSignOutMenuItem
+
+            retroAchievementsMenu.items.addAll(
+                raStatusItem,
+                javafx.scene.control.SeparatorMenuItem(),
+                raSignInMenuItem,
+                raProfileMenuItem,
+                raSignOutMenuItem,
+            )
             menuBar.menus.add(retroAchievementsMenu)
             // Populate the status label now that the label has been attached.
             updateRetroAchievementsStatus()
+            // Wire the manager (lazy: the factory call must NOT throw — see
+            // the try/catch above on the coordinator's service).
+            initializeRaSignInManager()
 
             // Create layout with menu bar and the canvas holder. VBox.setVgrow lets the
             // holder expand to fill remaining vertical space in fullscreen / Fit mode.
@@ -1262,8 +1305,7 @@ class NestlinApplication : FrameListener, Application() {
             val version = com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.rcheevosVersion() ?: "unknown"
             label.text = "Status: native library available (rcheevos $version)"
             label.tooltip = javafx.scene.control.Tooltip(
-                "The RetroAchievements native façade was loaded successfully.\n" +
-                "Sign-in and per-game preparation will be available once issue #268 ships."
+                "The RetroAchievements native façade was loaded successfully."
             )
         } else {
             label.text = "Status: native library unavailable"
@@ -1276,6 +1318,112 @@ class NestlinApplication : FrameListener, Application() {
                 "Headless tools (replay, bootcheck) deliberately skip the library."
             )
         }
+    }
+
+    /**
+     * Lazily construct the [RaSignInManager] tied to the coordinator's
+     * service. Called once from the menu construction path so the
+     * factory's catch-all (any UnsatisfiedLinkError / NoClassDefFoundError
+     * etc.) keeps the UI alive even if the manager init throws.
+     *
+     * On construction the manager attempts a token-restore login against
+     * any persisted credentials; the menu state updates via the listener.
+     */
+    private fun initializeRaSignInManager() {
+        val service = sessionCoordinator.service
+        val manager = try {
+            com.github.alondero.nestlin.session.RaSignInManager.from(service)
+        } catch (t: Throwable) {
+            System.err.println("[APP] RA sign-in manager init failed: ${t.javaClass.simpleName}")
+            return
+        }
+        raSignInManagerRef = manager
+        raSignInListenerToken = manager.addListener { state ->
+            // The listener may fire from any thread (the manager's bridge
+            // completes on its own executor). Hop to JavaFX for menu updates.
+            javafx.application.Platform.runLater { updateRaMenuForState(state) }
+        }
+        // Kick off the persisted-credentials restore. The listener above
+        // will drive menu state as the manager transitions through
+        // Authenticating → SignedIn / SignedOut / Offline.
+        manager.start()
+        updateRaMenuForState(manager.state)
+    }
+
+    /**
+     * Apply the menu's per-state enable/disable + text rules. Called from
+     * the manager's state listener and at menu init.
+     */
+    private fun updateRaMenuForState(state: com.github.alondero.nestlin.session.RaSignInState) {
+        val signIn = raSignInItem ?: return
+        val profile = raProfileItem ?: return
+        val signOut = raSignOutItem ?: return
+        when (state) {
+            is com.github.alondero.nestlin.session.RaSignInState.Unavailable -> {
+                signIn.text = "Sign In (unavailable)"
+                signIn.isDisable = true
+                profile.isDisable = true
+                signOut.isDisable = true
+            }
+            is com.github.alondero.nestlin.session.RaSignInState.SignedOut -> {
+                signIn.text = "Sign In..."
+                signIn.isDisable = false
+                profile.isDisable = true
+                signOut.isDisable = true
+            }
+            is com.github.alondero.nestlin.session.RaSignInState.Authenticating -> {
+                signIn.text = "Signing In..."
+                signIn.isDisable = true
+                profile.isDisable = true
+                signOut.isDisable = true
+            }
+            is com.github.alondero.nestlin.session.RaSignInState.SignedIn -> {
+                signIn.text = "Signed In as ${state.account.displayName.ifEmpty { state.account.username }}"
+                signIn.isDisable = true
+                profile.isDisable = false
+                signOut.isDisable = false
+            }
+            is com.github.alondero.nestlin.session.RaSignInState.Offline -> {
+                signIn.text = "Sign In (offline — retry)"
+                signIn.isDisable = false
+                profile.isDisable = true
+                signOut.isDisable = true
+            }
+        }
+    }
+
+    /** Open the sign-in dialog. Handler for the Sign In menu item. */
+    private fun handleRaSignIn() {
+        val manager = raSignInManagerRef ?: return
+        if (manager.state is com.github.alondero.nestlin.session.RaSignInState.Authenticating) return
+        // Already on the JavaFX thread (MenuItem.setOnAction); showAndWait
+        // is modal so the user can't interact with the rest of the UI.
+        RaLoginDialog(manager).showAndWait()
+    }
+
+    /** Open the non-modal profile window. Handler for View Profile menu item. */
+    private fun handleRaViewProfile() {
+        val manager = raSignInManagerRef ?: return
+        val existing = raProfileWindow
+        if (existing != null) {
+            existing.show()
+            return
+        }
+        val window = RaProfileWindow(manager)
+        window.stage.showingProperty().addListener { _, _, showing ->
+            if (!showing) {
+                window.dispose()
+                raProfileWindow = null
+            }
+        }
+        raProfileWindow = window
+        window.show()
+    }
+
+    /** Sign out (preserves gameplay). Handler for Sign Out menu item. */
+    private fun handleRaSignOut() {
+        val manager = raSignInManagerRef ?: return
+        manager.signOut()
     }
 
     private fun setScaleMode(mode: ScaleMode) {
@@ -1957,6 +2105,17 @@ class NestlinApplication : FrameListener, Application() {
 
         // Clean up gamepad
         gamepadInput.shutdown()
+
+        // Tear down the RA sign-in manager before the service handle is
+        // destroyed — the manager's HTTP bridge binds to the same native
+        // handle and would race the shutdown otherwise. Idempotent.
+        raSignInListenerToken?.let { token ->
+            raSignInManagerRef?.removeListener(token)
+        }
+        raSignInListenerToken = null
+        raSignInManagerRef?.shutdown()
+        raProfileWindow?.dispose()
+        raProfileWindow = null
 
         // Clean up audio
         audioLine?.stop()

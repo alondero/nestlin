@@ -40,8 +40,45 @@ internal interface RaFacadeBindings : Library {
     /** Tear down the client. Safe with null. */
     fun ra_facade_destroy(handle: Pointer?): Int
 
-    /** Sign-in state. The no-network shim in the C side always reports 0. */
+    /** Sign-in state. Returns 1 when the rcheevos client holds a logged-in user, 0 otherwise. */
     fun ra_facade_is_signed_in(handle: Pointer): Int
+
+    /**
+     * Begin a password login. Asynchronous; the result arrives via the HTTP
+     * bridge + an eventual `SERVER_ERROR` or `isSignedIn` poll. Returns a
+     * [RaStatus] code: `ERR_LIBRARY_STATE` if a login is already in flight.
+     */
+    fun ra_facade_begin_login_with_password(handle: Pointer, username: String, password: String): Int
+
+    /** Begin a token login (used for restoration at startup). Same semantics as password. */
+    fun ra_facade_begin_login_with_token(handle: Pointer, username: String, token: String): Int
+
+    /** Logout. Synchronous. Idempotent. */
+    fun ra_facade_logout(handle: Pointer)
+
+    /**
+     * Snapshot the signed-in user's profile into [out]. Returns `RA_OK` on
+     * success or `RA_ERR_NOT_SIGNED_IN` when no user is logged in. Strings
+     * are written into the struct's fixed-size arrays; the JNA side MUST
+     * copy any field it wants to retain past the call.
+     */
+    fun ra_facade_get_user_info(handle: Pointer, out: RaUserInfo): Int
+
+    /**
+     * Pop the next pending HTTP request into [out]. Returns 1 when a
+     * request was written, 0 when the queue is empty. Strings are written
+     * into the struct's fixed-size arrays; the JNA side MUST copy what it
+     * intends to retain past the call.
+     */
+    fun ra_facade_dequeue_http_request(handle: Pointer, out: RaHttpRequestSlot): Int
+
+    /**
+     * Deliver an HTTP response back to rcheevos. The generation matches
+     * the one rcheevos returned via [ra_facade_dequeue_http_request];
+     * mismatches are silently dropped (the user logged out before the
+     * response arrived). Returns 1 if delivered, 0 if dropped.
+     */
+    fun ra_facade_complete_http_request(handle: Pointer, generation: Int, status: Int, body: String?, bodyLength: Int): Int
 
     /** Begin loading a new game from raw ROM bytes. Returns a [RaStatus] code. */
     fun ra_facade_prepare_game(handle: Pointer, romBytes: ByteArray, romLen: Int, displayName: String?): Int
@@ -209,6 +246,57 @@ internal class RaGameInfo : Structure() {
     override fun getFieldOrder(): List<String> = listOf(
         "state", "gameId", "hasAchievements", "hasLeaderboards", "hardcoreEnabled",
     )
+}
+
+/**
+ * Flat mirror of the C-side `ra_user_info_t`. Field widths match
+ * ra_facade.h exactly; the JVM side MUST call write() before passing to
+ * `ra_facade_get_user_info` and read() afterwards.
+ */
+internal class RaUserInfo : Structure() {
+    @JvmField var username: ByteArray = ByteArray(RA_FACADE_USERNAME_MAX)
+    @JvmField var displayName: ByteArray = ByteArray(RA_FACADE_DISPLAY_NAME_MAX)
+    @JvmField var avatarUrl: ByteArray = ByteArray(RA_FACADE_AVATAR_URL_MAX)
+    @JvmField var token: ByteArray = ByteArray(RA_FACADE_TOKEN_MAX)
+    @JvmField var score: Int = 0
+    @JvmField var scoreSoftcore: Int = 0
+    @JvmField var numUnreadMessages: Int = 0
+    override fun getFieldOrder(): List<String> = listOf(
+        "username", "displayName", "avatarUrl", "token",
+        "score", "scoreSoftcore", "numUnreadMessages",
+    )
+
+    companion object {
+        // Must match the C macros in ra_facade.h.
+        const val RA_FACADE_USERNAME_MAX = 128
+        const val RA_FACADE_DISPLAY_NAME_MAX = 128
+        const val RA_FACADE_AVATAR_URL_MAX = 256
+        const val RA_FACADE_TOKEN_MAX = 64
+    }
+}
+
+/**
+ * Flat mirror of `ra_http_request_t`. One entry from the C-side HTTP queue;
+ * the JVM side passes this to `ra_facade_dequeue_http_request`, copies the
+ * strings it needs, then reuses the struct for the next poll.
+ */
+internal class RaHttpRequestSlot : Structure() {
+    @JvmField var generation: Int = 0
+    @JvmField var url: ByteArray = ByteArray(RA_FACADE_HTTP_URL_MAX)
+    @JvmField var postData: ByteArray = ByteArray(RA_FACADE_HTTP_BODY_MAX)
+    @JvmField var contentType: ByteArray = ByteArray(RA_FACADE_HTTP_CONTENT_TYPE_MAX)
+    @JvmField var hasPostData: Byte = 0
+    @JvmField var reserved: ByteArray = ByteArray(3)
+    override fun getFieldOrder(): List<String> = listOf(
+        "generation", "url", "postData", "contentType", "hasPostData", "reserved",
+    )
+
+    companion object {
+        // Must match the C macros in ra_facade.h.
+        const val RA_FACADE_HTTP_URL_MAX = 512
+        const val RA_FACADE_HTTP_BODY_MAX = 4096
+        const val RA_FACADE_HTTP_CONTENT_TYPE_MAX = 64
+    }
 }
 
 // ---------------------------------------------------------------------------
