@@ -71,7 +71,6 @@ tasks.register("buildNative") {
     description = "Compiles the native RetroAchievements façade + vendored rcheevos v12.4.0"
     val rchDir = file("${project.projectDir}/native/rcheevos")
     val facadeDir = file("${project.projectDir}/native/ra_facade")
-    val script = file("${project.projectDir}/tools/build-native-ra.ps1")
 
     outputs.dir(nativeRaHostDir)
 
@@ -79,17 +78,29 @@ tasks.register("buildNative") {
         val outDir = nativeRaHostDir.get().asFile
         outDir.mkdirs()
 
-        // Forward MESEN2_PATH / NESTLIN_* env vars (Gradle daemon may not
-        // inherit shell env vars between invocations — same caveat as the
-        // Mesen2 test task). Forwarded for future tools/ scripts that read
-        // them; the C build itself uses no env vars.
-        val cmd = listOf(
-            "powershell.exe", "-ExecutionPolicy", "Bypass",
-            "-File", script.absolutePath,
-            "-OutputDir", outDir.absolutePath,
-            "-RchDir", rchDir.absolutePath,
-            "-FacadeDir", facadeDir.absolutePath,
-        )
+        // Pick the platform-appropriate build script. The PowerShell
+        // variant is for Windows; the bash variant is for Linux/macOS.
+        // Both scripts are committed alongside the C sources so the
+        // build is reproducible on a fresh checkout of either host.
+        val isWindows = org.gradle.internal.os.OperatingSystem.current().isWindows
+        val cmd = if (isWindows) {
+            val script = file("${project.projectDir}/tools/build-native-ra.ps1")
+            listOf(
+                "powershell.exe", "-ExecutionPolicy", "Bypass",
+                "-File", script.absolutePath,
+                "-OutputDir", outDir.absolutePath,
+                "-RchDir", rchDir.absolutePath,
+                "-FacadeDir", facadeDir.absolutePath,
+            )
+        } else {
+            val script = file("${project.projectDir}/tools/build-native-ra.sh")
+            listOf(
+                "bash", script.absolutePath,
+                "-o", outDir.absolutePath,
+                "-r", rchDir.absolutePath,
+                "-f", facadeDir.absolutePath,
+            )
+        }
         val proc = ProcessBuilder(cmd)
             .redirectErrorStream(true)
             .start()
@@ -97,7 +108,10 @@ tasks.register("buildNative") {
         val rc = proc.waitFor()
         if (rc == 2) {
             // No compiler on PATH — graceful skip. The JNA side will see
-            // a missing native library and degrade to NoOp.
+            // a missing native library and degrade to NoOp. CRITICAL:
+            // this must NOT fail the build — a CI runner without a C
+            // compiler runs the JVM tests normally; only the native
+            // contract tests are skipped (they're @Tag("nativeRa")).
             logger.warn("[buildNative] No C compiler on PATH; native RA lib not built. JNA will fall back to NoOp.")
         } else if (rc != 0) {
             throw GradleException("buildNative failed (exit=$rc). See output above.")
@@ -108,6 +122,11 @@ tasks.register("buildNative") {
 // Copy the freshly-built native library into the resources tree so the
 // runnable JAR ships with it. A no-op when buildNative skipped (no
 // compiler on the host).
+//
+// Note: deliberately NOT wired into processResources. The native library
+// is opt-in — running `./gradlew test` on a CI runner without gcc must
+// work without triggering the native build. Developers who want the JAR
+// to ship the library invoke `:shadowJar` after `:buildNative` + `:copyNativeRa`.
 val copyNativeRa = tasks.register("copyNativeRa") {
     group = "build"
     description = "Copies the built native RA library into the resources tree"
@@ -128,7 +147,11 @@ val copyNativeRa = tasks.register("copyNativeRa") {
     }
 }
 
-tasks.named("processResources") {
+// Wire the native lib into the runnable JAR. `:shadowJar` is the canonical
+// "build a redistributable" task; users who want the JAR to carry the
+// native library chain `:buildNative → :copyNativeRa → :shadowJar`. The
+// default test path never touches this chain.
+tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
     dependsOn(copyNativeRa)
 }
 
