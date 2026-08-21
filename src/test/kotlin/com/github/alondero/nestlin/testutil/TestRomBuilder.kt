@@ -109,6 +109,29 @@ class TestRomBuilder {
      */
     fun stampPrgBanks(windowKb: Int) = stampBanks(prg, windowKb, "PRG")
 
+    /**
+     * Fills the entire PRG region with [value]. Useful for subverting the
+     * bus-conflict AND mask that discrete-logic mappers (2, 3, 7, 11, 66)
+     * apply on writes to `$8000-$FFFF`: a PRG byte of `0xFF` makes the mask
+     * a no-op (`value AND 0xFF == value`), so tests can probe register
+     * decoding without having to know the exact stamp pattern at the write
+     * address. See `Mapper2BusConflictTest`, `Mapper3BusConflictTest`, etc.
+     * and GH #236.
+     */
+    fun fillPrg(value: Byte) {
+        java.util.Arrays.fill(prg, value)
+    }
+
+    /**
+     * Mirror of [fillPrg] for the CHR region. The CNROM/Color Dreams bus
+     * conflict is on PRG writes, so CHR fills are rarely needed; provided
+     * for symmetry so a test that wants full-ROM control can fill both
+     * halves uniformly.
+     */
+    fun fillChr(value: Byte) {
+        java.util.Arrays.fill(chr, value)
+    }
+
     /** As [stampPrgBanks] but for CHR banks. */
     fun stampChrBanks(windowKb: Int) = stampBanks(chr, windowKb, "CHR")
 

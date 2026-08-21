@@ -30,6 +30,7 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
   - UNROM uses up to 3 bank bits (8 banks / 128KB)
   - UOROM uses up to 4 bank bits (16 banks / 256KB)
   - The full written value is retained and resolved modulo the available PRG-bank count, matching Mesen2 and safely wrapping oversized selectors
+- **Bus conflict (GH #236, 2026-08-21):** the discrete-logic UxROM board shares its data bus between the PRG ROM and the 74HC161 bank-select latch, so a CPU write to the bank register is bitwise-ANDed with the PRG byte at the write address. The window split matters: writes to `$8000-$BFFF` see the switchable bank; writes to `$C000-$FFFF` see the fixed-last bank. Almost always benign — commercial games write a value that matches the PRG byte at the write address.
 - **CHR:** standard boards provide fixed 8KB CHR-RAM; the implementation retains its legacy optional banked CHR-ROM path for nonstandard dumps
 - **Mirroring:** fixed from the cartridge header
 - **Games:** Castlevania, Contra, 1943, DuckTales, California Games (UNROM); Paperboy 2 (UOROM)
@@ -41,6 +42,7 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
 - **Games:** Paperboy (32KB-PRG); Joust (16KB-PRG)
 - **Behavior:** 8KB CHR ROM bank switching via $8000-$9FFF (bits 0-1)
 - **PRG:** Fixed 16KB or 32KB at $8000-$FFFF. In 16KB mode the chip ignores A14, so $C000-$FFFF mirrors $8000-$BFFF. Issue #231 fixed the 16KB crash by switching the CPU-window read from `and 0x7FFF` to `% programRom.size`.
+- **Bus conflict (GH #236, 2026-08-21):** the original CNROM board decrements the CHR bank-select latch against whatever PRG byte is currently on the data bus at the write address. The effective value is the CPU write AND-ed with the PRG byte; only the low 2 bits of the result select the CHR bank. Star Soldier writes to `$C000`/`$D030` and the bank register decodes across the full `$8000-$FFFF` window — the bus-conflict mask is applied uniformly for those writes too.
 
 ## Mapper 4 (MMC3/TxROM)
 **Status:** Supported
@@ -144,6 +146,7 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
   - 8KB CHR RAM (not ROM) — fully writable pattern table memory
   - Single-screen mirroring controlled by bit 3 of bank write (0=lower screen, 1=upper screen)
 - **Notes:** AxROM bankswitches on writes to the **entire** `$8000-$FFFF` range (unlike UNROM/Mapper 2 which ignores `$C000-$FFFF` writes)
+- **Bus conflict (GH #236, 2026-08-21):** the discrete-logic AxROM board shares its data bus between PRG ROM and the 74HC161 bank-select latch, so the CPU's write value is AND-ed with the PRG byte at the write address. AMROM/AOROM are the boards with conflicts; ANROM uses a 74HC02 to disable PRG ROM during writes (no mask). The mask is applied uniformly because the iNES header doesn't distinguish the variants.
 - **Verification:** Marble Madness and R.C. Pro-Am pass `MapperVerificationTest` headless rendering tests
 
 ---
@@ -591,6 +594,7 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
   1. CHR banking was reading bits 0-1 (PRG bank field) instead of bits 4-7 (CHR bank field)
   2. PRG banking was fixed to bank 0 only; now properly switches 32KB PRG banks via bits 0-1
 - **Format (per NESdev wiki):** `CCCC LLPP` where CCCC = 8KB CHR bank (bits 4-7), LL = unused/lockout, PP = 32KB PRG bank (bits 0-1)
+- **Bus conflict (GH #236, 2026-08-21):** the Color Dreams board shares its data bus between PRG ROM and the bank-select latch, so the CPU's write value is AND-ed with the PRG byte at the write address. The window is a full 32KB switchable bank.
 - **Verified:** Bible Adventures now shows gameplay content (was all-black before fix)
 
 ---
@@ -747,7 +751,7 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
 
 
 ## Mapper 66 (GxROM)
-**Status:** Working (Added 2026-05-30, register decode fixed 2026-05-31)
+**Status:** Working (Added 2026-05-30, register decode fixed 2026-05-31, bus conflict added 2026-08-21)
 
 - **Games:** Super Mario Bros. + Duck Hunt, Dragon Power, Gumshoe, Doraemon
 - **Behavior:** Bank-select register (`xxPP xxCC`, written anywhere in $8000-$FFFF):
@@ -756,6 +760,7 @@ Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30,
   - No PRG RAM
   - Fixed mirroring from iNES header
 - **Notes:** Simple discrete mapper. PRG window at $8000-$FFFF is one 32KB bank. CHR banks are 8KB. The initial implementation decoded PRG as bits 0-2 / CHR as bits 3-4, which corrupted graphics (Gumshoe, SMB+Duck Hunt) and stopped some games booting (Doraemon).
+- **Bus conflict (GH #236, 2026-08-21):** the GxROM board shares its data bus between PRG ROM and the bank-select latch, so the CPU's write value is AND-ed with the PRG byte at the write address. The whole 32KB window is one bank.
 
 ---
 

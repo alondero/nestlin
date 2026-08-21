@@ -23,6 +23,17 @@ class Mapper11(private val gamePak: GamePak) : Mapper {
     private var chrBank = 0
     private var prgBank = 0  // 32KB PRG bank units
 
+    /**
+     * Bus-conflict AND mask (GH #236). The Color Dreams board shares its data
+     * bus between PRG ROM and the bank-select latch, so the CPU's write value
+     * is AND-ed with the PRG byte at the write address. The window is a full
+     * 32KB switchable bank.
+     */
+    private fun applyBusConflict(address: Int, value: Byte): Int {
+        val romByte = programRom[(prgBank * 0x8000 + (address - 0x8000)) % programRom.size].toUnsignedInt()
+        return value.toUnsignedInt() and romByte
+    }
+
     override fun cpuRead(address: Int): Byte {
         // PRG bank switching via $8000-$FFFF
         return programRom[(prgBank * 0x8000 + (address - 0x8000)) % programRom.size]
@@ -32,7 +43,7 @@ class Mapper11(private val gamePak: GamePak) : Mapper {
         // Bank switch via $8000-$FFFF
         // Format: CCCC LLPP (bits 4-7 = 8KB CHR, bits 0-1 = 32KB PRG bank)
         if (address in 0x8000..0xFFFF) {
-            val valueInt = value.toUnsignedInt()
+            val valueInt = applyBusConflict(address, value)
             chrBank = (valueInt shr 4) and 0x0F  // Bits 4-7: 8KB CHR bank (up to 128KB)
             prgBank = valueInt and 0x03          // Bits 0-1: 32KB PRG bank
         }

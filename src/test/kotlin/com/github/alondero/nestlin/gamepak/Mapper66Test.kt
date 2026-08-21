@@ -28,7 +28,12 @@ class Mapper66Test {
     }
 
     private fun makeStampedPrg(banks32k: Int): ByteArray {
-        val prg = ByteArray(banks32k * 0x8000)
+        // Fill with 0xFF so the GH #236 bus-conflict AND mask is a no-op
+        // (value AND 0xFF == value); only the first and last bytes of each
+        // 32KB bank are overwritten with the stamp so the read assertions
+        // still verify which bank was selected. The dedicated
+        // Mapper66BusConflictTest exercises the mask itself.
+        val prg = ByteArray(banks32k * 0x8000) { 0xFF.toByte() }
         for (bank in 0 until banks32k) {
             prg[bank * 0x8000] = bank.toByte()
             prg[bank * 0x8000 + 0x7FFF] = (bank xor 0xFF).toByte()
@@ -64,7 +69,10 @@ class Mapper66Test {
     fun `write to $8000 selects PRG and CHR banks`() {
         val m = newMapper66()
         // xxPP xxCC: PRG bank 1 (bits 4-5), CHR bank 1 (bits 0-1) => 0x11
-        m.cpuWrite(0x8000, 0x11.toSignedByte())
+        // Write at 0x8010 (offset 0x10) so the bus-conflict AND mask
+        // (GH #236) reads from 0xFF-filled PRG (a no-op) instead of
+        // hitting the bank-0 stamp at 0x8000.
+        m.cpuWrite(0x8010, 0x11.toSignedByte())
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(1))
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
     }
@@ -72,7 +80,7 @@ class Mapper66Test {
     @Test
     fun `PRG bank 1 selected via bit 4`() {
         val m = newMapper66()
-        m.cpuWrite(0x8000, 0x10.toSignedByte())
+        m.cpuWrite(0x8010, 0x10.toSignedByte())
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
         assertThat(m.cpuRead(0xFFFF).toUnsignedInt(), equalTo(1 xor 0xFF))
     }
@@ -80,7 +88,7 @@ class Mapper66Test {
     @Test
     fun `CHR bank 1 selected via bit 0`() {
         val m = newMapper66()
-        m.cpuWrite(0x8000, 0x01.toSignedByte())
+        m.cpuWrite(0x8010, 0x01.toSignedByte())
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(1))
         assertThat(m.ppuRead(0x1FFF).toUnsignedInt(), equalTo(1 xor 0xFF))
     }
@@ -89,7 +97,7 @@ class Mapper66Test {
     fun `PRG bits 4-5 select 32KB bank`() {
         val m = newMapper66(prgBanks = 4)
         for (bank in 0..3) {
-            m.cpuWrite(0x8000, (bank shl 4).toSignedByte())
+            m.cpuWrite(0x8010, (bank shl 4).toSignedByte())
             assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(bank))
         }
     }
@@ -98,7 +106,7 @@ class Mapper66Test {
     fun `CHR bits 0-1 select 8KB bank`() {
         val m = newMapper66(chrBanks = 4)
         for (bank in 0..3) {
-            m.cpuWrite(0x8000, bank.toSignedByte())
+            m.cpuWrite(0x8010, bank.toSignedByte())
             assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(bank))
         }
     }
@@ -108,10 +116,10 @@ class Mapper66Test {
         // Writing PRG bits must not disturb the CHR bank and vice-versa —
         // the original decode aliased them because the fields overlapped.
         val m = newMapper66(prgBanks = 4, chrBanks = 4)
-        m.cpuWrite(0x8000, 0x30.toSignedByte()) // PRG bank 3, CHR bank 0
+        m.cpuWrite(0x8010, 0x30.toSignedByte()) // PRG bank 3, CHR bank 0
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(3))
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(0))
-        m.cpuWrite(0x8000, 0x03.toSignedByte()) // PRG bank 0, CHR bank 3
+        m.cpuWrite(0x8010, 0x03.toSignedByte()) // PRG bank 0, CHR bank 3
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(0))
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(3))
     }
@@ -134,7 +142,7 @@ class Mapper66Test {
     fun `combined PRG and CHR bank selection`() {
         val m = newMapper66(prgBanks = 4, chrBanks = 4)
         // PRG bank 1 (bits 4-5), CHR bank 1 (bits 0-1) => 0x11
-        m.cpuWrite(0x8000, 0x11.toSignedByte())
+        m.cpuWrite(0x8010, 0x11.toSignedByte())
         assertThat(m.cpuRead(0x8000).toUnsignedInt(), equalTo(1))
         assertThat(m.ppuRead(0x0000).toUnsignedInt(), equalTo(1))
     }
@@ -143,7 +151,7 @@ class Mapper66Test {
     fun `snapshot contains correct banks`() {
         val m = newMapper66()
         // PRG bank 3 (bits 4-5 = 11), CHR bank 1 (bits 0-1 = 01) => 0x31
-        m.cpuWrite(0x8000, 0x31.toSignedByte())
+        m.cpuWrite(0x8010, 0x31.toSignedByte())
         val snap = m.snapshot()
         assertThat(snap.banks["prg"], equalTo(3))
         assertThat(snap.banks["chr"], equalTo(1))

@@ -40,9 +40,16 @@ class Mapper3Test {
         return chr
     }
 
+    /**
+     * `fillPrg(0xFF)` neutralises the bus-conflict AND mask (GH #236): a
+     * PRG byte of `0xFF` makes the mask a no-op (`value AND 0xFF == value`).
+     * Without it, the zero-filled PRG would mask every write to zero and
+     * the bank-selection tests would always select bank 0. The dedicated
+     * `Mapper3BusConflictTest` exercises the mask itself.
+     */
     private fun newMapper3(): Mapper3 {
         val chr = makeStampedChr(banks8k = 4)          // 32KB CHR — matches Star Soldier
-        val prg = ByteArray(0x4000 * 2)                // 32KB PRG
+        val prg = ByteArray(0x4000 * 2) { 0xFF.toByte() }  // 32KB PRG, no-conflict fill
         val gp = GamePak(buildIne(prg, chr))
         return gp.createMapper() as Mapper3
     }

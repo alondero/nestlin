@@ -33,6 +33,19 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
     // Diagnostic: when non-null, every PRG-window write is appended.
     var writeTrace: MutableList<Write>? = null
 
+    /**
+     * Bus-conflict AND mask (GH #236). CNROM's bank-select register decrements
+     * the CHR bank latch against whatever PRG byte is currently driven on the
+     * data bus at the write address. With a 16KB PRG image the address
+     * decoder ignores A14, so `$C000-$FFFF` mirrors `$8000-$BFFF` — the
+     * modulo here matches the read path's behaviour. See issue #231 for the
+     * PRG-windowing rationale.
+     */
+    private fun applyBusConflict(address: Int, value: Byte): Int {
+        val romByte = programRom[(address - 0x8000) % programRom.size].toUnsignedInt()
+        return value.toUnsignedInt() and romByte
+    }
+
     override fun cpuRead(address: Int): Byte {
         // PRG fixed at $8000-$FFFF (16 or 32KB). Use `% programRom.size`
         // rather than `and 0x7FFF` so 16KB images don't index past their
@@ -45,7 +58,9 @@ class Mapper3(private val gamePak: GamePak) : Mapper {
         if (address in 0x8000..0xFFFF) {
             writeTrace?.add(Write(address, value.toUnsignedInt()))
             // CNROM: bank register decodes across the entire $8000-$FFFF window.
-            chrBank = value.toUnsignedInt() and 0x03
+            // Apply the bus-conflict mask before decoding the low 2 bits.
+            val effective = applyBusConflict(address, value)
+            chrBank = effective and 0x03
         }
     }
 

@@ -24,6 +24,22 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
     private var prgBank = 0
     private var mirroringBit = 0
 
+    /**
+     * Bus-conflict AND mask (GH #236). The discrete-logic AxROM board shares
+     * its data bus between PRG ROM and the 74HC161 bank-select latch, so the
+     * CPU's write value is AND-ed with the PRG byte at the write address.
+     * The whole 32KB window is one bank, so the bank offset is fixed for the
+     * duration of the write. AMROM/AOROM are the boards with conflicts; ANROM
+     * uses a 74HC02 to disable PRG ROM during writes (no mask). We apply the
+     * mask uniformly because the iNES header doesn't distinguish the variants.
+     */
+    private fun applyBusConflict(address: Int, value: Byte): Int {
+        val bankOffset = prgBank * 0x8000
+        val offset = address - 0x8000
+        val romByte = programRom[(bankOffset + offset) % programRom.size].toUnsignedInt()
+        return value.toUnsignedInt() and romByte
+    }
+
     override fun cpuRead(address: Int): Byte {
         if (address < 0x8000) return 0
         // All 32KB at $8000-$FFFF is switchable (no fixed bank like UNROM)
@@ -38,7 +54,7 @@ class Mapper7(private val gamePak: GamePak) : Mapper {
         //   bit 4:    single-screen nametable select (0 = lower, 1 = upper)
         // The mirroring bit is bit 4 (0x10), NOT bit 3 — matching Mesen/FCEUX.
         if (address in 0x8000..0xFFFF) {
-            val valueInt = value.toUnsignedInt()
+            val valueInt = applyBusConflict(address, value)
             prgBank = valueInt and 0x07
             mirroringBit = (valueInt shr 4) and 0x01
         }
