@@ -41,8 +41,9 @@ class Ppu(var memory: Memory) {
      * blank-then-flash detection sequence.
      *
      * Returns 0 ("dark") for a row the beam has not yet drawn this frame (see
-     * [beamHasDrawnRow] — the reused [Frame] would otherwise hand back the previous
-     * frame's colour). Off-screen coordinates return -1.
+     * [beamHasDrawnRow] — the live [Frame] would otherwise hand back the previous
+     * frame's colour for any row the beam hasn't yet overwritten). Off-screen
+     * coordinates return -1.
      *
      * Runs on the emulation thread (the `$4017` read path), the same thread that
      * writes [frame], so no synchronisation is needed. (The Memory Editor's peek path
@@ -123,7 +124,45 @@ class Ppu(var memory: Memory) {
     private val frameListeners = java.util.concurrent.CopyOnWriteArrayList<FrameListener>()
     private val frameCompletionListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
     private var vBlank = false
-    private var frame = Frame()
+
+    // Frame-buffer double-buffer (issue #13). The PPU writes only to [frame]; the
+    // other buffer holds the just-completed frame and is handed to listeners at
+    // end-of-frame. Listeners can safely read the reference they receive on any
+    // thread — the PPU never touches that buffer again until the next swap. The
+    // reference swap itself is a single pointer write, atomic on the JVM; the
+    // [@Volatile] [publishedFrame] makes that swap visible to readers (screenshot
+    // path, JavaFX renderer thread) without a lock.
+    //
+    // Pre-fix, a single [Frame] was shared between writer (renderPixel) and all
+    // readers (any [FrameListener] plus external peekers). A listener that
+    // outlived the call (or that deferred its work to another thread) could read
+    // the buffer while the PPU was already writing the next frame's first
+    // scanline, producing a torn render. The two-buffer pool eliminates the
+    // shared mutable reference entirely.
+    //
+    // [aimBrightness] continues to read [frame] — the live in-progress buffer —
+    // because the Zapper's light sensor needs zero-frame-lag readings. [frame]
+    // is only ever touched on the emulation thread, so it doesn't need
+    // synchronisation. After the swap at endFrame, [frame] points to the buffer
+    // the PPU has not yet written this frame (the previous published buffer);
+    // [beamHasDrawnRow] gates reads to rows the beam has already overwritten, so
+    // no stale pixel sneaks out.
+    private val frameA = Frame()
+    private val frameB = Frame()
+    private var frame: Frame = frameA
+
+    /**
+     * The most-recently-completed frame. Exposed via [@Volatile] so callers that
+     * reach for the latest snapshot from outside the [FrameListener] API (the
+     * screenshot path, a future JavaFX direct-draw hook, etc.) see a fully
+     * completed buffer, never a half-written one. Same atomicity guarantee as
+     * the [FrameListener] contract: the PPU stops writing to this object the
+     * instant [endFrame] returns, and starts again on the *other* buffer.
+     */
+    @Volatile
+    var publishedFrame: Frame = frameB
+        private set
+
     private var frameCount = 0
 
     // Odd-frame cycle skip (issue #226). When the just-ended frame was odd AND rendering
@@ -312,11 +351,23 @@ class Ppu(var memory: Memory) {
     }
 
     private fun endFrame() {
+        // Capture the just-completed buffer into a local, then swap [frame] to the
+        // OTHER buffer before firing listeners. Listeners receive the local
+        // reference, which the PPU will not touch again — the next writes go to
+        // the buffer we just swapped [frame] away from. The reference swap is a
+        // single pointer write (atomic on the JVM) so a listener holding either
+        // reference sees a coherent buffer; the [@Volatile] [publishedFrame]
+        // assignment below makes the swap visible to readers that reach for the
+        // latest snapshot outside the listener API.
+        val published = frame
+        frame = if (published === frameA) frameB else frameA
+        publishedFrame = published
+
         // Fire all registered frame listeners (renderer, then later consumers like the movie
         // latch hook). Listeners run in registration order; if any one throws, the remaining
         // listeners for this frame are skipped (we still reset scanline/vBlank below).
         for (listener in frameListeners) {
-            listener.frameUpdated(frame)
+            listener.frameUpdated(published)
         }
         frameCount++
 
