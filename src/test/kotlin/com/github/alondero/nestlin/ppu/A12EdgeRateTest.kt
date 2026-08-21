@@ -56,8 +56,11 @@ class A12EdgeRateTest {
             oam[i * 4 + 3] = (i * 4).toByte()      // X
         }
 
-        // Tick through one full frame. The PPU implementation spends an extra "boundary tick"
-        // per scanline to invoke endLine(), so a frame is 262 × 342 = 89604 host ticks.
+        // Tick through one full frame. Each scanline takes 341 dot-ticks (one per NES dot
+        // 0..340) plus one 341st "boundary tick" that only runs endLine(). Frame 0 has no
+        // odd-frame skip (issue #226), so an NTSC frame is 262 × 342 = 89604 host ticks.
+        // Frame 1 would be 89603 because it skips one dot, but the rising-edge count below
+        // is dominated by visible scanlines, which exist equally in both frames.
         for (i in 0 until 89604) {
             ppu.tick()
         }
