@@ -89,8 +89,15 @@ class NestlinApplication : FrameListener, Application() {
     // observe the boundary; the application still owns the emulation thread
     // (per the coordinator's contract — its `onBeforeRomChange` /
     // `onAfterRomChange` are notification points, not thread-management
-    // hooks). The default service is the no-op until #267 ships the real
-    // client; production behavior is unchanged for users.
+    // hooks).
+    //
+    // Issue #267: the coordinator's service is now sourced through
+    // [RetroAchievementsServiceFactory], which picks the native rcheevos
+    // client when the façade library is available on the search path and
+    // falls back to NoOp when it isn't. The factory call is wrapped in a
+    // try/catch so a corrupt library can't crash the UI at startup — the
+    // worst case is the menu's "RetroAchievements" item shows disabled
+    // with a tooltip explaining why.
     //
     // **Why `clearPauseState` is NOT in the hook:** it must run SYNCHRONOUSLY
     // before the caller invokes `startEmulation()` (the emulation thread
@@ -102,9 +109,19 @@ class NestlinApplication : FrameListener, Application() {
     // startEmulation. Production call sites that need the pause-clear must
     // do it themselves, between the coordinator call and startEmulation().
     private val sessionCoordinator: GameSessionCoordinator by lazy {
+        val raService = try {
+            com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.create()
+        } catch (t: Throwable) {
+            // Defensive: any factory failure (UnsatisfiedLinkError from a
+            // half-built library, NoClassDefFoundError on a JNA mismatch,
+            // etc.) must NOT prevent the UI from launching. The fallback
+            // is the no-op; the menu indicator will reflect the absence.
+            println("[APP] RetroAchievements service init failed: ${t.javaClass.simpleName}: ${t.message}")
+            NoOpRetroAchievementsService
+        }
         GameSessionCoordinator(
             nestlin = nestlin,
-            service = NoOpRetroAchievementsService,
+            service = raService,
             hooks = GameSessionHooks(
                 onBeforeRomChange = {
                     // Per-ROM UI teardown. cancelMovieSession must run
@@ -410,6 +427,15 @@ class NestlinApplication : FrameListener, Application() {
     private var memoryEditorMenuItem: MenuItem? = null
     private var memoryEditorWindow: MemoryEditorWindow? = null
 
+    // RetroAchievements status item (issue #267). The label is updated on
+    // every refresh; the item is disabled because the menu's only job
+    // right now is to surface whether the native façade library is
+    // available. Login + token restoration actions land in issue #268.
+    //
+    // We hold a reference to the inner [Label] (not the CustomMenuItem)
+    // because Label has a [Tooltip] property; MenuItem doesn't.
+    private var raStatusLabelRef: javafx.scene.control.Label? = null
+
     // --- Movie record/playback state (issue #123) ---
     //
     // Exactly one of [liveRecorder] / [livePlayer] is non-null when a movie session is
@@ -602,6 +628,35 @@ class NestlinApplication : FrameListener, Application() {
             memoryEditorMenuItem = memoryEditorItem
             debugMenu.items.add(memoryEditorItem)
             menuBar.menus.add(debugMenu)
+
+            // RetroAchievements menu (issue #267). A single status item that
+            // reflects the availability of the native façade library. The
+            // menu's purpose right now is visibility — there are no actions
+            // to take until issue #268 lands login/token restoration.
+            //
+            // The label is updated on every refresh to reflect whether the
+            // native library was successfully loaded. When it wasn't, the
+            // item is disabled and the tooltip explains why, so a developer
+            // running the UI can immediately see whether their build of
+            // rcheevos_facade.dll/so/dylib made it onto the classpath.
+            //
+            // JavaFX's [MenuItem] doesn't expose a `tooltip` property, so
+            // we use a [CustomMenuItem] wrapping a [Label] — the Label
+            // supports tooltips. The item is hideOnClick = false because
+            // the menu is informational only.
+            val retroAchievementsMenu = javafx.scene.control.Menu("RetroAchievements")
+            val raStatusLabel = javafx.scene.control.Label("Status: checking…")
+            raStatusLabel.tooltip = javafx.scene.control.Tooltip("Native library availability unknown.")
+            val raStatusItem = javafx.scene.control.CustomMenuItem(raStatusLabel)
+            raStatusItem.isDisable = true
+            // `hideOnClick` is a BooleanProperty in JavaFX; setting via
+            // the property setter avoids the boolean literal mismatch.
+            raStatusItem.hideOnClickProperty().set(false)
+            raStatusLabelRef = raStatusLabel
+            retroAchievementsMenu.items.add(raStatusItem)
+            menuBar.menus.add(retroAchievementsMenu)
+            // Populate the status label now that the label has been attached.
+            updateRetroAchievementsStatus()
 
             // Create layout with menu bar and the canvas holder. VBox.setVgrow lets the
             // holder expand to fill remaining vertical space in fullscreen / Fit mode.
@@ -1187,6 +1242,40 @@ class NestlinApplication : FrameListener, Application() {
     /** Grey out the Debug → Memory Editor item when no ROM is loaded. */
     private fun updateDebugMenu() {
         memoryEditorMenuItem?.isDisable = nestlin.loadedRom == null
+    }
+
+    /**
+     * Refresh the RetroAchievements status menu item to reflect the
+     * current state of the native façade library. Called once at menu
+     * construction and again on every [handleResetMenuState] (so a
+     * user who drops a different native library on disk and restarts
+     * gets an accurate menu without app exit).
+     *
+     * The label is a short, single-line description so the menu doesn't
+     * resize when the user clicks it. The tooltip carries the longer
+     * "how to fix this" message for the degraded state.
+     */
+    private fun updateRetroAchievementsStatus() {
+        val label = raStatusLabelRef ?: return
+        val available = com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.isNativeLibraryAvailable()
+        if (available) {
+            val version = com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.rcheevosVersion() ?: "unknown"
+            label.text = "Status: native library available (rcheevos $version)"
+            label.tooltip = javafx.scene.control.Tooltip(
+                "The RetroAchievements native façade was loaded successfully.\n" +
+                "Sign-in and per-game preparation will be available once issue #268 ships."
+            )
+        } else {
+            label.text = "Status: native library unavailable"
+            label.tooltip = javafx.scene.control.Tooltip(
+                "The native rcheevos_facade shared library was not found on the\n" +
+                "classpath. Achievement tracking is disabled for this session.\n\n" +
+                "How to enable:\n" +
+                "  1. Run './gradlew buildNative' to compile the façade.\n" +
+                "  2. The library is auto-copied into the runnable JAR.\n\n" +
+                "Headless tools (replay, bootcheck) deliberately skip the library."
+            )
+        }
     }
 
     private fun setScaleMode(mode: ScaleMode) {

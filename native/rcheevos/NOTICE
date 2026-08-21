@@ -1,0 +1,33 @@
+Nestlin - Native RetroAchievements Capability
+Copyright (c) 2026 Adam Londero
+
+This product includes software developed by RetroAchievements.org
+(https://github.com/RetroAchievements/rcheevos).
+
+rcheevos v12.4.0 (commit 2ad0b86) is vendored at native/rcheevos/ under the
+MIT License. See native/rcheevos/LICENSE for the full license text.
+
+Upstream repository: https://github.com/RetroAchievements/rcheevos
+Upstream tag:        v12.4.0
+Upstream commit:     2ad0b8672f68a48148620164510b963039e49eb1
+
+Local modifications:
+
+  - Removed include/module.modulemap (Swift-only; unused in this C build).
+  - Removed src/rc_libretro.{c,h} (libretro frontend; we talk to rcheevos
+    directly, not through the libretro adapter).
+  - Removed src/rc_client_raintegration.{c,h} and
+    src/rc_client_raintegration_internal.h (RAIntegration DLL adapter; we
+    use the higher-level rc_client HTTP API directly).
+  - Removed include/rc_client_raintegration.h (matches the .c/.h removal
+    above).
+  - Removed src/rc_client_types.natvis and
+    src/rcheevos/rc_runtime_types.natvis (Visual Studio debugger visualizers;
+    we do not build under the Visual Studio debugger).
+
+The trimmed sources compile unchanged under CMake + GCC / Clang / MSVC.
+To refresh from upstream: drop a fresh rcheevos v12.4.0 checkout in place and
+re-apply the removals above. To upgrade to a newer rcheevos release, re-vendor
+under a new directory name (e.g. native/rcheevos-v12.5.0/) and update
+native/CMakeLists.txt + the SHA recorded above; do not mutate the upstream
+sources in place.
