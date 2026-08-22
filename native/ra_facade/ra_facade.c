@@ -259,6 +259,13 @@ struct ra_facade_s {
      * by ra_facade_logout). */
     int32_t                   login_in_flight;
 
+    /* Per-achievement list (issue #272). Allocated by
+     * ra_facade_create_achievement_list, freed by
+     * ra_facade_destroy_achievement_list. NULL when no list is active.
+     * Also freed by ra_facade_unload_game / destroy so a partial walk
+     * doesn't leak the underlying rcheevos allocation. */
+    rc_client_achievement_list_t* achievement_list;
+
     /* Diagnostic counters — for the contract tests and the menu indicator. */
     int32_t                   hardcore_enabled_snapshot;
     int32_t                   load_state_snapshot;
@@ -497,6 +504,10 @@ RA_FACADE_EXPORT int32_t ra_facade_destroy(void* handle) {
         rc_client_unload_game(facade->client);
         event_queue_clear(&facade->events);
         http_queue_clear(&facade->http);
+        if (facade->achievement_list != NULL) {
+            rc_client_destroy_achievement_list(facade->achievement_list);
+            facade->achievement_list = NULL;
+        }
         facade->generation++;
         rc_client_destroy(facade->client);
         facade->client = NULL;
@@ -644,6 +655,10 @@ RA_FACADE_EXPORT int32_t ra_facade_prepare_game(void* handle,
      * the generation counter is bumped so an in-flight HTTP callback that
      * arrives after this point can be detected by the JNA layer. */
     event_queue_clear(&facade->events);
+    if (facade->achievement_list != NULL) {
+        rc_client_destroy_achievement_list(facade->achievement_list);
+        facade->achievement_list = NULL;
+    }
     facade->generation++;
 
     rc_client_unload_game(facade->client);
@@ -704,6 +719,12 @@ RA_FACADE_EXPORT void ra_facade_unload_game(void* handle) {
     ra_facade_t* facade = (ra_facade_t*)handle;
     if (facade->client == NULL) return;
     event_queue_clear(&facade->events);
+    /* Free any in-flight achievement list — the new game gets a fresh
+     * snapshot; the old list's bucket pointers are about to be invalid. */
+    if (facade->achievement_list != NULL) {
+        rc_client_destroy_achievement_list(facade->achievement_list);
+        facade->achievement_list = NULL;
+    }
     facade->generation++;
     rc_client_unload_game(facade->client);
     facade->load_state_snapshot = (int32_t)RC_CLIENT_LOAD_GAME_STATE_NONE;
@@ -977,6 +998,121 @@ RA_FACADE_EXPORT void ra_facade_clear_events(void* handle) {
     if (handle == NULL) return;
     ra_facade_t* facade = (ra_facade_t*)handle;
     event_queue_clear(&facade->events);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Achievement list (issue #272)                                              */
+/*                                                                            */
+/* Walks rcheevos's rc_client_achievement_list_t — the list lives on the      */
+/* façade for the duration of one snapshot. The JNA side calls create,        */
+/* walks bucket + achievement slots, copies each field, then destroys.        */
+/* The list is auto-freed on unload_game / destroy / shutdown so a partial    */
+/* walk that crashes the JNA side doesn't leak a list.                        */
+/* -------------------------------------------------------------------------- */
+
+RA_FACADE_EXPORT int32_t ra_facade_has_achievements(void* handle) {
+    if (handle == NULL) return 0;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return 0;
+    return rc_client_has_achievements(facade->client) != 0 ? 1 : 0;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_create_achievement_list(void* handle,
+                                                           int32_t category,
+                                                           int32_t grouping) {
+    if (handle == NULL) return (int32_t)RA_ERR_NULL_HANDLE;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return (int32_t)RA_ERR_DESTROYED;
+    if (rc_client_get_user_info(facade->client) == NULL) {
+        return (int32_t)RA_ERR_NOT_SIGNED_IN;
+    }
+    if (rc_client_is_game_loaded(facade->client) == 0) {
+        return (int32_t)RA_ERR_NO_GAME;
+    }
+    /* Free any pre-existing list before allocating a fresh one. The
+     * create call replaces the slot — leaving an old list around would
+     * leak memory across rapid refreshes. */
+    if (facade->achievement_list != NULL) {
+        rc_client_destroy_achievement_list(facade->achievement_list);
+        facade->achievement_list = NULL;
+    }
+    facade->achievement_list = rc_client_create_achievement_list(
+        facade->client, category, grouping);
+    if (facade->achievement_list == NULL) {
+        return (int32_t)RA_ERR_INTERNAL;
+    }
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_achievement_list_bucket_count(void* handle) {
+    if (handle == NULL) return 0;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->achievement_list == NULL) return 0;
+    if (facade->achievement_list->num_buckets > 0x7FFFFFFF) return 0x7FFFFFFF;
+    return (int32_t)facade->achievement_list->num_buckets;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_get_achievement_bucket(void* handle,
+                                                          int32_t bucket_index,
+                                                          ra_achievement_bucket_t* out) {
+    if (handle == NULL || out == NULL) return (int32_t)RA_ERR_INVALID_ARG;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->achievement_list == NULL) return (int32_t)RA_ERR_NO_GAME;
+    if (bucket_index < 0 || (uint32_t)bucket_index >= facade->achievement_list->num_buckets) {
+        return (int32_t)RA_ERR_INVALID_ARG;
+    }
+    const rc_client_achievement_bucket_t* b =
+        &facade->achievement_list->buckets[bucket_index];
+    memset(out, 0, sizeof(*out));
+    out->bucket_type = (int32_t)b->bucket_type;
+    out->subset_id = (int32_t)b->subset_id;
+    if (b->num_achievements > 0x7FFFFFFF) {
+        out->achievement_count = 0x7FFFFFFF;
+    } else {
+        out->achievement_count = (int32_t)b->num_achievements;
+    }
+    copy_truncated(out->label, sizeof(out->label), b->label);
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_get_achievement_at(void* handle,
+                                                      int32_t bucket_index,
+                                                      int32_t achievement_index,
+                                                      ra_achievement_t* out) {
+    if (handle == NULL || out == NULL) return (int32_t)RA_ERR_INVALID_ARG;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->achievement_list == NULL) return (int32_t)RA_ERR_NO_GAME;
+    if (bucket_index < 0 || (uint32_t)bucket_index >= facade->achievement_list->num_buckets) {
+        return (int32_t)RA_ERR_INVALID_ARG;
+    }
+    const rc_client_achievement_bucket_t* b =
+        &facade->achievement_list->buckets[bucket_index];
+    if (achievement_index < 0 || (uint32_t)achievement_index >= b->num_achievements) {
+        return (int32_t)RA_ERR_INVALID_ARG;
+    }
+    const rc_client_achievement_t* a = b->achievements[achievement_index];
+    memset(out, 0, sizeof(*out));
+    out->id = (int32_t)a->id;
+    out->points = (int32_t)a->points;
+    out->state = (int32_t)a->state;
+    out->category = (int32_t)a->category;
+    out->bucket = (int32_t)a->bucket;
+    out->measured_percent = a->measured_percent;
+    copy_truncated(out->title, sizeof(out->title), a->title);
+    copy_truncated(out->description, sizeof(out->description), a->description);
+    copy_truncated(out->badge_name, sizeof(out->badge_name), a->badge_name);
+    copy_truncated(out->badge_url_unlocked, sizeof(out->badge_url_unlocked), a->badge_url);
+    copy_truncated(out->badge_url_locked, sizeof(out->badge_url_locked), a->badge_locked_url);
+    copy_truncated(out->measured_progress, sizeof(out->measured_progress), a->measured_progress);
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT void ra_facade_destroy_achievement_list(void* handle) {
+    if (handle == NULL) return;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->achievement_list == NULL) return;
+    rc_client_destroy_achievement_list(facade->achievement_list);
+    facade->achievement_list = NULL;
 }
 
 /* -------------------------------------------------------------------------- */

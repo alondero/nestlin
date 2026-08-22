@@ -144,6 +144,13 @@ class NestlinApplication : FrameListener, Application() {
                     // is installed, and playback must restart from a
                     // freshly-cold-booted game.
                     cancelMovieSession()
+                    // Bump the achievements controller's generation
+                    // alongside the placard — the coordinator bumps its
+                    // own, but the application-owned controller needs an
+                    // explicit bump here so a stale image-fetch or
+                    // sign-in completion cannot leak into the new ROM's
+                    // window.
+                    achievementsControllerLazy.bumpGeneration()
                 },
                 onAfterRomChange = { _ ->
                     // UI refresh against the new ROM identity. Hopped to
@@ -166,6 +173,14 @@ class NestlinApplication : FrameListener, Application() {
                         // visible cell — confirms the new ROM is
                         // actually being observed.
                         flashMemoryEditorIfOpen()
+                        // Refresh the achievements window view-model
+                        // against the new ROM identity. The controller
+                        // is the single funnel that maps (ROM, sign-in,
+                        // service snapshot) to a view-model — the
+                        // application drives it from this hook so the
+                        // window always reflects the most recent state.
+                        achievementsControllerLazy.refresh()
+                        updateRaAchievementsMenuForViewModel()
                     }
                 },
                 onServiceCallStart = { /* emulation thread is managed
@@ -174,10 +189,37 @@ class NestlinApplication : FrameListener, Application() {
                     production call sites. */ },
                 onServiceCallEnd = { /* see onServiceCallStart. */ },
             ),
+            achievementsController = achievementsControllerLazy,
         )
     }
     // Hold-Tab fast-forward: disables throttling while held, restores it on release.
     private val fastForward = FastForwardController(nestlin.config)
+
+    /**
+     * Lazy achievements controller (issue #272). Constructed once the
+     * service is ready; feeds the achievements window's view-model. The
+     * lambdas capture live references so the controller always sees
+     * the current sign-in / ROM state, not a snapshot from when it was
+     * constructed.
+     */
+    private val achievementsControllerLazy: com.github.alondero.nestlin.session.RaAchievementsController by lazy {
+        val service = try {
+            com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.create()
+        } catch (t: Throwable) {
+            NoOpRetroAchievementsService
+        }
+        com.github.alondero.nestlin.session.RaAchievementsController(
+            service = service,
+            signInState = { raSignInManagerRef?.state ?: com.github.alondero.nestlin.session.RaSignInState.SignedOut },
+            loadedRomInfo = {
+                val rom = nestlin.loadedRom ?: return@RaAchievementsController null
+                com.github.alondero.nestlin.session.RaAchievementsController.LoadedRomSnapshot(
+                    displayName = rom.gamePak.name,
+                    virtualFilename = rom.gamePak.name,
+                )
+            },
+        )
+    }
     // On-screen fast-forward indicator. A scene-graph node (not pixels drawn into frameImage)
     // so it stays a crisp 16px regardless of the canvas upscale factor. Gold glyph with a
     // black outline stays legible over both light and dark scenes. Toggled by the render loop.
@@ -497,6 +539,15 @@ class NestlinApplication : FrameListener, Application() {
     private var raSignInListenerToken: com.github.alondero.nestlin.session.RaSignInManager.ListenerToken? = null
     private var raProfileWindow: RaProfileWindow? = null
 
+    // Achievements window (issue #272). Non-modal; lazily opened from the
+    // RetroAchievements menu. The achievements controller is constructed
+    // in [initializeRaAchievements] once the coordinator is wired, and
+    // refreshed from the same hook surface that publishes boot-placard
+    // events so the window's view-model stays in sync with the placard.
+    private var raAchievementsController: com.github.alondero.nestlin.session.RaAchievementsController? = null
+    private var raAchievementsItem: javafx.scene.control.MenuItem? = null
+    private var raAchievementsWindow: RaAchievementsWindow? = null
+
     // --- Movie record/playback state (issue #123) ---
     //
     // Exactly one of [liveRecorder] / [livePlayer] is non-null when a movie session is
@@ -736,12 +787,24 @@ class NestlinApplication : FrameListener, Application() {
             raSignOutMenuItem.isDisable = true
             raSignOutItem = raSignOutMenuItem
 
+            // Current Game Achievements... (issue #272). Opens the non-modal
+            // achievements window for the currently-loaded game. The item is
+            // disabled by default; the achievements controller's listener
+            // enables / disables it based on whether a recognized core
+            // achievement set is available.
+            val raAchievementsMenuItem = javafx.scene.control.MenuItem("Current Game Achievements...")
+            raAchievementsMenuItem.setOnAction { handleRaViewAchievements() }
+            raAchievementsMenuItem.isDisable = true
+            raAchievementsItem = raAchievementsMenuItem
+
             retroAchievementsMenu.items.addAll(
                 raStatusItem,
                 javafx.scene.control.SeparatorMenuItem(),
                 raSignInMenuItem,
                 raProfileMenuItem,
                 raSignOutMenuItem,
+                javafx.scene.control.SeparatorMenuItem(),
+                raAchievementsMenuItem,
             )
             menuBar.menus.add(retroAchievementsMenu)
             // Populate the status label now that the label has been attached.
@@ -1405,7 +1468,18 @@ class NestlinApplication : FrameListener, Application() {
         raSignInListenerToken = manager.addListener { state ->
             // The listener may fire from any thread (the manager's bridge
             // completes on its own executor). Hop to JavaFX for menu updates.
-            javafx.application.Platform.runLater { updateRaMenuForState(state) }
+            javafx.application.Platform.runLater {
+                updateRaMenuForState(state)
+                // Sign-in / sign-out / offline transitions are ROM-account
+                // generation changes (issue #272 AC: "When the ROM/account
+                // generation changes, the window switches to the new state
+                // or closes cleanly"). Bump the achievements controller's
+                // generation alongside the menu refresh so a stale refresh
+                // can't poison the new sign-in's view-model, then re-publish.
+                achievementsControllerLazy.bumpGeneration()
+                achievementsControllerLazy.refresh()
+                updateRaAchievementsMenuForViewModel()
+            }
         }
         // Kick off the persisted-credentials restore. The listener above
         // will drive menu state as the manager transitions through
@@ -1415,6 +1489,18 @@ class NestlinApplication : FrameListener, Application() {
     }
 
     /**
+     * The sign-in state we observed on the previous menu update. Used
+     * by [updateRaMenuForState] to detect a SignedIn transition that
+     * wasn't followed by a sign-out — the exact trigger for the
+     * mid-game "Restart for achievements" dialog (issue #272 AC #11).
+     *
+     * Reads from this field happen BEFORE we mutate the menu state, so
+     * a comparison between [previousSignInState] and the new [state]
+     * correctly identifies the transition.
+     */
+    private var previousSignInState: com.github.alondero.nestlin.session.RaSignInState? = null
+
+    /**
      * Apply the menu's per-state enable/disable + text rules. Called from
      * the manager's state listener and at menu init.
      */
@@ -1422,6 +1508,14 @@ class NestlinApplication : FrameListener, Application() {
         val signIn = raSignInItem ?: return
         val profile = raProfileItem ?: return
         val signOut = raSignOutItem ?: return
+        // The previous state is captured BEFORE the menu updates so we
+        // can detect a transition into SignedIn while a ROM is loaded
+        // (issue #272 AC #11). Reading from raSignInManagerRef would
+        // see the new state (the listener fires AFTER state mutation)
+        // — that's the bug we're avoiding.
+        val prev = previousSignInState
+        previousSignInState = state
+        val wasSignedIn = prev is com.github.alondero.nestlin.session.RaSignInState.SignedIn
         when (state) {
             is com.github.alondero.nestlin.session.RaSignInState.Unavailable -> {
                 signIn.text = "Sign In (unavailable)"
@@ -1446,6 +1540,15 @@ class NestlinApplication : FrameListener, Application() {
                 signIn.isDisable = true
                 profile.isDisable = false
                 signOut.isDisable = false
+                // Mid-game sign-in: if a ROM is loaded and we weren't
+                // already signed in, surface the explicit battery-safe
+                // restart dialog (issue #272 AC #11). The dialog wires
+                // its positive button to coordinator.restartForAchievements
+                // which preserves battery RAM by construction.
+                val romLoaded = nestlin.loadedRom != null
+                if (romLoaded && !wasSignedIn) {
+                    RaAchievementRestartDialog.show(raSignInManagerRef, sessionCoordinator)
+                }
             }
             is com.github.alondero.nestlin.session.RaSignInState.Offline -> {
                 signIn.text = "Sign In (offline — retry)"
@@ -1488,6 +1591,44 @@ class NestlinApplication : FrameListener, Application() {
     private fun handleRaSignOut() {
         val manager = raSignInManagerRef ?: return
         manager.signOut()
+    }
+
+    /**
+     * Open (or focus) the loaded-game achievements window (issue #272).
+     * Idempotent — a second call focuses the existing window so the user
+     * doesn't end up with multiple stacked instances.
+     */
+    private fun handleRaViewAchievements() {
+        val existing = raAchievementsWindow
+        if (existing != null) {
+            existing.show()
+            return
+        }
+        val window = RaAchievementsWindow(
+            controller = achievementsControllerLazy,
+            signInState = { raSignInManagerRef?.state ?: com.github.alondero.nestlin.session.RaSignInState.SignedOut },
+        )
+        window.stage.showingProperty().addListener { _, _, showing ->
+            if (!showing) {
+                window.dispose()
+                if (raAchievementsWindow === window) raAchievementsWindow = null
+            }
+        }
+        raAchievementsWindow = window
+        window.show()
+    }
+
+    /**
+     * Refresh the RetroAchievements menu's enablement / label state
+     * based on the latest achievements view-model. The "Current Game
+     * Achievements..." item is enabled iff a recognized game with core
+     * achievements is loaded (issue #272 AC #1).
+     */
+    private fun updateRaAchievementsMenuForViewModel() {
+        val item = raAchievementsItem ?: return
+        val viewModel = achievementsControllerLazy.currentViewModel
+        val enabled = viewModel is com.github.alondero.nestlin.session.RaAchievementsWindowViewModel.Recognized
+        item.isDisable = !enabled
     }
 
     private fun setScaleMode(mode: ScaleMode) {

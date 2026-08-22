@@ -204,6 +204,122 @@ internal class NativeRetroAchievementsService private constructor(
         )
     }
 
+    override fun achievementListSnapshot(): RaAchievementListSnapshot? {
+        // Issue #272 — loaded-game achievements window. The snapshot is
+        // built up by allocating a list on the C side, walking every
+        // bucket + achievement, copying each into a Kotlin-side value,
+        // then destroying the list. The C side owns the list for the
+        // duration of the walk; nothing is held across the call.
+        //
+        // On any failure (no game / unsigned in / UnsatisfiedLinkError
+        // / list allocation failure) we return null — the view model
+        // treats null as "not available right now".
+        //
+        // The snapshot's `generation` field is 0 here; the controller
+        // stamps it with its own current generation on the way out so
+        // view-model.generation and snapshot.generation always agree.
+        try {
+            val rc = bindings.ra_facade_create_achievement_list(
+                handle,
+                RaAchievementCategory.CORE,
+                RaAchievementListGrouping.PROGRESS,
+            )
+            if (rc != RaStatus.OK) return null
+        } catch (e: UnsatisfiedLinkError) {
+            return null
+        }
+
+        try {
+            val bucketCount = try {
+                bindings.ra_facade_achievement_list_bucket_count(handle)
+            } catch (e: UnsatisfiedLinkError) {
+                return null
+            }
+            if (bucketCount <= 0) return null
+
+            // Read the game-level summary once so the snapshot carries the
+            // title + badge + unlocked/total counts alongside the bucket
+            // data. A failure here is non-fatal — we just fall back to
+            // empty strings and zero counts.
+            val summary = gameSummary()
+            val gameTitle = summary?.title ?: ""
+            val gameImageUrl = summary?.imageUrl ?: ""
+            val totalCore = summary?.numCoreAchievements ?: 0
+            val totalCorePoints = summary?.pointsCore ?: 0
+            val unlockedCore = summary?.numUnlockedAchievements ?: 0
+            val unlockedCorePoints = summary?.pointsUnlocked ?: 0
+
+            val buckets = ArrayList<RaAchievementBucketSnapshot>(bucketCount)
+            for (bIdx in 0 until bucketCount) {
+                val bucketSlot = RaAchievementBucketSlot()
+                val bucketRc = try {
+                    bucketSlot.write()
+                    val r = bindings.ra_facade_get_achievement_bucket(handle, bIdx, bucketSlot)
+                    bucketSlot.read()
+                    r
+                } catch (e: UnsatisfiedLinkError) {
+                    return null
+                }
+                if (bucketRc != RaStatus.OK) continue
+
+                val bucketEnum = RaAchievementBucket.fromCode(bucketSlot.bucketType)
+                val label = bytesToString(bucketSlot.label).ifEmpty { bucketEnum.label }
+                val achievements = ArrayList<RaAchievement>(bucketSlot.achievementCount)
+
+                for (aIdx in 0 until bucketSlot.achievementCount) {
+                    val achSlot = RaAchievementSlot()
+                    val achRc = try {
+                        achSlot.write()
+                        val r = bindings.ra_facade_get_achievement_at(handle, bIdx, aIdx, achSlot)
+                        achSlot.read()
+                        r
+                    } catch (e: UnsatisfiedLinkError) {
+                        return null
+                    }
+                    if (achRc != RaStatus.OK) continue
+                    achievements += RaAchievement(
+                        id = achSlot.id,
+                        title = bytesToString(achSlot.title),
+                        description = bytesToString(achSlot.description),
+                        points = achSlot.points,
+                        badgeName = bytesToString(achSlot.badgeName),
+                        badgeUrlUnlocked = bytesToString(achSlot.badgeUrlUnlocked),
+                        badgeUrlLocked = bytesToString(achSlot.badgeUrlLocked),
+                        bucket = bucketEnum,
+                        measuredProgress = bytesToString(achSlot.measuredProgress),
+                        measuredPercent = achSlot.measuredPercent,
+                        isUnlocked = achSlot.state == RaAchievementState.UNLOCKED,
+                    )
+                }
+
+                buckets += RaAchievementBucketSnapshot(
+                    bucket = bucketEnum,
+                    label = label,
+                    achievements = achievements,
+                )
+            }
+
+            return RaAchievementListSnapshot(
+                gameTitle = gameTitle,
+                gameImageUrl = gameImageUrl,
+                totalCoreAchievements = totalCore,
+                totalCorePoints = totalCorePoints,
+                unlockedCoreAchievements = unlockedCore,
+                unlockedCorePoints = unlockedCorePoints,
+                buckets = buckets,
+                // The controller stamps this with its own current
+                // generation on the way out — see
+                // [RaAchievementsController.refresh].
+                generation = 0L,
+            )
+        } finally {
+            // Always destroy the C-side list — even on early return paths —
+            // so a partial walk doesn't leak a list across calls. The list
+            // is unusable past this point regardless.
+            try { bindings.ra_facade_destroy_achievement_list(handle) } catch (_: UnsatisfiedLinkError) {}
+        }
+    }
+
     override fun evaluateFrame(frameIndex: Long) {
         // Issue #270: p95 latency benchmark — record wall-clock duration
         // around the native call so the test can assert the 1 ms budget

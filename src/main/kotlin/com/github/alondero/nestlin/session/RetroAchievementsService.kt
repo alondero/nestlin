@@ -185,6 +185,38 @@ interface RetroAchievementsService {
     fun gameSummary(): RaGameSummary?
 
     /**
+     * Snapshot the currently-loaded game's per-achievement list, grouped
+     * using the official runtime's progress buckets (issue #272 — loaded-game
+     * achievements window).
+     *
+     * Returns `null` when:
+     *   - the user is not signed in, or
+     *   - no game is currently prepared, or
+     *   - the prepare round-trip has not yet settled on READY, or
+     *   - the recognized game has no core achievements (the window shows
+     *     a "no core achievements" placeholder for this case; the
+     *     boot placard handles the same case).
+     *
+     * Returns a fully-copied, frozen [RaAchievementListSnapshot] when the
+     * runtime has a core set ready. The snapshot captures every
+     * achievement's title / description / points / badge URL / bucket /
+     * measured progress at the time of the call. The view model captures
+     * the controller's current generation alongside the snapshot so a
+     * late snapshot from a previous game cannot poison the new view.
+     *
+     * Cheap to call repeatedly; intended for the controller's refresh
+     * path (every ROM / sign-in / reset transition). The native
+     * implementation copies every string out of rcheevos-owned memory
+     * before returning, so the JNA-side can hold the snapshot
+     * indefinitely.
+     *
+     * Safe to call from any thread. The view-model layer enforces its
+     * own generation guard — this method returns whatever the runtime
+     * currently has, no more.
+     */
+    fun achievementListSnapshot(): RaAchievementListSnapshot?
+
+    /**
      * Permanent teardown: invalidate every pending callback, release client
      * resources, and disconnect any network handles. After `shutdown` the
      * service is unusable and must not respond to any other method.

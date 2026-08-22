@@ -845,6 +845,7 @@ class GameSessionCoordinatorTest {
             gameSummaryCalls++
             return null
         }
+        override fun achievementListSnapshot(): RaAchievementListSnapshot? = null
     }
 
     // ---------------------------------------------------------------------

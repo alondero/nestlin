@@ -30,6 +30,62 @@ internal interface RaFacadeBindings : Library {
     /** Drop all pending events without reading them. Idempotent. */
     fun ra_facade_clear_events(handle: Pointer)
 
+    // ------------------------------------------------------------------
+    // Per-achievement list (issue #272 — loaded-game achievements window)
+    // ------------------------------------------------------------------
+
+    /**
+     * True iff the active game has any achievements the runtime can list
+     * (core or unofficial). Cheap. Returns 0 on no-game / unsigned-in.
+     */
+    fun ra_facade_has_achievements(handle: Pointer): Int
+
+    /**
+     * Allocate a fresh achievement list grouped by the official runtime's
+     * progress buckets (Locked / Unlocked / Unsupported / Recently Unlocked
+     * / Active Challenge / Almost There / Unsynced). The list lives on the
+     * façade until [ra_facade_destroy_achievement_list] is called; the JNA
+     * side MUST copy every field it intends to retain before destroying.
+     *
+     * `category` matches `RC_CLIENT_ACHIEVEMENT_CATEGORY_*`; `grouping`
+     * matches `RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_*`. Nestlin only calls
+     * this with `category=CORE`, `grouping=PROGRESS` (the issue #272
+     * grouping).
+     *
+     * Returns RA_OK on success, RA_ERR_NO_GAME if no game is loaded.
+     */
+    fun ra_facade_create_achievement_list(handle: Pointer, category: Int, grouping: Int): Int
+
+    /**
+     * Number of buckets in the most-recently-created achievement list.
+     * Zero if no list is active.
+     */
+    fun ra_facade_achievement_list_bucket_count(handle: Pointer): Int
+
+    /**
+     * Copy the [bucketIndex]'th bucket's label + achievement count into
+     * [out]. The bucket's individual achievements are read via
+     * [ra_facade_get_achievement_at]. Returns RA_OK on success.
+     */
+    fun ra_facade_get_achievement_bucket(handle: Pointer, bucketIndex: Int, out: RaAchievementBucketSlot): Int
+
+    /**
+     * Copy the [achievementIndex]'th achievement within [bucketIndex]'s
+     * bucket into [out]. Every string field is COPIED into [out]'s
+     * fixed-size arrays — the JNA side MUST copy what it wants to
+     * retain past the call. Returns RA_OK on success, RA_ERR_INVALID_ARG
+     * if the indices are out of range.
+     */
+    fun ra_facade_get_achievement_at(handle: Pointer, bucketIndex: Int, achievementIndex: Int, out: RaAchievementSlot): Int
+
+    /**
+     * Free the most-recently-created achievement list. Idempotent — a
+     * second call without an intervening create is a no-op. After this
+     * returns, the bucket/achievement indices are invalid; the JNA side
+     * must not call the index accessors without first re-creating.
+     */
+    fun ra_facade_destroy_achievement_list(handle: Pointer)
+
     /**
      * Create a fresh rcheevos client with the given server URL and
      * user-agent. Both arguments may be null (the C side uses defaults).
@@ -429,4 +485,102 @@ internal object RaEventType {
     const val SERVER_ERROR = 16
     const val DISCONNECTED = 17
     const val RECONNECTED = 18
+}
+
+// ---------------------------------------------------------------------------
+// Achievement list (issue #272)
+// ---------------------------------------------------------------------------
+
+/**
+ * Flat mirror of `ra_achievement_t` (issue #272 — loaded-game achievements
+ * window). Strings are NUL-terminated within their fixed-size arrays;
+ * the JVM side MUST copy anything it intends to retain past the call.
+ *
+ * Sized to comfortably hold rcheevos's documented maximums:
+ *   - title: 128 chars
+ *   - description: 256 chars
+ *   - badge name: 16 chars
+ *   - badge URL: 512 chars
+ *   - measured progress text: 32 chars (e.g. "999/999", "00:59 / 02:00")
+ */
+internal class RaAchievementSlot : Structure() {
+    @JvmField var id: Int = 0
+    @JvmField var points: Int = 0
+    @JvmField var state: Int = 0           // RC_CLIENT_ACHIEVEMENT_STATE_*
+    @JvmField var category: Int = 0        // RC_CLIENT_ACHIEVEMENT_CATEGORY_*
+    @JvmField var bucket: Int = 0          // RC_CLIENT_ACHIEVEMENT_BUCKET_*
+    @JvmField var measuredPercent: Float = 0f
+    @JvmField var title: ByteArray = ByteArray(RA_FACADE_ACH_TITLE_MAX)
+    @JvmField var description: ByteArray = ByteArray(RA_FACADE_ACH_DESCRIPTION_MAX)
+    @JvmField var badgeName: ByteArray = ByteArray(RA_FACADE_ACH_BADGE_NAME_MAX)
+    @JvmField var badgeUrlUnlocked: ByteArray = ByteArray(RA_FACADE_ACH_URL_MAX)
+    @JvmField var badgeUrlLocked: ByteArray = ByteArray(RA_FACADE_ACH_URL_MAX)
+    @JvmField var measuredProgress: ByteArray = ByteArray(RA_FACADE_ACH_MEASURED_MAX)
+    override fun getFieldOrder(): List<String> = listOf(
+        "id", "points", "state", "category", "bucket", "measuredPercent",
+        "title", "description", "badgeName", "badgeUrlUnlocked", "badgeUrlLocked",
+        "measuredProgress",
+    )
+
+    companion object {
+        const val RA_FACADE_ACH_TITLE_MAX = 128
+        const val RA_FACADE_ACH_DESCRIPTION_MAX = 256
+        const val RA_FACADE_ACH_BADGE_NAME_MAX = 16
+        const val RA_FACADE_ACH_URL_MAX = 512
+        const val RA_FACADE_ACH_MEASURED_MAX = 32
+    }
+}
+
+/**
+ * Flat mirror of `ra_achievement_bucket_t` (issue #272). The bucket's
+ * label is rcheevos's official string ("Active Challenges" etc.); the
+ * JVM side MUST copy the label past the call.
+ */
+internal class RaAchievementBucketSlot : Structure() {
+    @JvmField var bucketType: Int = 0
+    @JvmField var subsetId: Int = 0
+    @JvmField var achievementCount: Int = 0
+    @JvmField var label: ByteArray = ByteArray(RA_FACADE_BUCKET_LABEL_MAX)
+    override fun getFieldOrder(): List<String> = listOf(
+        "bucketType", "subsetId", "achievementCount", "label",
+    )
+
+    companion object {
+        const val RA_FACADE_BUCKET_LABEL_MAX = 64
+    }
+}
+
+/**
+ * Achievement category bitmask — mirror of `RC_CLIENT_ACHIEVEMENT_CATEGORY_*`.
+ * Nestlin's achievements window is core-only (issue #272 AC #1: "Load only
+ * core achievements in this initial softcore release").
+ */
+internal object RaAchievementCategory {
+    const val CORE = 1
+    const val UNOFFICIAL = 2
+    const val CORE_AND_UNOFFICIAL = 3
+}
+
+/**
+ * Achievement list grouping — mirror of `RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_*`.
+ * Nestlin uses PROGRESS (the runtime's official bucket grouping; the
+ * LOCK_STATE alternative would collapse Active Challenge / Almost There
+ * into Locked and lose the issue #272 sections).
+ */
+internal object RaAchievementListGrouping {
+    const val LOCK_STATE = 0
+    const val PROGRESS = 1
+}
+
+/**
+ * Achievement state — mirror of `RC_CLIENT_ACHIEVEMENT_STATE_*`. The
+ * JNA side uses these to map rcheevos's `rc_client_achievement_t.state`
+ * into Kotlin-friendly names without scattering magic numbers across
+ * the service.
+ */
+internal object RaAchievementState {
+    const val INACTIVE = 0   /* unprocessed */
+    const val ACTIVE = 1     /* eligible to trigger */
+    const val UNLOCKED = 2   /* earned by user */
+    const val DISABLED = 3   /* not supported by this runtime */
 }
