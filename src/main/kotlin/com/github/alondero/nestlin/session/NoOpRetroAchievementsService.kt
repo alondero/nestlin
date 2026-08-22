@@ -28,4 +28,5 @@ object NoOpRetroAchievementsService : RetroAchievementsService {
     override fun unloadGame() = Unit
     override fun shutdown() = Unit
     override fun gameSummary(): RaGameSummary? = null
+    override fun achievementListSnapshot(): RaAchievementListSnapshot? = null
 }

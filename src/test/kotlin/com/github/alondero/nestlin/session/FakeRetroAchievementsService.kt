@@ -38,6 +38,14 @@ class FakeRetroAchievementsService(
      * state machine through recognized / recognized-no-core / unrecognized.
      */
     @Volatile var gameSummaryResult: RaGameSummary? = null,
+    /**
+     * Synthetic achievement list snapshot to return from
+     * [achievementListSnapshot]. Null means the fake has no current list
+     * (the view model treats this as "service unavailable / loading").
+     * Tests set this after `prepareGame` to drive the achievements
+     * controller's view-model state machine.
+     */
+    @Volatile var achievementListResult: RaAchievementListSnapshot? = null,
 ) : RetroAchievementsService {
 
     /** Ordered log of every method call. Read this in test assertions. */
@@ -66,6 +74,7 @@ class FakeRetroAchievementsService(
         object UnloadGame : Call
         object Shutdown : Call
         object GameSummary : Call
+        object AchievementListSnapshot : Call
     }
 
     override fun isSignedIn(): Boolean = true  // sign-in is meaningful in tests; the no-op returns false.
@@ -117,6 +126,11 @@ class FakeRetroAchievementsService(
     override fun gameSummary(): RaGameSummary? {
         calls += Call.GameSummary
         return gameSummaryResult
+    }
+
+    override fun achievementListSnapshot(): RaAchievementListSnapshot? {
+        calls += Call.AchievementListSnapshot
+        return achievementListResult
     }
 
     /**
@@ -173,6 +187,7 @@ class FakeRetroAchievementsService(
         Call.UnloadGame -> other is Call.UnloadGame
         Call.Shutdown -> other is Call.Shutdown
         Call.GameSummary -> other is Call.GameSummary
+        Call.AchievementListSnapshot -> other is Call.AchievementListSnapshot
     }
 
     @Suppress("unused")  // referenced by callers building a literal GameSessionInfo

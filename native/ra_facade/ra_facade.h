@@ -611,6 +611,124 @@ RA_FACADE_EXPORT int32_t ra_facade_poll_event(void* handle, ra_event_t* out);
 RA_FACADE_EXPORT void ra_facade_clear_events(void* handle);
 
 /* -------------------------------------------------------------------------- */
+/* Achievement list (issue #272 — loaded-game achievements window)           */
+/*                                                                            */
+/* rcheevos exposes the per-achievement list through                          */
+/* rc_client_create_achievement_list, which groups achievements into the      */
+/* runtime's official progress buckets (Locked / Unlocked / Unsupported /    */
+/* Recently Unlocked / Active Challenge / Almost There / Unsynced). The       */
+/* JNA side calls create, walks every bucket + achievement, copies each into */
+/* a Kotlin-side value, then destroys.                                        */
+/* -------------------------------------------------------------------------- */
+
+/* Achievement-list constants — keep in sync with rc_client.h. Defined
+ * before the structs that reference them. */
+#define RA_FACADE_ACH_TITLE_MAX        128
+#define RA_FACADE_ACH_DESCRIPTION_MAX  256
+#define RA_FACADE_ACH_BADGE_NAME_MAX    16
+#define RA_FACADE_ACH_URL_MAX          512
+#define RA_FACADE_ACH_MEASURED_MAX      32
+#define RA_FACADE_BUCKET_LABEL_MAX      64
+
+/* Flat mirror of rcheevos's rc_client_achievement_bucket_t. Strings
+ * are COPIES owned by the façade at fill time; the JNA side MUST copy
+ * the label past the call. */
+typedef struct ra_achievement_bucket_s {
+    int32_t  bucket_type;        /* RC_CLIENT_ACHIEVEMENT_BUCKET_* */
+    int32_t  subset_id;
+    int32_t  achievement_count;
+    char     label[RA_FACADE_BUCKET_LABEL_MAX];
+} ra_achievement_bucket_t;
+
+/* Flat mirror of rcheevos's rc_client_achievement_info_t. Strings
+ * are COPIES owned by the façade at fill time. Sized to comfortably
+ * hold rcheevos's documented maximums. */
+typedef struct ra_achievement_s {
+    int32_t  id;
+    int32_t  points;
+    int32_t  state;              /* RC_CLIENT_ACHIEVEMENT_STATE_* */
+    int32_t  category;           /* RC_CLIENT_ACHIEVEMENT_CATEGORY_* */
+    int32_t  bucket;             /* RC_CLIENT_ACHIEVEMENT_BUCKET_* */
+    float    measured_percent;
+    char     title[RA_FACADE_ACH_TITLE_MAX];
+    char     description[RA_FACADE_ACH_DESCRIPTION_MAX];
+    char     badge_name[RA_FACADE_ACH_BADGE_NAME_MAX];
+    char     badge_url_unlocked[RA_FACADE_ACH_URL_MAX];
+    char     badge_url_locked[RA_FACADE_ACH_URL_MAX];
+    char     measured_progress[RA_FACADE_ACH_MEASURED_MAX];
+} ra_achievement_t;
+
+/*
+ * True iff the active game has any achievements the runtime can list
+ * (core or unofficial). Cheap — returns 0 on no-game / unsigned-in /
+ * the native library has been torn down. The JNA layer calls this
+ * before allocating a list to decide whether to surface a "no
+ * achievements" placeholder instead.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_has_achievements(void* handle);
+
+/*
+ * Allocate a fresh achievement list grouped by the official runtime's
+ * progress buckets (Locked / Unlocked / Unsupported / Recently Unlocked /
+ * Active Challenge / Almost There / Unsynced). The list lives on the
+ * façade until ra_facade_destroy_achievement_list is called; the JNA
+ * side MUST copy every field it intends to retain before destroying.
+ *
+ * `category` matches RC_CLIENT_ACHIEVEMENT_CATEGORY_* (1=CORE, 2=UNOFFICIAL,
+ * 3=BOTH). Nestlin only calls this with category=CORE for the
+ * loaded-game achievements window (issue #272 AC #1).
+ *
+ * `grouping` matches RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_* (0=LOCK_STATE,
+ * 1=PROGRESS). Nestlin uses PROGRESS so the runtime's bucket assignment
+ * (active challenge / almost there) is preserved.
+ *
+ * Returns RA_OK on success, RA_ERR_NO_GAME if no game is loaded,
+ * RA_ERR_NOT_SIGNED_IN if no user is logged in.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_create_achievement_list(void* handle,
+                                                           int32_t category,
+                                                           int32_t grouping);
+
+/*
+ * Number of buckets in the most-recently-created achievement list.
+ * Zero if no list is active (the call is safe to make at any time).
+ */
+RA_FACADE_EXPORT int32_t ra_facade_achievement_list_bucket_count(void* handle);
+
+/*
+ * Copy the bucket_index'th bucket's label + achievement count into `out`.
+ * The bucket's individual achievements are read via
+ * ra_facade_get_achievement_at.
+ *
+ * Returns RA_OK on success, RA_ERR_INVALID_ARG if bucket_index is out
+ * of range. The JNA side MUST copy `out.label` past the call.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_get_achievement_bucket(void* handle,
+                                                          int32_t bucket_index,
+                                                          ra_achievement_bucket_t* out);
+
+/*
+ * Copy the achievement_index'th achievement within bucket_index's bucket
+ * into `out`. Every string field is COPIED into `out`'s fixed-size
+ * arrays — the JNA side MUST copy what it wants to retain past the call.
+ *
+ * Returns RA_OK on success, RA_ERR_INVALID_ARG if either index is out
+ * of range.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_get_achievement_at(void* handle,
+                                                      int32_t bucket_index,
+                                                      int32_t achievement_index,
+                                                      ra_achievement_t* out);
+
+/*
+ * Free the most-recently-created achievement list. Idempotent — a
+ * second call without an intervening create is a no-op. After this
+ * returns, the bucket/achievement indices are invalid; the JNA side
+ * MUST NOT call the index accessors without first re-creating.
+ */
+RA_FACADE_EXPORT void ra_facade_destroy_achievement_list(void* handle);
+
+/* -------------------------------------------------------------------------- */
 /* Diagnostic (for tests + the UI menu's availability indicator)              */
 /* -------------------------------------------------------------------------- */
 

@@ -234,6 +234,15 @@ internal class FakeRaFacadeBindings : RaFacadeBindings {
     override fun ra_facade_get_game_summary(handle: Pointer, out: RaGameSummarySlot): Int = 0
     override fun ra_facade_wait_for_load_settle(handle: Pointer, timeoutMs: Int, pollMs: Int, outState: IntByReference): Int = 0
     override fun ra_facade_badge_url(badgeName: String, outUrl: ByteArray, outUrlCapacity: Int): Int = 0
+    // Per-achievement list (issue #272) — the sign-in manager doesn't
+    // touch these directly, but the interface still has to be fully
+    // implemented for the test compile to pass.
+    override fun ra_facade_has_achievements(handle: Pointer): Int = 0
+    override fun ra_facade_create_achievement_list(handle: Pointer, category: Int, grouping: Int): Int = 0
+    override fun ra_facade_achievement_list_bucket_count(handle: Pointer): Int = 0
+    override fun ra_facade_get_achievement_bucket(handle: Pointer, bucketIndex: Int, out: RaAchievementBucketSlot): Int = 0
+    override fun ra_facade_get_achievement_at(handle: Pointer, bucketIndex: Int, achievementIndex: Int, out: RaAchievementSlot): Int = 0
+    override fun ra_facade_destroy_achievement_list(handle: Pointer) {}
 }
 
 /** In-memory [Preferences] is in InMemoryPreferences.kt — shared with RaCredentialsStoreTest. */

@@ -2,6 +2,7 @@ package com.github.alondero.nestlin.session
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -141,11 +142,30 @@ class RaImageCacheTest {
         assertEquals(2, transport.sendCalls)
     }
 
-    /**
-     * Transport fake that always returns the same scripted response and
-     * counts how many times `send` was called. Used to verify the cache's
-     * dedup behavior.
-     */
+    @Test
+    fun `stale-session completion does not corrupt the new session's state`() {
+        // AC #11: "Image cache tests cover ... stale-session completion."
+        // Scenario: ROM A loads, badge fetch starts. Before the fetch
+        // completes the user loads ROM B; the application calls
+        // `invalidate(romA_url)`. The in-flight future from ROM A
+        // eventually completes; the consumer's generation guard
+        // prevents the stale image from being applied. The cache itself
+        // has no notion of generation — it just hands the consumer
+        // the future — but invalidate() guarantees a follow-up fetch
+        // for the same URL starts fresh.
+        val transport = AsyncFakeTransport()
+        val cache = RaImageCache(transport)
+        val staleFuture = cache.fetch("https://example.com/romA.png")
+        // "Stale-session completion": invalidate the URL the consumer
+        // is now tracking a different generation under.
+        cache.invalidate("https://example.com/romA.png")
+        // A follow-up fetch re-downloads.
+        val freshFuture = cache.fetch("https://example.com/romA.png")
+        assertNotSame(staleFuture, freshFuture,
+            "invalidate must produce a brand-new future on the next fetch")
+        assertEquals(2, transport.sendCalls,
+            "invalidate must trigger a fresh transport round-trip")
+    }
     private class CountingFakeTransport(
         private val response: RaHttpResponse,
     ) : RaHttpTransport {

@@ -183,9 +183,24 @@ class GameSessionCoordinator(
      * Default: a fresh [RaNotificationController] so a CLI / test caller
      * can construct a coordinator without supplying one. Production wires
      * a shared instance from `Application` so the render pump and the
-     // coordinator publish / observe on the same controller.
+     * coordinator publish / observe on the same controller.
      */
     val notificationController: RaNotificationController = RaNotificationController(),
+    /**
+     * Achievements-window controller (issue #272). Bumped in lock-step
+     * with [placardController] so the achievements window's generation
+     * guard stays in sync with the boot placard. UI consumers bind a
+     * listener to receive the latest [RaAchievementsWindowViewModel].
+     *
+     * The default is `null` so a CLI / test caller that doesn't care
+     * about the window can construct a coordinator without supplying
+     * one. The application wires the controller after construction
+     * (Application.kt); the coordinator bumps its generation in lock-
+     * step with the placard but does NOT auto-refresh the snapshot
+     * — the application drives [RaAchievementsController.refresh]
+     * from its hook surface (ROM change, sign-in transition).
+     */
+    val achievementsController: RaAchievementsController? = null,
     /**
      * Hasher used to compute the canonical NES hash for [RomContent]
      * instances loaded from disk. Production uses [NativeRomHasher]; tests
@@ -320,7 +335,7 @@ class GameSessionCoordinator(
     fun loadRom(path: Path, archiveEntryName: String? = null) {
         val oldPath = nestlin.loadedRom?.sourcePath
         hooks.onBeforeRomChange()
-        placardController.bumpGeneration()
+        bumpGenerations()
         // Issue #270: clear queued unlock + system banners from the
         // previous game. Same generation-bump policy as the placard —
         // a slow notification publish from the previous game can't
@@ -379,7 +394,7 @@ class GameSessionCoordinator(
     fun loadBytes(romData: ByteArray, displayName: String = "nestest") {
         val oldPath = nestlin.loadedRom?.sourcePath
         hooks.onBeforeRomChange()
-        placardController.bumpGeneration()
+        bumpGenerations()
         notificationController.markRomChange()
         if (oldPath != null) nestlin.saveBatteryRam(oldPath)
         runService { service.unloadGame() }
@@ -404,7 +419,7 @@ class GameSessionCoordinator(
         val path = rom.sourcePath
         if (path != null) {
             hooks.onBeforeRomChange()
-            placardController.bumpGeneration()
+            bumpGenerations()
             notificationController.markRomChange()
             nestlin.saveBatteryRam(path)
             runService { service.unloadGame() }
@@ -420,7 +435,7 @@ class GameSessionCoordinator(
             // UnloadGame + PrepareGame sequence so its state machine is
             // in sync with the just-power-cycled engine.
             hooks.onBeforeRomChange()
-            placardController.bumpGeneration()
+            bumpGenerations()
             notificationController.markRomChange()
             runService { service.unloadGame() }
             nestlin.powerReset()
@@ -447,7 +462,7 @@ class GameSessionCoordinator(
      */
     fun unloadRom() {
         hooks.onBeforeRomChange()
-        placardController.bumpGeneration()
+        bumpGenerations()
         // Issue #270: no game = nothing to unlock. Clear queued unlocks
         // + the system banner so the UI isn't showing stale state after
         // the user picks "Close ROM" from the menu.
@@ -456,6 +471,7 @@ class GameSessionCoordinator(
         runService { service.unloadGame() }
         nestlin.unload()
         placardController.clear()
+        achievementsController?.clear()
         hooks.onAfterRomChange(null)
     }
 
@@ -610,7 +626,7 @@ class GameSessionCoordinator(
      */
     fun restartForAchievements() {
         val rom = nestlin.loadedRom ?: run {
-            placardController.bumpGeneration()
+            bumpGenerations()
             return
         }
         val path = rom.sourcePath
@@ -631,6 +647,18 @@ class GameSessionCoordinator(
         } finally {
             hooks.onServiceCallEnd()
         }
+    }
+
+    /**
+     * Bump both the placard controller's generation and the
+     * achievements controller's generation in lock-step. The two
+     * controllers observe distinct events but share the same
+     * generation boundary — a ROM or sign-in transition invalidates
+     * every in-flight completion for both surfaces.
+     */
+    private fun bumpGenerations() {
+        placardController.bumpGeneration()
+        achievementsController?.bumpGeneration()
     }
 
     companion object {
