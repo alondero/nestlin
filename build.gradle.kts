@@ -1,4 +1,6 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import java.net.URL
+import java.util.zip.ZipInputStream
 
 plugins {
     kotlin("jvm") version "1.9.22"
@@ -83,6 +85,25 @@ val nativeRaHostDir = nativeRaOutputDir.map {
     }
 }
 
+// Per-platform platformId emitted into MANIFEST.fragment.json by the
+// build scripts and matched against RaManifest.currentPlatformId() at
+// load time. Used by :fetchNativeRa to pick the right GitHub Release
+// asset for the current host.
+val nativeRaPlatformId: String = when {
+    org.gradle.internal.os.OperatingSystem.current().isWindows -> "windows-x86_64"
+    org.gradle.internal.os.OperatingSystem.current().isMacOsX -> "macos-universal"
+    else -> "linux-x86_64"
+}
+
+// GitHub Release coordinates for fetching the pre-built native library
+// when no local build exists. Override NESTLIN_RA_RELEASE_TAG to pin a
+// specific release (default: latest). Override NESTLIN_RA_REPO for a
+// fork / private mirror.
+val nativeRaReleaseTag: String =
+    (System.getenv("NESTLIN_RA_RELEASE_TAG") ?: "latest")
+val nativeRaRepo: String =
+    (System.getenv("NESTLIN_RA_REPO") ?: "alondero/nestlin")
+
 tasks.register("buildNative") {
     group = "build"
     description = "Compiles the native RetroAchievements façade + vendored rcheevos v12.4.0"
@@ -147,7 +168,7 @@ tasks.register("buildNative") {
 val copyNativeRa = tasks.register("copyNativeRa") {
     group = "build"
     description = "Copies the built native RA library into the resources tree"
-    dependsOn("buildNative")
+    dependsOn("buildNative", "fetchNativeRa")
     val resDir = layout.buildDirectory.dir("resources/main/native-ra")
     outputs.dir(resDir)
     doLast {
@@ -160,6 +181,97 @@ val copyNativeRa = tasks.register("copyNativeRa") {
         dst.mkdirs()
         src.listFiles()?.forEach { f ->
             if (f.isFile) f.copyTo(dst.resolve(f.name), overwrite = true)
+        }
+    }
+}
+
+// Download the pre-built native library for the current host from the
+// GitHub Releases asset named `rcheevos_facade-<platformId>.zip`. Runs
+// BEFORE copyNativeRa so a host with no working C toolchain (broken
+// MinGW, missing Xcode CLT, etc.) still gets a library to bundle.
+//
+// Behaviour:
+//  - If `:buildNative` already produced the lib for this host (e.g. a
+//    developer with a working toolchain), this task is a no-op.
+//  - Otherwise, hit the GitHub Releases API for the configured tag
+//    (default: `latest`) and download the matching platform asset.
+//  - The zip's MANIFEST.fragment.json is extracted alongside the lib
+//    so :writeNativeRaManifest can merge it into the shipped MANIFEST.json.
+//  - On any failure (no release, no asset for this platform, network
+//    error), log a warning and skip — the JAR ships without the
+//    native lib and the JNA-side loader falls back to NoOp. The build
+//    does NOT fail; a release JAR without the native lib is still a
+//    valid build (it just doesn't have RA).
+//
+// Set NESTLIN_RA_RELEASE_TAG to pin a specific release (default: latest).
+// Set NESTLIN_RA_REPO for a fork / private mirror (default: alondero/nestlin).
+val fetchNativeRa = tasks.register("fetchNativeRa") {
+    group = "build"
+    description = "Downloads the pre-built native RA library from GitHub Releases when no local build exists"
+    val outDir = nativeRaHostDir
+    outputs.dir(outDir)
+    doLast {
+        val hostDir = outDir.get().asFile
+        // If :buildNative already produced the lib, nothing to do.
+        val existingLib = hostDir.listFiles()?.firstOrNull { f ->
+            f.isFile && (f.name.endsWith(".dll") || f.name.endsWith(".so") || f.name.endsWith(".dylib"))
+        }
+        if (existingLib != null) {
+            logger.lifecycle("[fetchNativeRa] Local native lib already present at $existingLib; skipping download.")
+            return@doLast
+        }
+        val releaseUrl = if (nativeRaReleaseTag == "latest") {
+            "https://api.github.com/repos/$nativeRaRepo/releases/latest"
+        } else {
+            "https://api.github.com/repos/$nativeRaRepo/releases/tags/$nativeRaReleaseTag"
+        }
+        val assetName = "rcheevos_facade-$nativeRaPlatformId.zip"
+        logger.lifecycle("[fetchNativeRa] Fetching release metadata from $releaseUrl")
+        try {
+            val releaseJson = URL(releaseUrl).openStream().use { stream ->
+                stream.bufferedReader().readText()
+            }
+            // Crude-but-robust parse: find the asset with our name and
+            // capture its browser_download_url. Avoids pulling in a JSON
+            // library just for this one lookup; the schema is stable.
+            val assetRegex = Regex(
+                "\"name\"\\s*:\\s*\"$assetName\"[^}]*?\"browser_download_url\"\\s*:\\s*\"([^\"]+)\""
+            )
+            val assetUrl = assetRegex.find(releaseJson)?.groupValues?.get(1)
+                ?: run {
+                    logger.warn("[fetchNativeRa] Release does not include asset '$assetName' " +
+                        "(platform=$nativeRaPlatformId). JNA will fall back to NoOp.")
+                    return@doLast
+                }
+            logger.lifecycle("[fetchNativeRa] Downloading $assetUrl")
+            val zipBytes = URL(assetUrl).openStream().use { stream ->
+                stream.readAllBytes()
+            }
+            hostDir.mkdirs()
+            val tmpZip = File.createTempFile("native-ra-", ".zip")
+            tmpZip.writeBytes(zipBytes)
+            try {
+                ZipInputStream(tmpZip.inputStream()).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory) {
+                            val target = File(hostDir, entry.name)
+                            target.outputStream().use { out -> zis.copyTo(out) }
+                        }
+                        entry = zis.nextEntry
+                    }
+                }
+            } finally {
+                tmpZip.delete()
+            }
+            logger.lifecycle("[fetchNativeRa] Downloaded and extracted to $hostDir")
+        } catch (e: Throwable) {
+            // Defensive: a release-not-yet-published, network failure,
+            // or unexpected JSON shape must NOT break the build. The
+            // JAR ships without the native lib; the runtime falls back
+            // to NoOp via RaManifest.LoadResult.Reason.LIBRARY_MISSING.
+            logger.warn("[fetchNativeRa] Pre-built native lib unavailable " +
+                "(${e.javaClass.simpleName}: ${e.message}). JNA will fall back to NoOp.")
         }
     }
 }

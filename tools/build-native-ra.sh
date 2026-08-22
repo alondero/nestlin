@@ -85,12 +85,14 @@ RCH_INCLUDE_DIR="$RCH_DIR/include"
 case "$(uname -s)" in
     Darwin*)                HOST="macos" ;;
     Linux*)                 HOST="linux" ;;
+    MINGW*|MSYS*|CYGWIN*)   HOST="windows" ;;
     *)                      HOST="unknown" ;;
 esac
 
 case "$HOST" in
     macos)   LIB_NAME="librcheevos_facade.dylib" LINK_EXT="-fPIC -dynamiclib" LINK_LIBS="" ;;
     linux)   LIB_NAME="librcheevos_facade.so"    LINK_EXT="-fPIC"             LINK_LIBS="-lpthread -ldl" ;;
+    windows) LIB_NAME="rcheevos_facade.dll"      LINK_EXT=""                   LINK_LIBS="-lws2_32" ;;
     *) echo "Unsupported host: $HOST" >&2; exit 1 ;;
 esac
 
@@ -158,6 +160,7 @@ echo "[BUILD-NATIVE-RA] Built: $LIB_PATH ($LIB_SIZE bytes)"
 case "$HOST" in
     macos)   PLATFORM_ID="macos-universal";   RESOURCE_DIR="macos" ;;
     linux)   PLATFORM_ID="linux-x86_64";       RESOURCE_DIR="linux" ;;
+    windows) PLATFORM_ID="windows-x86_64";     RESOURCE_DIR="windows" ;;
     *)       echo "Unsupported host: $HOST" >&2; exit 1 ;;
 esac
 SHA256=$(sha256sum "$LIB_PATH" 2>/dev/null | awk '{print $1}')

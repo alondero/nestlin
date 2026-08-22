@@ -1,0 +1,156 @@
+# Pre-built native RetroAchievements library release (issue #273).
+#
+# Builds the vendored rcheevos v12.4.0 + flat C façade on each of the
+# three supported platforms, packages each result as a zip alongside
+# its MANIFEST.fragment.json, and uploads those zips as GitHub Release
+# assets under well-known names so the consumer-side :fetchNativeRa
+# task can pull them at build time.
+#
+# Triggers on:
+#   - push of a v* tag (e.g. v1.2.3)
+#   - manual dispatch (for testing — uses a synthetic tag)
+#
+# The release tag is what consumers pin via NESTLIN_RA_RELEASE_TAG. By
+# default the consumer-side task uses "latest", which the GitHub API
+# resolves to the most recent published release.
+#
+# Output assets (one per host):
+#   rcheevos_facade-windows-x86_64.zip
+#   rcheevos_facade-linux-x86_64.zip
+#   rcheevos_facade-macos-universal.zip
+#
+# Each zip contains the platform's shared library + a
+# MANIFEST.fragment.json that records the SHA-256 of the library
+# bytes — the consumer-side RaManifest.load() uses this for integrity
+# verification at load time (issue #273 AC #2).
+
+name: release-native-libs
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Synthetic release tag (e.g. v0.0.0-test). Leave blank to skip the release step.'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile native library
+        # :buildNative picks the right compiler on each host (gcc on
+        # Linux/Windows, Apple Clang on macOS) and exits 1 only on a
+        # real compile/link failure — no graceful-skip exit code. The
+        # macos runner ships Xcode CLT, the windows runner ships
+        # MinGW-w64 via setup-gradle's PATH injection, the ubuntu
+        # runner ships build-essential.
+        run: ./gradlew buildNative
+
+      - name: Write manifest fragment
+        run: ./gradlew writeNativeRaManifest
+
+      - name: Zip native lib + manifest fragment
+        # Build a per-platform zip with a stable name so the consumer
+        # side can pattern-match. The MANIFEST.fragment.json must be
+        # next to the library so the consumer's :writeNativeRaManifest
+        # can pick it up and merge it into the shipped MANIFEST.json.
+        shell: bash
+        run: |
+          PLATFORM_ID="${{ matrix.os == 'windows-latest' && 'windows-x86_64' || '' }}"
+          PLATFORM_ID="${{ matrix.os == 'macos-latest' && 'macos-universal' || PLATFORM_ID }}"
+          PLATFORM_ID="${{ matrix.os == 'ubuntu-latest' && 'linux-x86_64' || PLATFORM_ID }}"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            HOST_DIR="build/native-ra/windows"
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            HOST_DIR="build/native-ra/macos"
+          else
+            HOST_DIR="build/native-ra/linux"
+          fi
+          ASSET="rcheevos_facade-${PLATFORM_ID}.zip"
+          echo "Host dir: $HOST_DIR"
+          echo "Asset:    $ASSET"
+          ls -la "$HOST_DIR"
+          # PowerShell's Compress-Archive handles both Windows and POSIX
+          # callers via bash's shell-shim on Windows runners.
+          (cd "$HOST_DIR" && zip -r "../../${ASSET}" .)
+          echo "Asset contents:"
+          unzip -l "${ASSET}"
+
+      - name: Upload build artifact (for verification)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcheevos_facade-${{ matrix.os }}
+          path: rcheevos_facade-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach assets to GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    # softprops/action-gh-release needs write access.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: ls -la artifacts/
+
+      # Tag-push trigger: attach to that release. Manual dispatch:
+      # create (or update) a release with the input tag if non-blank,
+      # otherwise skip the release step (the build still succeeded —
+      # the artifacts are downloadable from the workflow run page).
+      - name: Attach assets to release
+        if: |
+          startsWith(github.event_name, 'push') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          # Resolve the tag — push events use github.ref_name, dispatch
+          # events use the input. Fail with a clear message if neither
+          # is set.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME:-}"
+          else
+            TAG="$INPUT_TAG"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "No tag resolved; cannot attach assets."
+            exit 1
+          fi
+          echo "Attaching to release tag: $TAG"
+          # Ensure the release exists (create-as-draft for tag-push,
+          # so maintainers can publish manually after a quick sanity check).
+          gh release create "$TAG" \
+            --draft \
+            --title "Nestlin $TAG" \
+            --generate-notes \
+            artifacts/*/rcheevos_facade-*.zip \
+            || gh release upload "$TAG" artifacts/*/rcheevos_facade-*.zip --clobber
+          echo "Done. Verify the release at: https://github.com/${{ github.repository }}/releases/tag/$TAG"

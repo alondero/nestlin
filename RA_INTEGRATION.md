@@ -107,6 +107,40 @@ After `:buildNative`, the shared library is at:
 The `:copyNativeRa` task then moves it into `build/resources/main/native-ra/<host>/`
 so the shadow JAR picks it up automatically.
 
+### Distribution to end users (no compiler required)
+
+End users on a fresh checkout do **not** need a C compiler. The
+Gradle task `:fetchNativeRa` runs automatically before
+`:copyNativeRa` on `./gradlew uberJar` and downloads the
+matching pre-built binary from the most recent GitHub Release.
+
+The CI workflow `.github/workflows/release-native-libs.yml` builds
+the library on each of the three supported platforms
+(ubuntu-latest, windows-latest, macos-latest), zips each result
+alongside its `MANIFEST.fragment.json`, and attaches the three
+zips to a GitHub Release tagged `vX.Y.Z`. End users get the
+artifact whose name matches their platform:
+
+  - Windows:  `rcheevos_facade-windows-x86_64.zip`
+  - macOS:    `rcheevos_facade-macos-universal.zip`
+  - Linux:    `rcheevos_facade-linux-x86_64.zip`
+
+Override the release pin with `NESTLIN_RA_RELEASE_TAG=v1.2.3`.
+Override the repo (for forks / private mirrors) with
+`NESTLIN_RA_REPO=owner/repo`. Both default to the standard
+`alondero/nestlin` release.
+
+The pre-built Linux `.so` targets glibc 2.35 (Ubuntu 22.04 LTS);
+the pre-built Windows `.dll` is built with UCRT (Windows 10 1709+);
+the pre-built macOS `.dylib` is a universal binary (x86_64 + arm64).
+Anyone on an older glibc or Windows version gets a graceful NoOp
+fallback — the JAR still runs, the Status menu just reads "native
+library unavailable".
+
+See `native/README.md` for the full compatibility matrix and the
+escape hatches (run `:buildNative` locally with a cross-compiler;
+override `NESTLIN_RA_RELEASE_TAG` to pin a specific release).
+
 ### Customizing the build
 
 Set `NESTLIN_RA_COMPILER=gcc|clang|auto` to override compiler selection.
