@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.session
 
 import com.sun.jna.Pointer
+import com.sun.jna.ptr.IntByReference
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -228,6 +229,11 @@ internal class FakeRaFacadeBindings : RaFacadeBindings {
     override fun ra_facade_restore_progress(handle: Pointer, data: ByteArray?, dataLen: Int): Int = 0
     override fun ra_facade_rcheevos_version(): String = "12.4.0-test"
     override fun ra_facade_version(): String = "1.0.0-test"
+    override fun ra_facade_hash_nes_rom(romBytes: ByteArray, romLen: Int, outHash: ByteArray): Int = 0
+    override fun ra_facade_get_user_game_summary(handle: Pointer, out: RaUserGameSummary): Int = 0
+    override fun ra_facade_get_game_summary(handle: Pointer, out: RaGameSummarySlot): Int = 0
+    override fun ra_facade_wait_for_load_settle(handle: Pointer, timeoutMs: Int, pollMs: Int, outState: IntByReference): Int = 0
+    override fun ra_facade_badge_url(badgeName: String, outUrl: ByteArray, outUrlCapacity: Int): Int = 0
 }
 
 /** In-memory [Preferences] is in InMemoryPreferences.kt — shared with RaCredentialsStoreTest. */

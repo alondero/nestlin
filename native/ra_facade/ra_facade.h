@@ -162,6 +162,12 @@ typedef struct ra_game_info_s {
 #define RA_FACADE_AVATAR_URL_MAX         256
 #define RA_FACADE_TOKEN_MAX               64
 
+/* Hash + identity (issue #269) */
+#define RA_FACADE_HASH_LEN                33  /* 32 hex chars + NUL */
+#define RA_FACADE_TITLE_BUF_MAX          256  /* Game title buffer for the boot placard */
+#define RA_FACADE_URL_MAX                512  /* Game / badge image URL buffer */
+#define RA_FACADE_BADGE_NAME_MAX          16  /* Badge filename for image URL builders */
+
 /* Snapshot of the signed-in user's profile. Strings are NUL-terminated within
  * their respective fixed-size arrays; the JVM side copies what it retains. */
 typedef struct ra_user_info_s {
@@ -173,6 +179,41 @@ typedef struct ra_user_info_s {
     uint32_t score_softcore;
     uint32_t num_unread_messages;
 } ra_user_info_t;
+
+/*
+ * Per-game achievement progress snapshot (issue #269 — boot placard).
+ *
+ * Populated by ra_facade_get_user_game_summary when a game is loaded and
+ * the user is signed in. The fields map directly to the boot-placard
+ * "unlocked X of Y core achievements, earned A of B points" copy.
+ *
+ * All counts are zero when no game is loaded OR when no user is signed in
+ * (the JNA layer is responsible for the signed-in check; the C side returns
+ * a zeroed struct in both cases and RA_ERR_NO_GAME / RA_ERR_NOT_SIGNED_IN
+ * via the return code).
+ */
+typedef struct ra_user_game_summary_s {
+    uint32_t num_core_achievements;
+    uint32_t num_unofficial_achievements;
+    uint32_t num_unlocked_achievements;
+    uint32_t num_unsupported_achievements;
+    uint32_t points_core;
+    uint32_t points_unlocked;
+} ra_user_game_summary_t;
+
+/*
+ * Game info snapshot for the boot placard (issue #269). Distinct from
+ * ra_game_info_t (which only carries the load state and a few booleans) —
+ * this struct is what the UI binds to after identification completes:
+ * the title string + the achievement image URL.
+ */
+typedef struct ra_game_summary_s {
+    uint32_t id;                           /* 0 if unidentified */
+    char     title[RA_FACADE_TITLE_BUF_MAX];
+    char     hash[RA_FACADE_HASH_LEN];
+    char     badge_name[RA_FACADE_BADGE_NAME_MAX];
+    char     image_url[RA_FACADE_URL_MAX];
+} ra_game_summary_t;
 
 typedef struct ra_event_s {
     int32_t  type;                       /* ra_event_type_e */
@@ -440,6 +481,84 @@ RA_FACADE_EXPORT int32_t ra_facade_get_game_info(void* handle,
 RA_FACADE_EXPORT int32_t ra_facade_set_memory_reader(void* handle,
                                                      ra_facade_read_memory_fn fn,
                                                      void* userdata);
+
+/* -------------------------------------------------------------------------- */
+/* Hash + identity (issue #269)                                              */
+/*                                                                            */
+/* rc_client_begin_identify_and_load_game computes the NES hash internally    */
+/* before issuing the identify HTTP request, but the JNA layer needs the      */
+/* hash BEFORE the load completes (the boot placard and the "is this ROM      */
+/* recognized?" UI both want to display it immediately). The façade exposes   */
+/* the standalone hasher as a separate symbol so the coordinator can compute  */
+/* it once for both the display path and the eventual load. The hash is the   */
+/* official RC_CONSOLE_NINTENDO hash (rc_hash_generate_from_buffer), which    */
+/* is the same routine rcheevos uses internally — so plain and archived       */
+/* forms of identical NES bytes produce the identical hash.                  */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Compute the official RetroAchievements NES hash for a buffer of NES bytes.
+ * Writes a NUL-terminated 32-character hex string into `out_hash` (size must be
+ * at least RA_FACADE_HASH_LEN). Returns RA_OK on success, RA_ERR_INVALID_ARG
+ * on bad inputs (NULL bytes with len>0, NULL out_hash, len<=0).
+ *
+ * The hash is independent of any active game on the façade — this is the same
+ * routine rcheevos's begin_identify_and_load_game uses internally, so the
+ * output is bit-identical to the value rcheevos would have used to identify
+ * the same bytes.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_hash_nes_rom(const uint8_t* rom_bytes,
+                                                int32_t rom_len,
+                                                char* out_hash);
+
+/*
+ * Snapshot the active game's user progress summary into `out`. Returns
+ * RA_OK on success, RA_ERR_NO_GAME if no game is loaded, RA_ERR_NOT_SIGNED_IN
+ * if the user isn't logged in (the boot placard treats "unsigned-in" the same
+ * as "no game" — neither path displays a placard, so the JNA layer checks
+ * signed-in state before calling).
+ */
+RA_FACADE_EXPORT int32_t ra_facade_get_user_game_summary(void* handle,
+                                                         ra_user_game_summary_t* out);
+
+/*
+ * Snapshot the active game's title + image URL into `out`. Returns RA_OK on
+ * success, RA_ERR_NO_GAME if no game is loaded. Fields are zeroed on
+ * RA_ERR_NO_GAME; the JNA layer is responsible for the unsigned-in check.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_get_game_summary(void* handle,
+                                                    ra_game_summary_t* out);
+
+/*
+ * Block the calling thread until the active load settles, polling the
+ * façade's load state every `poll_ms` milliseconds up to a maximum of
+ * `timeout_ms` total. Writes the final observed state into `out_state`
+ * (one of RA_LOAD_STATE_*). Returns RA_OK when the state reaches READY,
+ * IDLE, FAILED, or ABORTED within the budget; returns RA_ERR_INTERNAL on
+ * timeout (the load is still in flight; the coordinator should treat this
+ * as "service failure → no achievements for this session").
+ *
+ * Designed for the coordinator's "complete or fail before first frame"
+ * contract (issue #269 AC #4-5). The poll happens on the calling thread —
+ * callers MUST NOT invoke this from a thread that owns the JNA handle (the
+ * façade is single-threaded; see the file-level comment).
+ */
+RA_FACADE_EXPORT int32_t ra_facade_wait_for_load_settle(void* handle,
+                                                        int32_t timeout_ms,
+                                                        int32_t poll_ms,
+                                                        int32_t* out_state);
+
+/*
+ * Build the official game image URL for the badge at `badge_name` into
+ * `out_url` (size RA_FACADE_URL_MAX). Returns RA_OK on success. The
+ * default badge URL path follows rcheevos's documented convention
+ * (https://<server>/Images/<badge_name>.png). Used by the JNA-side
+ * image cache so the URL helpers in rc_client.h don't have to be
+ * re-declared.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_badge_url(const char* badge_name,
+                                             char* out_url,
+                                             int32_t out_url_capacity);
 
 /* -------------------------------------------------------------------------- */
 /* Progress serialization (for save-state slot manager, issue #268)           */

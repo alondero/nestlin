@@ -20,8 +20,10 @@ class NoOpRetroAchievementsServiceTest {
 
     private val sample = GameSessionInfo(
         displayName = "demo",
+        virtualFilename = "demo.nes",
         sourcePath = Paths.get("/tmp/demo.nes"),
         romBytes = byteArrayOf(0x4E, 0x45, 0x53, 0x1A, 1, 0),
+        nesHash = null,
         region = Region.NTSC,
     )
 
@@ -35,14 +37,14 @@ class NoOpRetroAchievementsServiceTest {
         // The no-op completes synchronously and never claims the service is
         // actively evaluating the game — that's how the coordinator knows to
         // skip every per-frame call.
-        assertFalse(NoOpRetroAchievementsService.prepareGame(sample))
+        assertFalse(NoOpRetroAchievementsService.prepareGame(sample, timeoutMillis = 1000L))
     }
 
     @Test
     fun `resetRuntime is a no-op even after prepareGame`() {
         // No observable effect, no throw — sanity that a future "remember
         // we have a game" field added to the no-op would surface here.
-        NoOpRetroAchievementsService.prepareGame(sample)
+        NoOpRetroAchievementsService.prepareGame(sample, timeoutMillis = 1000L)
         NoOpRetroAchievementsService.resetRuntime()
         assertFalse(NoOpRetroAchievementsService.isSignedIn())
     }
@@ -53,7 +55,7 @@ class NoOpRetroAchievementsServiceTest {
         // per emulated frame — the no-op must complete instantly so the
         // frame loop is not slowed by a missing prepare.
         NoOpRetroAchievementsService.evaluateFrame(0L)
-        NoOpRetroAchievementsService.prepareGame(sample)
+        NoOpRetroAchievementsService.prepareGame(sample, timeoutMillis = 1000L)
         NoOpRetroAchievementsService.evaluateFrame(42L)
         NoOpRetroAchievementsService.evaluateFrame(Long.MAX_VALUE)
     }
@@ -61,7 +63,7 @@ class NoOpRetroAchievementsServiceTest {
     @Test
     fun `serializeProgress returns null with or without a prepared game`() {
         assertNull(NoOpRetroAchievementsService.serializeProgress())
-        NoOpRetroAchievementsService.prepareGame(sample)
+        NoOpRetroAchievementsService.prepareGame(sample, 1000L)
         assertNull(NoOpRetroAchievementsService.serializeProgress())
     }
 
@@ -76,10 +78,21 @@ class NoOpRetroAchievementsServiceTest {
     }
 
     @Test
+    fun `gameSummary returns null with or without a prepared game`() {
+        // Issue #269: the no-op is the production default until #267 ships
+        // the real client. The coordinator checks `gameSummary()` after
+        // `prepareGame` to decide whether to display a placard; the no-op
+        // must always answer "no game" so the UI shows nothing.
+        assertNull(NoOpRetroAchievementsService.gameSummary())
+        NoOpRetroAchievementsService.prepareGame(sample, 1000L)
+        assertNull(NoOpRetroAchievementsService.gameSummary())
+    }
+
+    @Test
     fun `unloadGame is idempotent and never throws`() {
         // Calling unload before any prepare is the documented "safe" path.
         NoOpRetroAchievementsService.unloadGame()
-        NoOpRetroAchievementsService.prepareGame(sample)
+        NoOpRetroAchievementsService.prepareGame(sample, 1000L)
         NoOpRetroAchievementsService.unloadGame()
         NoOpRetroAchievementsService.unloadGame()
     }
@@ -97,13 +110,13 @@ class NoOpRetroAchievementsServiceTest {
     fun `no method retains state across calls`() {
         // The whole point of the no-op: it is stateless. Two independent
         // call sequences must produce identical observable behaviour.
-        NoOpRetroAchievementsService.prepareGame(sample)
+        NoOpRetroAchievementsService.prepareGame(sample, 1000L)
         NoOpRetroAchievementsService.evaluateFrame(7L)
         NoOpRetroAchievementsService.resetRuntime()
         val afterFirst = NoOpRetroAchievementsService.serializeProgress()
         NoOpRetroAchievementsService.unloadGame()
 
-        NoOpRetroAchievementsService.prepareGame(sample)
+        NoOpRetroAchievementsService.prepareGame(sample, 1000L)
         NoOpRetroAchievementsService.evaluateFrame(7L)
         NoOpRetroAchievementsService.resetRuntime()
         val afterSecond = NoOpRetroAchievementsService.serializeProgress()

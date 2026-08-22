@@ -31,6 +31,13 @@ import com.github.alondero.nestlin.testutil.failTest
 class FakeRetroAchievementsService(
     @Volatile var prepareGameResult: Boolean = true,
     @Volatile var prepareGameException: Throwable? = null,
+    /**
+     * Synthetic game summary to return from [gameSummary]. Null means the
+     * fake has not produced a summary yet (the coordinator's "unrecognized"
+     * branch). Tests set this after `prepareGame` to drive the placard
+     * state machine through recognized / recognized-no-core / unrecognized.
+     */
+    @Volatile var gameSummaryResult: RaGameSummary? = null,
 ) : RetroAchievementsService {
 
     /** Ordered log of every method call. Read this in test assertions. */
@@ -44,27 +51,33 @@ class FakeRetroAchievementsService(
     var lastRestoredProgress: ByteArray? = null
         private set
 
+    /** Most recent timeout (ms) passed to [prepareGame]. */
+    var lastPrepareTimeoutMs: Long = 0L
+        private set
+
     sealed interface Call {
-        data class PrepareGame(val info: GameSessionInfo) : Call
-        data class PrepareGameFailed(val info: GameSessionInfo) : Call
+        data class PrepareGame(val info: GameSessionInfo, val timeoutMs: Long) : Call
+        data class PrepareGameFailed(val info: GameSessionInfo, val timeoutMs: Long) : Call
         data class EvaluateFrame(val frameIndex: Long) : Call
         object ResetRuntime : Call
         data class SerializeProgress(val token: Int) : Call
         data class RestoreProgress(val progress: ByteArray?) : Call
         object UnloadGame : Call
         object Shutdown : Call
+        object GameSummary : Call
     }
 
     override fun isSignedIn(): Boolean = true  // sign-in is meaningful in tests; the no-op returns false.
 
-    override fun prepareGame(sessionInfo: GameSessionInfo): Boolean {
+    override fun prepareGame(sessionInfo: GameSessionInfo, timeoutMillis: Long): Boolean {
         lastPreparedInfo = sessionInfo
+        lastPrepareTimeoutMs = timeoutMillis
         val ex = prepareGameException
         return if (ex != null) {
-            calls += Call.PrepareGameFailed(sessionInfo)
+            calls += Call.PrepareGameFailed(sessionInfo, timeoutMillis)
             throw ex
         } else {
-            calls += Call.PrepareGame(sessionInfo)
+            calls += Call.PrepareGame(sessionInfo, timeoutMillis)
             prepareGameResult
         }
     }
@@ -94,6 +107,11 @@ class FakeRetroAchievementsService(
 
     override fun shutdown() {
         calls += Call.Shutdown
+    }
+
+    override fun gameSummary(): RaGameSummary? {
+        calls += Call.GameSummary
+        return gameSummaryResult
     }
 
     /**
@@ -137,8 +155,10 @@ class FakeRetroAchievementsService(
     }
 
     private fun Call.matches(other: Call): Boolean = when (this) {
-        is Call.PrepareGame -> other is Call.PrepareGame && info == other.info
-        is Call.PrepareGameFailed -> other is Call.PrepareGameFailed && info == other.info
+        is Call.PrepareGame -> other is Call.PrepareGame &&
+            info == other.info && timeoutMs == other.timeoutMs
+        is Call.PrepareGameFailed -> other is Call.PrepareGameFailed &&
+            info == other.info && timeoutMs == other.timeoutMs
         is Call.EvaluateFrame -> other is Call.EvaluateFrame && frameIndex == other.frameIndex
         Call.ResetRuntime -> other is Call.ResetRuntime
         is Call.SerializeProgress -> other is Call.SerializeProgress  // token is auto-monotonic
@@ -146,13 +166,16 @@ class FakeRetroAchievementsService(
             (progress?.contentEquals(other.progress) ?: (other.progress == null))
         Call.UnloadGame -> other is Call.UnloadGame
         Call.Shutdown -> other is Call.Shutdown
+        Call.GameSummary -> other is Call.GameSummary
     }
 
     @Suppress("unused")  // referenced by callers building a literal GameSessionInfo
     private fun demoInfo(): GameSessionInfo = GameSessionInfo(
         displayName = "demo",
+        virtualFilename = "demo.nes",
         sourcePath = null,
         romBytes = byteArrayOf(0x4E, 0x45, 0x53, 0x1A, 1, 0),
+        nesHash = null,
         region = Region.NTSC,
     )
 }

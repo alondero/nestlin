@@ -122,14 +122,16 @@ class RetroAchievementsServiceFactoryTest {
         val svc = RetroAchievementsServiceFactory.create() as NativeRetroAchievementsService
         val info = GameSessionInfo(
             displayName = "fixture",
+            virtualFilename = "fixture.nes",
             sourcePath = null,
             romBytes = ByteArray(32) { 0x4E },  // arbitrary bytes, NES-shape enough to not crash the loader
+            nesHash = null,
             region = com.github.alondero.nestlin.Region.NTSC,
         )
         // Without login (issue #268), the façade returns RA_ERR_NOT_SIGNED_IN
         // and the service surfaces it as `false`. Gameplay proceeds; the
         // coordinator treats this as "service idle for this session".
-        assertFalse(svc.prepareGame(info),
+        assertFalse(svc.prepareGame(info, 1000L),
             "prepareGame must return false when no user is signed in (the no-network shim makes login impossible in #267)")
     }
 

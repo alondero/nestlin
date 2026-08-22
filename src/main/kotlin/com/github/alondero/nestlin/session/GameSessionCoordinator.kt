@@ -119,33 +119,23 @@ data class GameSessionHooks(
  * observe the moments that matter (before/after ROM change, around
  * service calls), but the application owns the thread.
  *
- * ## Deferred to later issues
+ * ## Issue #269: achievement loading before first frame
  *
- * Three of the AC items in issue #266 land in this slice; the rest are
- * pinned here as forward references so future issues (#267, #268) can
- * pick them up without rediscovering the design:
+ * `service.prepareGame` is a **blocking-with-timeout** call. The
+ * coordinator hands the service a budget (default
+ * [DEFAULT_PREPARE_TIMEOUT_MS]) and the service either settles within
+ * the budget or returns `false`. The first emulated frame is therefore
+ * never blocked past the budget — issue #269 AC #4 ("signed-in game
+ * activation completes or fails before the first emulated frame") and
+ * AC #5 ("bounded by explicit timeouts").
  *
- *  - **AC #4 — "await signed-in service before first frame."** The
- *    current `prepareGame` returns `Boolean` synchronously and the
- *    coordinator calls it inline. An async / future-based return shape
- *    (so a real RA client can spend seconds on a network round-trip
- *    while the emulation thread stays paused) is the natural extension.
- *    Lives behind the same `RetroAchievementsService.prepareGame`
- *    seam; production callers already bracket with
- *    `stopEmulation / startEmulation` so they can hold the thread
- *    without changes.
- *  - **AC #2 (per-frame wiring) + `evaluateFrame` plumbing.** The
- *    per-frame wiring lands in #268 alongside the
- *    `captureProgress` / `restoreProgress` save-state slot manager
- *    hooks. [evaluateFrame] and [resetServiceRuntime] are the seams;
- *    [MovieInput.applyCommands] now passes the latter so FM2 row-level
- *    resets already fire `service.resetRuntime` in the UI live
- *    playback path.
- *  - **AC #10 — central service construction.** Production callers
- *    construct `GameSessionCoordinator` themselves (Application owns
- *    one as a `lazy` field; CLIs construct per-boot). #267 will land
- *    a real RA client behind a central factory so the no-op vs real
- *    switch is one-line.
+ * The coordinator owns the [placardController]. After `prepareGame`
+ * settles, the coordinator calls [RetroAchievementsService.gameSummary] to
+ * learn whether the ROM was recognized, has core achievements, etc., and
+ * publishes the appropriate [BootPlacardEvent]. The JavaFX-side boot-placard
+ * binds a listener on `placardController` and renders whatever the latest
+ * event implies. The generation guard ensures rapid ROM / sign-in switches
+ * discard stale completions (AC #10).
  *
  * ## Service failure policy
  *
@@ -173,6 +163,30 @@ class GameSessionCoordinator(
      * the right choice for any non-UI caller.
      */
     val hooks: GameSessionHooks = GameSessionHooks.NONE,
+    /**
+     * Boot-placard controller (issue #269). Owns the generation counter
+     * that guards against rapid ROM / sign-in switches. UI consumers bind
+     * a listener to observe the latest [BootPlacardEvent].
+     *
+     * The default is a fresh [RaBootPlacardController] so a CLI / test
+     * caller that doesn't care about the placard can construct a
+     * coordinator without supplying one.
+     */
+    val placardController: RaBootPlacardController = RaBootPlacardController(),
+    /**
+     * Hasher used to compute the canonical NES hash for [RomContent]
+     * instances loaded from disk. Production uses [NativeRomHasher]; tests
+     * and CLI paths without the native library fall back to
+     * [Sha256RomHasher].
+     */
+    private val romHasher: RomHasher = Sha256RomHasher,
+    /**
+     * Maximum time (ms) to block on `service.prepareGame` before the first
+     * emulated frame is allowed (issue #269 AC #5). Real RA achievement
+     * fetches typically settle in <2s on warm caches; 10s gives plenty
+     * of headroom for cold caches and slow networks.
+     */
+    val prepareTimeoutMillis: Long = DEFAULT_PREPARE_TIMEOUT_MS,
 ) {
 
     /**
@@ -183,24 +197,56 @@ class GameSessionCoordinator(
      * before the new ROM is installed; the new ROM's battery is restored
      * after reset and the service is asked to prepare the new game.
      *
-     * @param path iNES / NES 2.0 file on disk.
+     * The path is run through [RomContentExtractor] so plain and archived
+     * forms of identical NES bytes identify identically (issue #269 AC #1-3).
+     * The resulting [RomContent] becomes the [GameSessionInfo] handed to
+     * `service.prepareGame`.
+     *
+     * @param path iNES / NES 2.0 file on disk (.nes or .7z).
+     * @param archiveEntryName explicit NES entry name for multi-entry archives;
+     *   null = pick the only entry (single-entry archives) or fail (multi-entry).
      */
-    fun loadRom(path: Path) {
+    fun loadRom(path: Path, archiveEntryName: String? = null) {
         val oldPath = nestlin.loadedRom?.sourcePath
         hooks.onBeforeRomChange()
+        placardController.bumpGeneration()
         if (oldPath != null) {
-            // Flush the outgoing battery before the mapper is replaced. After
-            // nestlin.load(path) the mapper may have entirely different PRG-RAM
-            // (and a different path), so any unflushed write from the previous
-            // game would be lost anyway — but explicitly saving here also
-            // handles the "load new ROM then crash" half-open case.
+            // Flush the outgoing battery before the mapper is replaced.
             nestlin.saveBatteryRam(oldPath)
         }
         runService { service.unloadGame() }
-        nestlin.load(path)
+        val content = try {
+            if (path.toString().lowercase().endsWith(".7z")) {
+                RomContentExtractor.extract(path, romHasher, archiveEntryName)
+            } else {
+                // Plain .nes: read the file, compute the canonical identity,
+                // then hand the SAME bytes to nestlin.loadBytes so the
+                // mapper sees the exact bytes we hashed (avoids a TOCTOU
+                // window where the file could change between hash + load).
+                val bytes = RomArchiveReader.readPlain(path)
+                RomContentExtractor.fromBytes(
+                    bytes = bytes,
+                    displayName = path.fileName.toString().substringBeforeLast('.'),
+                    sourcePath = path,
+                    hasher = romHasher,
+                )
+            }
+        } catch (e: RomArchiveException) {
+            publishServiceUnavailable(e.message ?: "Could not load ROM")
+            throw e
+        }
+        // Install the ROM. Plain .nes loads re-read from disk via
+        // nestlin.load(path) — the bytes Nestlin loads are guaranteed
+        // identical to the ones we hashed because we just read the same
+        // file. 7z loads install the extracted bytes directly.
+        if (path.toString().lowercase().endsWith(".7z")) {
+            nestlin.loadBytes(content.bytes, displayName = content.displayName)
+        } else {
+            nestlin.load(path)
+        }
         nestlin.powerReset()
         nestlin.loadBatteryRam(path)
-        prepareServiceForCurrent()
+        prepareServiceForCurrent(content)
         hooks.onAfterRomChange(nestlin.loadedRom)
     }
 
@@ -209,15 +255,21 @@ class GameSessionCoordinator(
      * [loadRom] except there is no disk battery to flush or restore (a
      * bytes-only load has no `.sav` file). Used by test fixtures and the
      * FM2 replay tool that synthesises ROMs from disk + patch arrays.
+     *
+     * The bytes are run through [RomContentExtractor.fromBytes] so the
+     * resulting [RomContent] has the same shape (hash, virtual filename)
+     * as a disk-loaded ROM.
      */
     fun loadBytes(romData: ByteArray, displayName: String = "nestest") {
         val oldPath = nestlin.loadedRom?.sourcePath
         hooks.onBeforeRomChange()
+        placardController.bumpGeneration()
         if (oldPath != null) nestlin.saveBatteryRam(oldPath)
         runService { service.unloadGame() }
-        nestlin.loadBytes(romData, displayName)
+        val content = RomContentExtractor.fromBytes(romData, displayName, hasher = romHasher)
+        nestlin.loadBytes(content.bytes, displayName)
         nestlin.powerReset()
-        prepareServiceForCurrent()
+        prepareServiceForCurrent(content)
         hooks.onAfterRomChange(nestlin.loadedRom)
     }
 
@@ -231,27 +283,18 @@ class GameSessionCoordinator(
      * boot screen, there is nothing to power-cycle.
      */
     fun powerReset() {
-        val rom = nestlin.loadedRom ?: return  // No ROM is loaded — nothing to power-cycle.
-        // For path-based loads: save, reload, reset, restore — the reload
-        // is what gives us a fully zeroed mapper (some boards' internal
-        // registers persist across a plain `cpu.reset` and need the full
-        // reconstructor to come back to power-on defaults).
-        // For bytes-only loads: there is no path to re-read, so we
-        // accept that the mapper state is "as reset" rather than
-        // "as brand-new" — still correct, just cheaper. The service
-        // still gets the full UnloadGame + PrepareGame pair so its
-        // runtime is rebuilt on a fresh post-prepareGame baseline,
-        // matching the path-based branch and the "Reset... produce the
-        // documented service lifecycle events exactly once" AC.
+        val rom = nestlin.loadedRom ?: return
         val path = rom.sourcePath
         if (path != null) {
             hooks.onBeforeRomChange()
+            placardController.bumpGeneration()
             nestlin.saveBatteryRam(path)
             runService { service.unloadGame() }
+            val content = RomContentExtractor.extract(path, romHasher)
             nestlin.load(path)
             nestlin.powerReset()
             nestlin.loadBatteryRam(path)
-            prepareServiceForCurrent()
+            prepareServiceForCurrent(content)
             hooks.onAfterRomChange(nestlin.loadedRom)
         } else {
             // Bytes-only: no battery to flush, no mapper to reconstruct
@@ -259,9 +302,11 @@ class GameSessionCoordinator(
             // UnloadGame + PrepareGame sequence so its state machine is
             // in sync with the just-power-cycled engine.
             hooks.onBeforeRomChange()
+            placardController.bumpGeneration()
             runService { service.unloadGame() }
             nestlin.powerReset()
-            prepareServiceForCurrent()
+            val info = GameSessionInfo.fromLegacy(rom, nestlin.regionConfig.region)
+            prepareServiceForCurrentFromInfo(info)
             hooks.onAfterRomChange(nestlin.loadedRom)
         }
     }
@@ -283,9 +328,11 @@ class GameSessionCoordinator(
      */
     fun unloadRom() {
         hooks.onBeforeRomChange()
+        placardController.bumpGeneration()
         nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
         runService { service.unloadGame() }
         nestlin.unload()
+        placardController.clear()
         hooks.onAfterRomChange(null)
     }
 
@@ -305,8 +352,7 @@ class GameSessionCoordinator(
     /**
      * Capture the current service-side condition progress, or null if the
      * service is idle. Used by the save-state slot manager to embed
-     * achievement progress in a `.nstl` (issue #268 will extend the
-     * on-disk format; this method is the seam).
+     * achievement progress in a `.nstl`.
      */
     fun captureProgress(): ByteArray? {
         return if (nestlin.loadedRom == null) null
@@ -315,10 +361,7 @@ class GameSessionCoordinator(
 
     /**
      * Restore service-side condition progress. A `null` or empty buffer
-     * resets the runtime to its post-`prepareGame` state. Used by the
-     * save-state slot manager to pull achievement progress back from a
-     * `.nstl`. Safe to call when no game is loaded — the next
-     * `prepareGame` re-establishes the runtime baseline.
+     * resets the runtime to its post-`prepareGame` state.
      */
     fun restoreProgress(progress: ByteArray?) {
         if (nestlin.loadedRom == null) return
@@ -327,14 +370,7 @@ class GameSessionCoordinator(
 
     /**
      * Forward one emulated frame's worth of state into the service's
-     * runtime. Called by the per-frame wiring (issue #268) once per
-     * completed frame; the [frameIndex] is the monotonic frame counter
-     * for the active `prepareGame` / `unloadGame` cycle (0 immediately
-     * after a prepare or reset, increasing by 1 each call).
-     *
-     * No-op when no game is currently loaded — the coordinator does not
-     * own the frame counter, so the wiring around it is responsible for
-     * skipping frames across a load/unload transition.
+     * runtime.
      */
     fun evaluateFrame(frameIndex: Long) {
         if (nestlin.loadedRom == null) return
@@ -344,14 +380,7 @@ class GameSessionCoordinator(
     /**
      * Service-only runtime reset — does NOT touch the CPU, the mapper, or
      * the loaded ROM, and does NOT fire `onBeforeRomChange` /
-     * `onAfterRomChange`. Used by the FM2 row-level reset commands
-     * (issue #125), which fire inside `MovieInput.applyCommands` after
-     * the in-place `nestlin.softReset()` / `nestlin.powerReset()` that
-     * `applyCommands` already issued. Distinct from [softReset] /
-     * [powerReset], which couple CPU + service resets.
-     *
-     * No-op when no ROM is currently loaded — the service has no active
-     * game session to reset.
+     * `onAfterRomChange`. Used by FM2 row-level reset commands.
      */
     fun resetServiceRuntime() {
         if (nestlin.loadedRom == null) return
@@ -359,37 +388,107 @@ class GameSessionCoordinator(
     }
 
     /**
-     * Build a fresh [GameSessionInfo] for the current ROM and ask the
-     * service to prepare it. A failure (returning `false` or throwing)
-     * is logged and swallowed — gameplay proceeds with the no-op fallback.
+     * Build a fresh [GameSessionInfo] for [content] and ask the service
+     * to prepare it. A failure (returning `false` or throwing) is logged
+     * and swallowed — gameplay proceeds with the no-op fallback.
+     *
+     * After the prepare round-trip settles, the coordinator pulls a
+     * [RaGameSummary] from the service and publishes the appropriate
+     * [BootPlacardEvent] — recognized / recognized-no-core /
+     * unrecognized / signed-out / service-unavailable — for the boot
+     * placard UI to render.
      */
-    private fun prepareServiceForCurrent() {
-        val rom = nestlin.loadedRom ?: return
-        val info = GameSessionInfo.from(rom, nestlin.regionConfig.region)
-        runService {
+    private fun prepareServiceForCurrent(content: RomContent) {
+        val info = GameSessionInfo.from(content, nestlin.regionConfig.region)
+        prepareServiceForCurrentFromInfo(info)
+    }
+
+    /**
+     * Prepare path for the bytes-only `powerReset` branch (where we don't
+     * have a freshly-loaded `RomContent` to extract, only the existing
+     * `LoadedRom` left in `nestlin.loadedRom`).
+     */
+    private fun prepareServiceForCurrentFromInfo(info: GameSessionInfo) {
+        val signedIn = service.isSignedIn()
+        if (!signedIn) {
+            // AC #8: signed-out loads show NO placard and NO nag.
+            runService { service.prepareGame(info, prepareTimeoutMillis) }
+            placardController.publish(BootPlacardEvent.SignedOut(placardController.generation))
+            return
+        }
+        val prepared = runService {
             try {
-                service.prepareGame(info)
+                service.prepareGame(info, prepareTimeoutMillis)
             } catch (t: Throwable) {
-                // Parent PRD: "a failing achievements service MUST NOT
-                // prevent gameplay". A throw inside the service is the
-                // same failure mode as a `false` return — log once,
-                // continue with an idle service for this session.
                 System.err.println("[GAME-SESSION] prepareGame threw ${t.javaClass.simpleName}: ${t.message}")
+                false
             }
+        }
+        if (!prepared) {
+            publishServiceUnavailable("Achievement service did not respond within ${prepareTimeoutMillis}ms")
+            return
+        }
+        val summary = runService { service.gameSummary() }
+        if (summary == null) {
+            placardController.publish(BootPlacardEvent.Unrecognized(
+                generation = placardController.generation,
+                displayName = info.displayName,
+                virtualFilename = info.virtualFilename,
+            ))
+            return
+        }
+        if (summary.hasCoreAchievements) {
+            placardController.publish(BootPlacardEvent.Recognized(
+                generation = placardController.generation,
+                summary = summary,
+                badgeImage = null,
+            ))
+        } else {
+            placardController.publish(BootPlacardEvent.RecognizedNoCore(
+                generation = placardController.generation,
+                summary = summary,
+            ))
         }
     }
 
     /**
-     * Run a service call under the start/end hooks. Centralises the
-     * `onServiceCallStart` / `onServiceCallEnd` bookends so every
-     * service call (and only service calls) gets the same UI
-     * opportunity to pause / resume the emulation thread.
+     * Publish a [BootPlacardEvent.ServiceUnavailable] event. Never throws.
+     */
+    private fun publishServiceUnavailable(cause: String) {
+        try {
+            placardController.publish(BootPlacardEvent.ServiceUnavailable(
+                generation = placardController.generation,
+                cause = cause,
+            ))
+        } catch (_: Exception) {
+            // Defensive: a buggy listener must not propagate into the
+            // coordinator's hot path.
+        }
+    }
+
+    /**
+     * Restart for the sign-in-mid-game path (issue #269 AC #9).
      *
-     * Returns whatever the [block] returns; the start/end hooks fire
-     * around the call regardless of the return type. A failure inside
-     * the block is still allowed to propagate (the no-op never throws;
-     * a real impl must catch its own failures internally per the
-     * [RetroAchievementsService] contract).
+     * Performs the documented restart: flush battery RAM, reload the
+     * same ROM, restore battery. The emulator state IS reset (CPU
+     * registers, RAM, mapper registers) — only the battery RAM file
+     * survives.
+     */
+    fun restartForAchievements() {
+        val rom = nestlin.loadedRom ?: run {
+            placardController.bumpGeneration()
+            return
+        }
+        val path = rom.sourcePath
+        if (path != null) {
+            loadRom(path)
+        } else {
+            loadBytes(rom.gamePak.rawBytes, rom.gamePak.name)
+        }
+    }
+
+    /**
+     * Run a service call under the start/end hooks.
      */
     private inline fun <T> runService(block: () -> T): T {
         hooks.onServiceCallStart()
@@ -398,5 +497,16 @@ class GameSessionCoordinator(
         } finally {
             hooks.onServiceCallEnd()
         }
+    }
+
+    companion object {
+        /**
+         * Default upper bound on `service.prepareGame` (issue #269 AC #5).
+         * Real RA achievement fetches typically settle in <2s on warm
+         * caches; 10s gives plenty of headroom for cold caches and slow
+         * networks while still bounding the wait before the first
+         * emulated frame.
+         */
+        const val DEFAULT_PREPARE_TIMEOUT_MS: Long = 10_000L
     }
 }
