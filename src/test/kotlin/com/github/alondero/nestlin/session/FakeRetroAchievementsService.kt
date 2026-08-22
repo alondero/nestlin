@@ -59,6 +59,7 @@ class FakeRetroAchievementsService(
         data class PrepareGame(val info: GameSessionInfo, val timeoutMs: Long) : Call
         data class PrepareGameFailed(val info: GameSessionInfo, val timeoutMs: Long) : Call
         data class EvaluateFrame(val frameIndex: Long) : Call
+        object InstallMemoryReader : Call
         object ResetRuntime : Call
         data class SerializeProgress(val token: Int) : Call
         data class RestoreProgress(val progress: ByteArray?) : Call
@@ -80,6 +81,10 @@ class FakeRetroAchievementsService(
             calls += Call.PrepareGame(sessionInfo, timeoutMillis)
             prepareGameResult
         }
+    }
+
+    override fun installMemoryReader(reader: RaReadMemoryFn) {
+        calls += Call.InstallMemoryReader
     }
 
     override fun resetRuntime() {
@@ -160,6 +165,7 @@ class FakeRetroAchievementsService(
         is Call.PrepareGameFailed -> other is Call.PrepareGameFailed &&
             info == other.info && timeoutMs == other.timeoutMs
         is Call.EvaluateFrame -> other is Call.EvaluateFrame && frameIndex == other.frameIndex
+        Call.InstallMemoryReader -> other is Call.InstallMemoryReader
         Call.ResetRuntime -> other is Call.ResetRuntime
         is Call.SerializeProgress -> other is Call.SerializeProgress  // token is auto-monotonic
         is Call.RestoreProgress -> other is Call.RestoreProgress &&

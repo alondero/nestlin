@@ -60,6 +60,43 @@ internal class NativeRetroAchievementsService private constructor(
     // observable rather than corrupting native state.
     private val prepareLock = Any()
 
+    // ----------------------------------------------------------------------
+    // Issue #270: connectivity / pending-sync state
+    //
+    // The runtime emits DISCONNECTED / RECONNECTED events on the network
+    // boundary. We mirror those into two volatile flags so the UI's
+    // "pending sync" indicator can render without reaching into the
+    // native event queue. `pendingSync` clears on the next idle poll once
+    // the load state is READY AND no pending ACHIEVEMENT_TRIGGERED events
+    // are queued — see [evaluateFrame].
+    //
+    // @Volatile: read on the JavaFX Application Thread (indicator render),
+    // written on the emulation thread (event drain). No compound action
+    // exists — both are independent booleans.
+    @Volatile
+    private var lastConnectivityHealthy: Boolean = true
+    @Volatile
+    private var pendingSync: Boolean = false
+
+    /**
+     * Sink for native events re-emitted as JVM-side [RaNotification]s
+     * (issue #270). Set by the coordinator's UI hook; cleared on
+     * [shutdown]. The drain path fires this synchronously after copying
+     * every native string out, so listeners (the notification controller)
+     * receive fully-owned data — see `bytesToString` below.
+     */
+    @Volatile
+    internal var notificationListener: ((RaNotification) -> Unit)? = null
+
+    /**
+     * Inject the p95 latency probe (issue #270 "benchmark tracks p95 latency
+     * at 1ms budget" AC). Null by default — production doesn't want a
+     * per-frame allocation. Tests inject an [RaLatencyTracker] to assert
+     * the budget holds across a synthetic workload.
+     */
+    @Volatile
+    internal var latencyTracker: RaLatencyTracker? = null
+
     override fun isSignedIn(): Boolean {
         // The C side returns 0 unconditionally until issue #268 lands
         // login support. Reflected here so the UI menu shows the
@@ -89,6 +126,14 @@ internal class NativeRetroAchievementsService private constructor(
             } catch (e: UnsatisfiedLinkError) {
                 return false
             }
+            // Issue #270: a fresh prepare starts with a clean pending-sync
+            // state. The runtime may immediately queue events for an
+            // offline user (unlocks the runtime knows about but the
+            // server hasn't seen) and the UI's indicator should reflect
+            // that — [handleEvent] flips pendingSync = true as events
+            // arrive. Reset here so we don't carry a stale flag across
+            // ROM swaps.
+            pendingSync = false
             // The C side returns RA_ERR_NOT_SIGNED_IN (-6) when no user is
             // authenticated; the coordinator treats any non-OK result as
             // "service is idle for this session" — gameplay proceeds, no
@@ -159,6 +204,12 @@ internal class NativeRetroAchievementsService private constructor(
     }
 
     override fun evaluateFrame(frameIndex: Long) {
+        // Issue #270: p95 latency benchmark — record wall-clock duration
+        // around the native call so the test can assert the 1 ms budget
+        // holds across a synthetic workload. LatencyTracker is null in
+        // production (no allocation per frame); tests inject one.
+        val tracker = latencyTracker
+        val startNanos = if (tracker != null) System.nanoTime() else 0L
         try {
             // Push our handle onto the thread-local stack so the
             // shared JNA callback can find the right JVM-side reader.
@@ -173,9 +224,23 @@ internal class NativeRetroAchievementsService private constructor(
             } finally {
                 currentHandle.set(prior)
             }
+            // Clear pendingSync once the native queue is drained AND
+            // the load state is READY. The pending-sync indicator stays
+            // up while the runtime is still catching up on its submission
+            // queue — clearing it the moment we observe an empty event
+            // queue AND a settled load state gives the user a clean
+            // "no more syncing" transition without flapping every frame.
+            if (pendingSync && lastConnectivityHealthy &&
+                bindings.ra_facade_get_load_state(handle) == RaLoadState.READY) {
+                pendingSync = false
+            }
         } catch (e: UnsatisfiedLinkError) {
             // Library was unloaded mid-session (e.g. during shutdown);
             // swallow — the coordinator has already moved on.
+        } finally {
+            if (tracker != null) {
+                tracker.record(System.nanoTime() - startNanos)
+            }
         }
     }
 
@@ -214,6 +279,9 @@ internal class NativeRetroAchievementsService private constructor(
     }
 
     override fun unloadGame() {
+        // Issue #270: a fresh ROM starts with no pending sync — the new
+        // game's events will arrive through the normal drain path.
+        pendingSync = false
         try {
             // Drop pending events BEFORE telling the C side to unload, so
             // an in-flight server-error event from the previous game
@@ -224,6 +292,12 @@ internal class NativeRetroAchievementsService private constructor(
     }
 
     override fun shutdown() {
+        // Issue #270: drop the listener + tracker references BEFORE the
+        // native handle goes away. A listener that fires after shutdown
+        // would see a freed pointer; clearing here makes the post-shutdown
+        // window observable.
+        notificationListener = null
+        latencyTracker = null
         try {
             bindings.ra_facade_destroy(handle)
         } catch (e: UnsatisfiedLinkError) {
@@ -236,6 +310,25 @@ internal class NativeRetroAchievementsService private constructor(
         // every documented call site, and a fresh service instance is
         // the only path forward.)
     }
+
+    // ------------------------------------------------------------------
+    // Issue #270: connectivity flags for the UI's pending-sync indicator.
+    // ------------------------------------------------------------------
+
+    /** Last observed connectivity state — true until DISCONNECTED fires. */
+    fun isConnectivityHealthy(): Boolean = lastConnectivityHealthy
+
+    /**
+     * True while the runtime has queued events that haven't yet been
+     * confirmed by the server. The UI's "sync" badge stays up while this
+     * is true and clears once the runtime drains its events on a healthy
+     * connection (see [evaluateFrame]).
+     */
+    fun isPendingSync(): Boolean = pendingSync
+
+    // ------------------------------------------------------------------
+    // Memory reader wiring (Nestlin-side)
+    // ------------------------------------------------------------------
 
     // ------------------------------------------------------------------
     // Memory reader wiring (Nestlin-side)
@@ -253,7 +346,7 @@ internal class NativeRetroAchievementsService private constructor(
      * reader from the map using the [currentHandle] ThreadLocal that
      * `evaluate_frame` pushes before the native call.
      */
-    fun installMemoryReader(reader: RaReadMemoryFn) {
+    override fun installMemoryReader(reader: RaReadMemoryFn) {
         memoryReaders[handle] = reader
         try {
             // The C shim stores the userdata pointer but never dereferences
@@ -286,12 +379,37 @@ internal class NativeRetroAchievementsService private constructor(
     }
 
     private fun handleEvent(ev: RaEvent) {
+        // Every native event is fully copied out of native memory into
+        // JVM strings (bytesToString below) BEFORE any listener fires.
+        // That satisfies the issue #270 AC "Events fully copied before
+        // callbacks return" — once a [RaNotification] reaches the
+        // listener, there is no reference back into rcheevos / façade
+        // buffers.
         when (ev.type) {
             RaEventType.ACHIEVEMENT_TRIGGERED -> {
                 val title = bytesToString(ev.achievementTitle)
+                val description = bytesToString(ev.achievementDescription)
+                val badgeName = bytesToString(ev.achievementBadge)
                 // Points + ID are non-sensitive; title is user-facing text
                 // from the achievement set (not a token). Safe to log.
                 System.err.println("[RA] Achievement unlocked: id=${ev.achievementId} points=${ev.achievementPoints} title=$title")
+                // Build the official badge URL via the façade helper so
+                // the listener gets the canonical absolute URL (empty
+                // string when rcheevos hasn't assigned a badge yet).
+                val badgeUrl = if (badgeName.isEmpty()) "" else buildBadgeUrl(badgeName)
+                val n = UnlockNotification(
+                    achievementId = ev.achievementId,
+                    title = title,
+                    description = description,
+                    points = ev.achievementPoints,
+                    badgeUrl = badgeUrl,
+                    // displayUntilMillis is the controller's concern; we
+                    // hand it a sentinel — the controller re-stamps with
+                    // its own nowMillis at publish time.
+                    displayUntilMillis = 0L,
+                )
+                pendingSync = true
+                dispatchNotification(n)
             }
             RaEventType.GAME_COMPLETED -> {
                 System.err.println("[RA] Game completed (no mastery notification)")
@@ -302,14 +420,89 @@ internal class NativeRetroAchievementsService private constructor(
                 // contain server-internal context that shouldn't leak to
                 // log files. Result code + ID are the actionable bits.
                 System.err.println("[RA] Server error: code=${ev.serverResultCode} related_id=${ev.serverRelatedId}")
+                // Surface to the UI without leaking the message body.
+                dispatchNotification(SystemNotification(
+                    severity = SystemSeverity.ERROR,
+                    message = "RetroAchievements server error (code ${ev.serverResultCode})",
+                    displayUntilMillis = 0L,
+                ))
             }
-            RaEventType.DISCONNECTED ->
+            RaEventType.DISCONNECTED -> {
                 System.err.println("[RA] Disconnected from server")
-            RaEventType.RECONNECTED ->
+                lastConnectivityHealthy = false
+                pendingSync = true
+                dispatchNotification(SystemNotification(
+                    severity = SystemSeverity.ERROR,
+                    message = "RetroAchievements offline — unlocks will sync when reconnected",
+                    displayUntilMillis = 0L,
+                ))
+            }
+            RaEventType.RECONNECTED -> {
                 System.err.println("[RA] Reconnected to server")
-            // Other event types are transient UI hints (challenge /
-            // progress / leaderboard tracker) and aren't logged here —
-            // they're wired to UI affordances in issue #268.
+                lastConnectivityHealthy = true
+                // The "Reconnected — syncing pending unlocks" banner stays
+                // up until the next evaluateFrame observes an empty event
+                // queue AND load_state == READY (see evaluateFrame).
+                dispatchNotification(SystemNotification(
+                    severity = SystemSeverity.INFO,
+                    message = "Reconnected — syncing pending unlocks",
+                    displayUntilMillis = 0L,
+                ))
+            }
+            RaEventType.LEADERBOARD_SUBMITTED -> {
+                dispatchNotification(SystemNotification(
+                    severity = SystemSeverity.INFO,
+                    message = "Leaderboard submission accepted",
+                    displayUntilMillis = 0L,
+                ))
+            }
+            RaEventType.LEADERBOARD_FAILED -> {
+                dispatchNotification(SystemNotification(
+                    severity = SystemSeverity.ERROR,
+                    message = "Leaderboard submission failed (server error)",
+                    displayUntilMillis = 0L,
+                ))
+            }
+            // Other event types (challenge indicators, progress trackers,
+            // tracker updates, scoreboards, reset) are transient UI hints
+            // that wire to affordances in #268 / #272. We deliberately
+            // don't surface them here — the notifications controller is
+            // for user-visible banners, not every state transition.
+        }
+    }
+
+    /**
+     * Build the canonical RA badge URL for a given badge name via the
+     * façade's URL helper. The façade knows the server root; the JVM
+     * side only knows the badge filename. Returns an empty string when
+     * the helper declines (bad input) — the listener treats empty as
+     // "no image".
+     */
+    private fun buildBadgeUrl(badgeName: String): String {
+        val buf = ByteArray(RaGameSummarySlot.RA_FACADE_URL_MAX)
+        return try {
+            val rc = bindings.ra_facade_badge_url(badgeName, buf, buf.size)
+            if (rc != RaStatus.OK) return ""
+            val end = buf.indexOf(0)
+            val trimmed = if (end >= 0) buf.copyOf(end) else buf
+            String(trimmed, Charsets.UTF_8)
+        } catch (e: UnsatisfiedLinkError) {
+            ""
+        }
+    }
+
+    /**
+     * Forward a fully-copied notification to the registered listener (the
+     * [RaNotificationController] in production). A throw from the
+     * listener is swallowed — a UI-side bug must not propagate into the
+     * emulation thread's per-frame hot path.
+     */
+    private fun dispatchNotification(n: RaNotification) {
+        val listener = notificationListener ?: return
+        try {
+            listener(n)
+        } catch (e: Exception) {
+            System.err.println("[RA] Notification listener threw: ${e.javaClass.simpleName}")
         }
     }
 
@@ -387,11 +580,60 @@ internal class NativeRetroAchievementsService private constructor(
         // single static instance is shared across all façades because
         // JNA's `Callback` interface is stateless once bound; the
         // per-call façade identity comes from [currentHandle].
+        //
+        // Bounds-safe (issue #270 AC "Memory reads are side-effect-free
+        // and bounds-safe"): three guards reject malformed conditions
+        // that would otherwise crash the JVM with an out-of-bounds array
+        // access. rcheevos is a trusted library but a malicious or
+        // hand-crafted achievement set could probe the read path; the
+        // worst case from a malformed condition is a missed trigger, not
+        // a JVM crash.
         private val jnaMemoryReader = RaReadMemoryFn { address, buffer, numBytes ->
+            // 1. Reject negative address (uint32_t wrapped to negative Int).
+            // 2. Reject addresses above the NES CPU bus range.
+            if (address < 0 || address > 0xFFFF) return@RaReadMemoryFn 0
+            // 3. Reject non-positive counts and over-sized reads. A
+            //    non-positive count means "no bytes requested" — return 0
+            //    so the runtime falls back to its zero-fill default.
+            if (numBytes <= 0) return@RaReadMemoryFn 0
             val handle = currentHandle.get() ?: return@RaReadMemoryFn 0
             val reader = memoryReaders[handle] ?: return@RaReadMemoryFn 0
             val n = numBytes.coerceAtMost(buffer.size)
+            if (n <= 0) return@RaReadMemoryFn 0
             reader.read(address, buffer, n)
         }
     }
 }
+
+/**
+ * Build a side-effect-free [RaReadMemoryFn] backed by [Memory.peek] (issue #270 AC
+ * "Memory reads are side-effect-free and bounds-safe").
+ *
+ * `Memory.peek(address)`:
+ *   - Skips PPU vblank clear, write-toggle reset, VRAM increment (issue #168),
+ *   - Skips APU IRQ acknowledge (`$4015`),
+ *   - Skips controller shift-register advance (`$4016`/`$4017`),
+ *   - Does NOT touch the open-bus data latch (an emulator-only debug aid),
+ *   - Returns 0 for unmapped / out-of-range addresses.
+ *
+ * The wrapping here enforces three extra invariants the JVM-side callback contract
+ * requires (issue #270 AC):
+ *   1. `address` outside `[0, 0xFFFF]` returns 0 (handles uint32_t-wrapped-to-negative
+ *      values from a malformed condition).
+ *   2. `numBytes <= 0` returns 0 (handles zero/negative read requests).
+ *   3. `numBytes > buffer.size` clamps to `buffer.size` (defensive; the JNA side
+ *      does this too but the coordinator's wrapping is the documented contract).
+ *
+ * Tests against this helper are in `MemoryPeekRaReaderTest`.
+ */
+internal fun peekReader(memory: com.github.alondero.nestlin.Memory): RaReadMemoryFn =
+    RaReadMemoryFn { address, buffer, numBytes ->
+        if (address < 0 || address > 0xFFFF) return@RaReadMemoryFn 0
+        if (numBytes <= 0) return@RaReadMemoryFn 0
+        val n = numBytes.coerceAtMost(buffer.size)
+        if (n <= 0) return@RaReadMemoryFn 0
+        for (i in 0 until n) {
+            buffer[i] = memory.peek(address + i)
+        }
+        n
+    }

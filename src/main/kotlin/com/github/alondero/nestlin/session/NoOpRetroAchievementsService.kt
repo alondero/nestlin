@@ -21,6 +21,7 @@ object NoOpRetroAchievementsService : RetroAchievementsService {
     override fun isSignedIn(): Boolean = false
     override fun prepareGame(sessionInfo: GameSessionInfo, timeoutMillis: Long): Boolean = false
     override fun evaluateFrame(frameIndex: Long) = Unit
+    override fun installMemoryReader(reader: RaReadMemoryFn) = Unit  // no runtime → no reads needed (issue #270)
     override fun resetRuntime() = Unit
     override fun serializeProgress(): ByteArray? = null
     override fun restoreProgress(progress: ByteArray?) = Unit

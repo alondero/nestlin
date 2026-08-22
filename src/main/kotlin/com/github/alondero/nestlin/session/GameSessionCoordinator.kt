@@ -174,6 +174,19 @@ class GameSessionCoordinator(
      */
     val placardController: RaBootPlacardController = RaBootPlacardController(),
     /**
+     * Queued notification controller (issue #270). Owns the FIFO unlock
+     * queue and the single-slot system banner. The coordinator calls
+     * [RaNotificationController.markRomChange] on every ROM lifecycle
+     * transition so the UI doesn't display stale "Reconnected — syncing
+     * pending unlocks" messages for the previous game.
+     *
+     * Default: a fresh [RaNotificationController] so a CLI / test caller
+     * can construct a coordinator without supplying one. Production wires
+     * a shared instance from `Application` so the render pump and the
+     // coordinator publish / observe on the same controller.
+     */
+    val notificationController: RaNotificationController = RaNotificationController(),
+    /**
      * Hasher used to compute the canonical NES hash for [RomContent]
      * instances loaded from disk. Production uses [NativeRomHasher]; tests
      * and CLI paths without the native library fall back to
@@ -188,6 +201,104 @@ class GameSessionCoordinator(
      */
     val prepareTimeoutMillis: Long = DEFAULT_PREPARE_TIMEOUT_MS,
 ) {
+
+    init {
+        // Issue #270: the coordinator owns the per-frame evaluation hook
+        // that runs on the emulation thread inside the PPU's
+        // frame-completion listener. Installing it here means every
+        // GameSessionCoordinator (production, CLI, tests) gets the same
+        // ordering guarantee — evaluateFrame fires BEFORE the rewind
+        // snapshot is captured.
+        nestlin.preFrameCaptureHook = { evaluateFrameNext() }
+        // Wire the native service's notification listener to this
+        // controller. For NoOpRetroAchievementsService this is a no-op
+        // (nothing emits notifications); for the native service it
+        // forwards unlock + system banners into the controller's FIFO
+        // queue. The cast is safe because the listener field is internal
+        // to the native service; the coordinator only sets it when the
+        // service exposes the field — but exposing it as a method would
+        // pollute the public interface.
+        installServiceNotificationListener()
+    }
+
+    // Issue #270: monotonic frame index for [evaluateFrame]. Reset on
+    // every successful prepareGame so a new ROM starts at frame 0 — the
+    // runtime's "this is a fresh timeline" semantic aligns with the
+    // coordinator's "new ROM, new frame index" semantic.
+    @Volatile
+    private var frameCounter: Long = 0L
+
+    /**
+     * Install the side-effect-free memory reader (issue #270 AC). Called
+     * automatically after every successful [prepareServiceForCurrent] so
+     * rcheevos's read_memory callback resolves to [Memory.peek] rather
+     * than the (non-existent) live [Memory.get] path.
+     *
+     * For [NoOpRetroAchievementsService] this is a no-op (the default
+     * interface implementation).
+     */
+    private fun installMemoryReader() {
+        val reader = peekReader(nestlin.memory)
+        runService { service.installMemoryReader(reader) }
+    }
+
+    /**
+     * Wire [NativeRetroAchievementsService.notificationListener] to this
+     * controller's [publishNotification]. The cast is safe — the
+     * notificationListener field is package-private and only the native
+     * service has it; [NoOpRetroAchievementsService] doesn't expose it.
+     */
+    private fun installServiceNotificationListener() {
+        val native = service as? NativeRetroAchievementsService ?: return
+        native.notificationListener = { n -> publishNotification(n) }
+    }
+
+    /**
+     * Publish a [RaNotification] into the controller with a fresh
+     * [System.currentTimeMillis] timestamp. Called from the native
+     * service's event drain — on the emulation thread, synchronously.
+     */
+    private fun publishNotification(n: RaNotification) {
+        when (n) {
+            is UnlockNotification -> notificationController.publishUnlock(
+                achievementId = n.achievementId,
+                title = n.title,
+                description = n.description,
+                points = n.points,
+                badgeUrl = n.badgeUrl,
+                nowMillis = System.currentTimeMillis(),
+            )
+            is SystemNotification -> notificationController.publishSystem(
+                severity = n.severity,
+                message = n.message,
+                nowMillis = System.currentTimeMillis(),
+            )
+        }
+    }
+
+    /**
+     * Per-frame seam: bumps the frame counter and pushes one frame's
+     * state into the active runtime. Called from
+     * [com.github.alondero.nestlin.Nestlin.preFrameCaptureHook] — the
+     * hook is registered in [init] so every coordinator gets the same
+     * ordering vs the rewind snapshot.
+     *
+     * The frame counter resets to 0 on every successful prepareGame —
+     * "this ROM's frame 0" means the same thing across a fresh boot and
+     * a rewind.
+     */
+    fun evaluateFrameNext() {
+        if (nestlin.loadedRom == null) return
+        val idx = frameCounter
+        frameCounter = idx + 1
+        try {
+            service.evaluateFrame(idx)
+        } catch (t: Throwable) {
+            // Defensive: a service-side bug must not propagate into the
+            // emulation thread's frame-completion listener.
+            System.err.println("[GAME-SESSION] evaluateFrame threw ${t.javaClass.simpleName}: ${t.message}")
+        }
+    }
 
     /**
      * Install [path] as the new active ROM.
@@ -210,6 +321,11 @@ class GameSessionCoordinator(
         val oldPath = nestlin.loadedRom?.sourcePath
         hooks.onBeforeRomChange()
         placardController.bumpGeneration()
+        // Issue #270: clear queued unlock + system banners from the
+        // previous game. Same generation-bump policy as the placard —
+        // a slow notification publish from the previous game can't
+        // reach the new game's UI.
+        notificationController.markRomChange()
         if (oldPath != null) {
             // Flush the outgoing battery before the mapper is replaced.
             nestlin.saveBatteryRam(oldPath)
@@ -264,6 +380,7 @@ class GameSessionCoordinator(
         val oldPath = nestlin.loadedRom?.sourcePath
         hooks.onBeforeRomChange()
         placardController.bumpGeneration()
+        notificationController.markRomChange()
         if (oldPath != null) nestlin.saveBatteryRam(oldPath)
         runService { service.unloadGame() }
         val content = RomContentExtractor.fromBytes(romData, displayName, hasher = romHasher)
@@ -288,6 +405,7 @@ class GameSessionCoordinator(
         if (path != null) {
             hooks.onBeforeRomChange()
             placardController.bumpGeneration()
+            notificationController.markRomChange()
             nestlin.saveBatteryRam(path)
             runService { service.unloadGame() }
             val content = RomContentExtractor.extract(path, romHasher)
@@ -303,6 +421,7 @@ class GameSessionCoordinator(
             // in sync with the just-power-cycled engine.
             hooks.onBeforeRomChange()
             placardController.bumpGeneration()
+            notificationController.markRomChange()
             runService { service.unloadGame() }
             nestlin.powerReset()
             val info = GameSessionInfo.fromLegacy(rom, nestlin.regionConfig.region)
@@ -329,6 +448,10 @@ class GameSessionCoordinator(
     fun unloadRom() {
         hooks.onBeforeRomChange()
         placardController.bumpGeneration()
+        // Issue #270: no game = nothing to unlock. Clear queued unlocks
+        // + the system banner so the UI isn't showing stale state after
+        // the user picks "Close ROM" from the menu.
+        notificationController.markRomChange()
         nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
         runService { service.unloadGame() }
         nestlin.unload()
@@ -409,6 +532,17 @@ class GameSessionCoordinator(
      * `LoadedRom` left in `nestlin.loadedRom`).
      */
     private fun prepareServiceForCurrentFromInfo(info: GameSessionInfo) {
+        // Issue #270: every successful prepare resets the frame counter to
+        // 0 — "this ROM's frame 0" means the same thing across a fresh
+        // boot, a rewind, and a power cycle. Failed prepares don't reset
+        // because the runtime is idle and no frames will be evaluated.
+        frameCounter = 0L
+        // Install the side-effect-free memory reader BEFORE prepareGame
+        // so the runtime can begin evaluating against live memory the
+        // moment the load settles. Doing it after prepareGame would mean
+        // the first frame's triggers see zeros — a common footgun in
+        // emulator achievement integrations.
+        installMemoryReader()
         val signedIn = service.isSignedIn()
         if (!signedIn) {
             // AC #8: signed-out loads show NO placard and NO nag.

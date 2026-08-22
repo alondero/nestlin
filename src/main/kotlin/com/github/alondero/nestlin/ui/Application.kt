@@ -16,6 +16,8 @@ import com.github.alondero.nestlin.movie.MovieLiveRecorder
 import com.github.alondero.nestlin.session.GameSessionCoordinator
 import com.github.alondero.nestlin.session.GameSessionHooks
 import com.github.alondero.nestlin.session.NoOpRetroAchievementsService
+import com.github.alondero.nestlin.session.SystemNotification
+import com.github.alondero.nestlin.session.UnlockNotification
 import com.github.alondero.nestlin.movie.MovieState
 import com.github.alondero.nestlin.ppu.Frame
 import com.github.alondero.nestlin.ppu.RESOLUTION_HEIGHT
@@ -213,6 +215,41 @@ class NestlinApplication : FrameListener, Application() {
         textAlignment = javafx.scene.text.TextAlignment.CENTER
         isVisible = false
     }
+
+    // Issue #270: RA unlock overlay. Bigger pill than the save-state toast
+    // (we need room for the title + points + description), pinned to the
+    // upper-right corner where it doesn't collide with the fast-forward
+    // indicator or the rewind indicator. The pill auto-hides when the
+    // notification's display window expires (see refreshUnlockOverlay).
+    private val unlockOverlay = javafx.scene.control.Label("").apply {
+        font = javafx.scene.text.Font.font("Monospaced", javafx.scene.text.FontWeight.BOLD, 16.0)
+        style = "-fx-background-color: rgba(0, 0, 0, 0.78);" +
+                "-fx-background-radius: 14;" +
+                "-fx-padding: 8 18 8 18;" +
+                "-fx-text-fill: #FFD700;" +
+                "-fx-border-color: #FFA500;" +
+                "-fx-border-radius: 14;" +
+                "-fx-border-width: 2;"
+        maxWidth = (RESOLUTION_WIDTH * 2).toDouble()
+        isWrapText = true
+        textAlignment = javafx.scene.text.TextAlignment.CENTER
+        isVisible = false
+    }
+    // Issue #270: RA offline / sync-pending banner. Smaller, neutral
+    // gray pill pinned top-centre-above-rewind so it doesn't collide
+    // with the unlock overlay (top-right) or the save-state toast
+    // (bottom-centre).
+    private val systemBanner = javafx.scene.control.Label("").apply {
+        font = javafx.scene.text.Font.font("Monospaced", javafx.scene.text.FontWeight.NORMAL, 14.0)
+        style = "-fx-background-color: rgba(0, 0, 0, 0.78);" +
+                "-fx-background-radius: 12;" +
+                "-fx-padding: 4 12 4 12;" +
+                "-fx-text-fill: #E0E0E0;"
+        isWrapText = true
+        textAlignment = javafx.scene.text.TextAlignment.CENTER
+        isVisible = false
+    }
+
     private var running = false
     // Frame buffer synchronization for thread-safe screenshot capture
     private val frameBufferLock = Any()
@@ -734,6 +771,17 @@ class NestlinApplication : FrameListener, Application() {
             StackPane.setAlignment(toastIndicator, javafx.geometry.Pos.BOTTOM_CENTER)
             StackPane.setMargin(toastIndicator, javafx.geometry.Insets(0.0, 0.0, 28.0, 0.0))
 
+            // Issue #270: unlock overlay (top-right) and offline/system
+            // banner (top-centre, above the rewind indicator). Both
+            // children are added unconditionally; their visibility is
+            // toggled per-frame in refreshUnlockOverlay.
+            canvasHolder.children.add(unlockOverlay)
+            StackPane.setAlignment(unlockOverlay, javafx.geometry.Pos.TOP_RIGHT)
+            StackPane.setMargin(unlockOverlay, javafx.geometry.Insets(28.0, 28.0, 0.0, 0.0))
+            canvasHolder.children.add(systemBanner)
+            StackPane.setAlignment(systemBanner, javafx.geometry.Pos.TOP_CENTER)
+            StackPane.setMargin(systemBanner, javafx.geometry.Insets(28.0, 0.0, 0.0, 0.0))
+
             // Letterbox area outside the scaled canvas paints black.
             canvasHolder.style = "-fx-background-color: black;"
             // Decouple holder's min size from the Group's bounds. Without this, the scaled
@@ -1004,6 +1052,10 @@ class NestlinApplication : FrameListener, Application() {
                 // already on the JavaFX Application Thread (AnimationTimer.handle
                 // runs here), so direct scene-node mutation is safe.
                 refreshToastIndicator(System.currentTimeMillis())
+
+                // Issue #270: RA unlock overlay + system banner. Same per-frame
+                // pull-from-controller pattern as the save-state toast.
+                refreshUnlockOverlay(System.currentTimeMillis())
             }
 
         }.start()
@@ -2023,6 +2075,41 @@ class NestlinApplication : FrameListener, Application() {
         val targetFill = TOAST_FILLS.getValue(toast.severity)
         if (toastIndicator.textFill != targetFill) toastIndicator.textFill = targetFill
         if (!toastIndicator.isVisible) toastIndicator.isVisible = true
+    }
+
+    /**
+     * Issue #270: reflect the RA notification controller's current state
+     * onto the unlock overlay (top-right) and the system banner
+     * (top-centre).
+     *
+     * The [RaNotificationController] is the source of truth — its
+     * `visibleAt(nowMillis)` returns the priority-resolved notification
+     * (system > unlock > null). The two pills never display at the same
+     * time: when `visibleAt` returns a `SystemNotification`, the unlock
+     * pill is hidden, and vice versa.
+     */
+    private fun refreshUnlockOverlay(nowMillis: Long) {
+        val notif = sessionCoordinator.notificationController.visibleAt(nowMillis)
+        when (notif) {
+            null -> {
+                if (unlockOverlay.isVisible) unlockOverlay.isVisible = false
+                if (systemBanner.isVisible) systemBanner.isVisible = false
+            }
+            is SystemNotification -> {
+                if (unlockOverlay.isVisible) unlockOverlay.isVisible = false
+                val text = notif.message
+                if (systemBanner.text != text) systemBanner.text = text
+                if (!systemBanner.isVisible) systemBanner.isVisible = true
+            }
+            is UnlockNotification -> {
+                if (systemBanner.isVisible) systemBanner.isVisible = false
+                val titleLine = "${notif.title}  (${notif.points} pts)"
+                val descLine = if (notif.description.isNotEmpty()) notif.description else null
+                val combined = if (descLine != null) "$titleLine\n$descLine" else titleLine
+                if (unlockOverlay.text != combined) unlockOverlay.text = combined
+                if (!unlockOverlay.isVisible) unlockOverlay.isVisible = true
+            }
+        }
     }
 
     private fun handleHardReset() {
