@@ -83,6 +83,41 @@ internal interface RaFacadeBindings : Library {
     /** Begin loading a new game from raw ROM bytes. Returns a [RaStatus] code. */
     fun ra_facade_prepare_game(handle: Pointer, romBytes: ByteArray, romLen: Int, displayName: String?): Int
 
+    /**
+     * Compute the official RA NES hash for the given ROM bytes. Writes a
+     * 32-hex-char NUL-terminated string into `outHash` (must be at least
+     * RA_FACADE_HASH_LEN=33 bytes). Returns RA_OK on success.
+     */
+    fun ra_facade_hash_nes_rom(romBytes: ByteArray, romLen: Int, outHash: ByteArray): Int
+
+    /**
+     * Snapshot the active game's user progress summary (issue #269 — boot
+     * placard). Returns RA_OK on success, RA_ERR_NOT_SIGNED_IN or
+     * RA_ERR_NO_GAME otherwise (zeroed `out`).
+     */
+    fun ra_facade_get_user_game_summary(handle: Pointer, out: RaUserGameSummary): Int
+
+    /**
+     * Snapshot the active game's title + image URL (issue #269 — boot placard).
+     * Returns RA_OK on success, RA_ERR_NO_GAME otherwise.
+     */
+    fun ra_facade_get_game_summary(handle: Pointer, out: RaGameSummarySlot): Int
+
+    /**
+     * Block until the active load settles, polling every `pollMs` up to
+     * `timeoutMs` total. Returns RA_OK when the load settles (READY / ABORTED),
+     * RA_ERR_INTERNAL on timeout. Writes the final observed state into
+     * `outState` (RA_LOAD_STATE_*).
+     */
+    fun ra_facade_wait_for_load_settle(handle: Pointer, timeoutMs: Int, pollMs: Int, outState: IntByReference): Int
+
+    /**
+     * Build the official RetroAchievements badge URL for `badgeName` into
+     * `outUrl` (capacity `outUrlCapacity`). Returns RA_OK on success,
+     * RA_ERR_BUFFER_TOO_SMALL if the destination is too small.
+     */
+    fun ra_facade_badge_url(badgeName: String, outUrl: ByteArray, outUrlCapacity: Int): Int
+
     /** Feed one emulated frame into the runtime. No-op when no game is loaded. */
     fun ra_facade_evaluate_frame(handle: Pointer, frameIndex: Long)
 
@@ -246,6 +281,54 @@ internal class RaGameInfo : Structure() {
     override fun getFieldOrder(): List<String> = listOf(
         "state", "gameId", "hasAchievements", "hasLeaderboards", "hardcoreEnabled",
     )
+}
+
+/**
+ * Flat mirror of `ra_user_game_summary_t` (issue #269 — boot placard).
+ * Populated by `ra_facade_get_user_game_summary` after a successful
+ * identify+load. All fields are zero when no game is loaded OR no user
+ * is signed in; the JNA layer checks both before invoking.
+ */
+internal class RaUserGameSummary : Structure() {
+    @JvmField var numCoreAchievements: Int = 0
+    @JvmField var numUnofficialAchievements: Int = 0
+    @JvmField var numUnlockedAchievements: Int = 0
+    @JvmField var numUnsupportedAchievements: Int = 0
+    @JvmField var pointsCore: Int = 0
+    @JvmField var pointsUnlocked: Int = 0
+    override fun getFieldOrder(): List<String> = listOf(
+        "numCoreAchievements",
+        "numUnofficialAchievements",
+        "numUnlockedAchievements",
+        "numUnsupportedAchievements",
+        "pointsCore",
+        "pointsUnlocked",
+    )
+}
+
+/**
+ * Flat mirror of `ra_game_summary_t` (issue #269 — boot placard). Title
+ * and image URL strings are NUL-terminated within their respective
+ * fixed-size arrays; the JVM side MUST copy anything it intends to
+ * retain past the call.
+ */
+internal class RaGameSummarySlot : Structure() {
+    @JvmField var id: Int = 0
+    @JvmField var title: ByteArray = ByteArray(RA_FACADE_TITLE_BUF_MAX)
+    @JvmField var hash: ByteArray = ByteArray(RA_FACADE_HASH_LEN)
+    @JvmField var badgeName: ByteArray = ByteArray(RA_FACADE_BADGE_NAME_MAX)
+    @JvmField var imageUrl: ByteArray = ByteArray(RA_FACADE_URL_MAX)
+    override fun getFieldOrder(): List<String> = listOf(
+        "id", "title", "hash", "badgeName", "imageUrl",
+    )
+
+    companion object {
+        // Must match the C macros in ra_facade.h.
+        const val RA_FACADE_HASH_LEN = 33
+        const val RA_FACADE_TITLE_BUF_MAX = 256
+        const val RA_FACADE_URL_MAX = 512
+        const val RA_FACADE_BADGE_NAME_MAX = 16
+    }
 }
 
 /**

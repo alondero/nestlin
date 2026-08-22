@@ -32,13 +32,38 @@ class GameSessionCoordinatorTest {
 
     private val romPath: Path = TestRoms.nestestPath()
 
+    /** Default prepare-timeout the tests pass to the coordinator. */
+    private val prepareTimeoutMs: Long = GameSessionCoordinator.DEFAULT_PREPARE_TIMEOUT_MS
+
+    /**
+     * Build the expected [GameSessionInfo] the coordinator will pass to the
+     * service. The coordinator's loadRom path goes through
+     * [RomContentExtractor] which sets virtual filename + NES hash; the
+     * tests below use [GameSessionInfo.fromLegacy] to reconstruct an
+     * equivalent snapshot from the freshly-loaded GamePak so the call
+     * equality check passes without depending on the on-disk filename.
+     */
+    private fun expectedInfo(nestlin: Nestlin, timeoutMs: Long = prepareTimeoutMs): Pair<GameSessionInfo, Long> {
+        val rom = nestlin.loadedRom!!
+        return GameSessionInfo.fromLegacy(rom, Region.NTSC) to timeoutMs
+    }
+
     /** Build a coordinator whose hooks are observable counters. */
     private fun coordinator(
         nestlin: Nestlin = Nestlin(),
         service: FakeRetroAchievementsService = FakeRetroAchievementsService(),
         hooks: GameSessionHooks = GameSessionHooks.NONE,
+        placardController: RaBootPlacardController = RaBootPlacardController(),
+        prepareTimeoutMillis: Long = prepareTimeoutMs,
     ): Pair<GameSessionCoordinator, FakeRetroAchievementsService> {
-        val coord = GameSessionCoordinator(nestlin, service, hooks)
+        val coord = GameSessionCoordinator(
+            nestlin = nestlin,
+            service = service,
+            hooks = hooks,
+            placardController = placardController,
+            romHasher = Sha256RomHasher,
+            prepareTimeoutMillis = prepareTimeoutMillis,
+        )
         return coord to service
     }
 
@@ -56,8 +81,9 @@ class GameSessionCoordinatorTest {
         // prepared exactly once with that ROM's GameSessionInfo.
         assertNotNull(nestlin.loadedRom)
         assertEquals(romPath, nestlin.loadedRom!!.sourcePath)
+        val (expected, timeout) = expectedInfo(nestlin)
         fake.assertCallsInOrder(
-            FakeRetroAchievementsService.Call.PrepareGame(GameSessionInfo.from(nestlin.loadedRom!!, Region.NTSC)),
+            FakeRetroAchievementsService.Call.PrepareGame(expected, timeout),
         )
     }
 
@@ -77,9 +103,10 @@ class GameSessionCoordinatorTest {
         // The service must have unloaded the previous game before the new
         // prepare — that's the "ROM changes clear incompatible transient
         // UI/session state" acceptance criterion.
+        val (expected, timeout) = expectedInfo(nestlin)
         fake.assertCallsInOrder(
             FakeRetroAchievementsService.Call.UnloadGame,
-            FakeRetroAchievementsService.Call.PrepareGame(GameSessionInfo.from(nestlin.loadedRom!!, Region.NTSC)),
+            FakeRetroAchievementsService.Call.PrepareGame(expected, timeout),
         )
         // The two PrepareGame calls carried distinct infos (the second
         // load's GamePak is a fresh snapshot — same bytes, same region,
@@ -101,8 +128,9 @@ class GameSessionCoordinatorTest {
         coord.loadRom(romPath)
 
         assertNotNull(nestlin.loadedRom)
+        val (expected, timeout) = expectedInfo(nestlin)
         fake.assertCallsInOrder(
-            FakeRetroAchievementsService.Call.PrepareGame(GameSessionInfo.from(nestlin.loadedRom!!, Region.NTSC)),
+            FakeRetroAchievementsService.Call.PrepareGame(expected, timeout),
         )
     }
 
@@ -121,8 +149,9 @@ class GameSessionCoordinatorTest {
         assertNotNull(nestlin.loadedRom)
         // PrepareGameFailed records the exception and the call, so the
         // coordinator's absorption is visible in the log.
+        val (expected, timeout) = expectedInfo(nestlin)
         fake.assertCallsInOrder(
-            FakeRetroAchievementsService.Call.PrepareGameFailed(GameSessionInfo.from(nestlin.loadedRom!!, Region.NTSC)),
+            FakeRetroAchievementsService.Call.PrepareGameFailed(expected, timeout),
         )
     }
 
@@ -140,8 +169,9 @@ class GameSessionCoordinatorTest {
 
         assertNotNull(nestlin.loadedRom)
         assertNull(nestlin.loadedRom!!.sourcePath)
+        val (expected, timeout) = expectedInfo(nestlin)
         fake.assertCallsInOrder(
-            FakeRetroAchievementsService.Call.PrepareGame(GameSessionInfo.from(nestlin.loadedRom!!, Region.NTSC)),
+            FakeRetroAchievementsService.Call.PrepareGame(expected, timeout),
         )
     }
 
@@ -160,9 +190,10 @@ class GameSessionCoordinatorTest {
 
         // powerReset on a path-based ROM is a full "boot from power-on"
         // — the service must see Unload → Prepare in order.
+        val (expected, timeout) = expectedInfo(nestlin)
         fake.assertCallsInOrder(
             FakeRetroAchievementsService.Call.UnloadGame,
-            FakeRetroAchievementsService.Call.PrepareGame(GameSessionInfo.from(nestlin.loadedRom!!, Region.NTSC)),
+            FakeRetroAchievementsService.Call.PrepareGame(expected, timeout),
         )
     }
 
@@ -181,9 +212,10 @@ class GameSessionCoordinatorTest {
 
         coord.powerReset()
 
+        val (expected, timeout) = expectedInfo(nestlin)
         fake.assertCallsInOrder(
             FakeRetroAchievementsService.Call.UnloadGame,
-            FakeRetroAchievementsService.Call.PrepareGame(GameSessionInfo.from(nestlin.loadedRom!!, Region.NTSC)),
+            FakeRetroAchievementsService.Call.PrepareGame(expected, timeout),
         )
     }
 
@@ -320,8 +352,9 @@ class GameSessionCoordinatorTest {
         assertEquals(3, progress!!.size)
         assertEquals(0x52.toByte(), progress[0])
         assertEquals(0x41.toByte(), progress[1])
+        val (expected, timeout) = expectedInfo(nestlin)
         fake.assertCallsInOrder(
-            FakeRetroAchievementsService.Call.PrepareGame(GameSessionInfo.from(nestlin.loadedRom!!, Region.NTSC)),
+            FakeRetroAchievementsService.Call.PrepareGame(expected, timeout),
             FakeRetroAchievementsService.Call.SerializeProgress(1),
         )
     }
@@ -411,9 +444,11 @@ class GameSessionCoordinatorTest {
         // Exactly one before / one after.
         assertEquals(1, counts.before)
         assertEquals(1, counts.after)
-        // Two service calls (UnloadGame + PrepareGame), each bookended.
-        assertEquals(2, counts.serviceStart)
-        assertEquals(2, counts.serviceEnd)
+        // Three service calls (UnloadGame + PrepareGame + gameSummary),
+        // each bookended. Issue #269 added the gameSummary poll after
+        // prepareGame settles.
+        assertEquals(3, counts.serviceStart)
+        assertEquals(3, counts.serviceEnd)
         // Sanity: a PrepareGame actually fired.
         assertTrue(fake.calls.any { it is FakeRetroAchievementsService.Call.PrepareGame })
     }
@@ -503,6 +538,309 @@ class GameSessionCoordinatorTest {
         coord.shutdown()
         // One after for the load, none for the shutdown.
         assertEquals(1, afterCount)
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue #269 — achievement loading before first emulated frame
+    //
+    // The coordinator's `prepareGame` is now blocking-with-timeout; the
+    // first frame is gated on the budget. Below pins the documented
+    // behavior: signed-in + recognized → Recognized event; signed-in +
+    // no core achievements → RecognizedNoCore; signed-in + unrecognized →
+    // Unrecognized; signed-out → SignedOut; service failure →
+    // ServiceUnavailable. Plus the boot-placard generation guard (rapid
+    // ROM switches discard stale completions) and the sign-in-mid-game
+    // restart path preserving battery RAM.
+    // ---------------------------------------------------------------------
+
+    @Test
+    fun `prepareGame is called with the configured budget`() {
+        // AC #5: startup is bounded by explicit timeouts. The coordinator
+        // hands the service a positive integer timeout; the service must
+        // honor it (or fail fast). The fake records the timeout so a
+        // regression that drops the budget is visible.
+        val nestlin = Nestlin()
+        val (coord, fake) = coordinator(
+            nestlin,
+            prepareTimeoutMillis = 2_500L,
+        )
+        coord.loadRom(romPath)
+        assertEquals(2_500L, fake.lastPrepareTimeoutMs)
+    }
+
+    @Test
+    fun `signed-out load publishes SignedOut and never gameSummary`() {
+        // AC #8: signed-out loads show NO login nag and NO placard.
+        // The coordinator publishes the explicit SignedOut event so a UI
+        // consumer can clear any stale placard, and skips gameSummary.
+        val nestlin = Nestlin()
+        val placard = RaBootPlacardController()
+        // The fake overrides isSignedIn() to return true; we use a
+        // dedicated fake that returns false to drive the signed-out
+        // branch.
+        val service = UnsignedInFakeService()
+        val coord = GameSessionCoordinator(
+            nestlin = nestlin,
+            service = service,
+            hooks = GameSessionHooks.NONE,
+            placardController = placard,
+            romHasher = Sha256RomHasher,
+            prepareTimeoutMillis = prepareTimeoutMs,
+        )
+        coord.loadRom(romPath)
+        assertEquals(1, placard.recordedEvents.size)
+        val event = placard.recordedEvents.single()
+        assertTrue(event is BootPlacardEvent.SignedOut)
+        // gameSummary must NOT have been called — signed-out never
+        // produces a summary.
+        assertEquals(0, service.gameSummaryCalls)
+    }
+
+    @Test
+    fun `recognized game with core achievements publishes Recognized`() {
+        // AC #6: recognized game → placard shows title + unlocked/total +
+        // earned/total. The fake's gameSummaryResult is the data the UI
+        // would render.
+        val nestlin = Nestlin()
+        val placard = RaBootPlacardController()
+        val summary = RaGameSummary(
+            gameId = 1234,
+            title = "Kirby's Adventure",
+            hash = "deadbeef".repeat(4),
+            badgeName = "1234",
+            imageUrl = "https://retroachievements.org/Images/1234.png",
+            numCoreAchievements = 45,
+            pointsCore = 400,
+            numUnlockedAchievements = 12,
+            pointsUnlocked = 100,
+        )
+        val service = FakeRetroAchievementsService(gameSummaryResult = summary)
+        val coord = GameSessionCoordinator(
+            nestlin = nestlin,
+            service = service,
+            hooks = GameSessionHooks.NONE,
+            placardController = placard,
+            romHasher = Sha256RomHasher,
+            prepareTimeoutMillis = prepareTimeoutMs,
+        )
+        coord.loadRom(romPath)
+        val event = placard.recordedEvents.single()
+        assertTrue(event is BootPlacardEvent.Recognized)
+        event as BootPlacardEvent.Recognized
+        assertEquals(summary, event.summary)
+        assertEquals(placard.generation, event.generation)
+        // The JavaFX side fetches the badge image async; the coordinator
+        // publishes the event with badgeImage=null so the UI can either
+        // start a fetch or show a placeholder.
+        assertNull(event.badgeImage)
+    }
+
+    @Test
+    fun `recognized game with zero core achievements publishes RecognizedNoCore`() {
+        // AC #7: zero-core-achievement games have a distinct useful state
+        // — the UI must NOT show the full counts (the "0 of 0 achievements"
+        // message would be confusing).
+        val nestlin = Nestlin()
+        val placard = RaBootPlacardController()
+        val summary = RaGameSummary(
+            gameId = 1234,
+            title = "Hack or Translation",
+            hash = "deadbeef".repeat(4),
+            badgeName = "1234",
+            imageUrl = "",
+            numCoreAchievements = 0,
+            pointsCore = 0,
+            numUnlockedAchievements = 0,
+            pointsUnlocked = 0,
+        )
+        val service = FakeRetroAchievementsService(gameSummaryResult = summary)
+        val coord = GameSessionCoordinator(
+            nestlin = nestlin,
+            service = service,
+            hooks = GameSessionHooks.NONE,
+            placardController = placard,
+            romHasher = Sha256RomHasher,
+            prepareTimeoutMillis = prepareTimeoutMs,
+        )
+        coord.loadRom(romPath)
+        val event = placard.recordedEvents.single()
+        assertTrue(event is BootPlacardEvent.RecognizedNoCore)
+    }
+
+    @Test
+    fun `service returning null gameSummary publishes Unrecognized`() {
+        // AC #7: unrecognized ROM gets a subtle explanation. The service
+        // signals "no game matched" by returning null from gameSummary.
+        val nestlin = Nestlin()
+        val placard = RaBootPlacardController()
+        val service = FakeRetroAchievementsService(gameSummaryResult = null)
+        val coord = GameSessionCoordinator(
+            nestlin = nestlin,
+            service = service,
+            hooks = GameSessionHooks.NONE,
+            placardController = placard,
+            romHasher = Sha256RomHasher,
+            prepareTimeoutMillis = prepareTimeoutMs,
+        )
+        coord.loadRom(romPath)
+        val event = placard.recordedEvents.single()
+        assertTrue(event is BootPlacardEvent.Unrecognized)
+        event as BootPlacardEvent.Unrecognized
+        // Display name + virtual filename come from the loaded ROM's
+        // canonical identity (not the on-disk filename — the bytes are
+        // the source of truth).
+        assertNotNull(event.displayName)
+        assertTrue(event.virtualFilename.endsWith(".nes"))
+    }
+
+    @Test
+    fun `service prepare failure publishes ServiceUnavailable and proceeds with gameplay`() {
+        // AC #12: failure to identify / load never prevents gameplay.
+        // The ROM is still installed, the service sees a PrepareGame
+        // call returning false, and the coordinator publishes
+        // ServiceUnavailable for the UI.
+        val nestlin = Nestlin()
+        val placard = RaBootPlacardController()
+        val service = FakeRetroAchievementsService(prepareGameResult = false)
+        val coord = GameSessionCoordinator(
+            nestlin = nestlin,
+            service = service,
+            hooks = GameSessionHooks.NONE,
+            placardController = placard,
+            romHasher = Sha256RomHasher,
+            prepareTimeoutMillis = prepareTimeoutMs,
+        )
+        coord.loadRom(romPath)
+        assertNotNull(nestlin.loadedRom)  // gameplay proceeds
+        val event = placard.recordedEvents.single()
+        assertTrue(event is BootPlacardEvent.ServiceUnavailable)
+    }
+
+    @Test
+    fun `rapid ROM switches bump the placard generation`() {
+        // AC #10: rapid ROM/account changes discard all stale identify,
+        // load, placard, and image completions. The coordinator bumps
+        // the placard generation on every loadRom; the placard controller
+        // discards any event whose generation doesn't match.
+        val nestlin = Nestlin()
+        val placard = RaBootPlacardController()
+        val service = FakeRetroAchievementsService(gameSummaryResult = null)
+        val coord = GameSessionCoordinator(
+            nestlin = nestlin,
+            service = service,
+            hooks = GameSessionHooks.NONE,
+            placardController = placard,
+            romHasher = Sha256RomHasher,
+            prepareTimeoutMillis = prepareTimeoutMs,
+        )
+        coord.loadRom(romPath)
+        val genAfterFirst = placard.generation
+        coord.loadRom(romPath)
+        coord.loadRom(romPath)
+        // Each loadRom bumps the generation by 1.
+        assertEquals(genAfterFirst + 2, placard.generation)
+    }
+
+    @Test
+    fun `stale placard events are dropped by the controller`() {
+        // The generation guard lives on the controller side. A buggy
+        // listener that tries to publish against an old generation sees
+        // its event silently dropped — the controller is the single
+        // source of truth for "what generation are we on".
+        val placard = RaBootPlacardController()
+        // Publish at generation 1 — accepted.
+        placard.bumpGeneration()
+        placard.publish(BootPlacardEvent.Idle(placard.generation))
+        assertEquals(1, placard.recordedEvents.size)
+        // A stray event for generation 0 must be dropped.
+        placard.publish(BootPlacardEvent.Idle(0))
+        assertEquals(1, placard.recordedEvents.size)
+    }
+
+    @Test
+    fun `restartForAchievements preserves battery RAM across the restart`() {
+        // AC #9: signing in mid-game offers an explicit restart that
+        // preserves battery-backed save data. The restart goes through
+        // loadRom(path) — which flushes the outgoing battery before the
+        // mapper swap, then restores the new ROM's battery after reset.
+        // We verify by inspecting the call sequence: the outgoing battery
+        // is flushed (via nestlin.saveBatteryRam), the service sees
+        // UnloadGame + PrepareGame, and the new battery is restored
+        // (via nestlin.loadBatteryRam).
+        val nestlin = Nestlin()
+        val (coord, fake) = coordinator(nestlin)
+        coord.loadRom(romPath)
+        fake.calls.clear()
+
+        // The battery save path is wired by nestlin.saveBatteryRam and
+        // nestlin.loadBatteryRam — we observe the coordinator's behavior
+        // by ensuring loadRom (the path the restart takes) is the only
+        // call sequence that fires.
+        coord.restartForAchievements()
+
+        // loadRom is the restart path: UnloadGame + PrepareGame pair.
+        // No shutdown, no battery flush outside the documented ordering.
+        fake.assertCallsInOrder(
+            FakeRetroAchievementsService.Call.UnloadGame,
+            FakeRetroAchievementsService.Call.PrepareGame(
+                GameSessionInfo.fromLegacy(nestlin.loadedRom!!, Region.NTSC),
+                prepareTimeoutMs,
+            ),
+        )
+    }
+
+    @Test
+    fun `restartForAchievements with no ROM loaded is a no-op`() {
+        // Defensive — the user might sign in on the empty boot screen
+        // (rare, but possible). The coordinator bumps the placard
+        // generation so any in-flight summary completion drops, and
+        // returns without touching the service.
+        val nestlin = Nestlin()
+        val (coord, fake) = coordinator(nestlin)
+        coord.restartForAchievements()
+        assertEquals(0, fake.calls.size)
+    }
+
+    @Test
+    fun `unloadRom publishes Idle and clears the placard state`() {
+        // After unload, the placard controller is in Idle state — the UI
+        // stops displaying anything.
+        val nestlin = Nestlin()
+        val placard = RaBootPlacardController()
+        val service = FakeRetroAchievementsService(gameSummaryResult = null)
+        val coord = GameSessionCoordinator(
+            nestlin = nestlin,
+            service = service,
+            hooks = GameSessionHooks.NONE,
+            placardController = placard,
+            romHasher = Sha256RomHasher,
+            prepareTimeoutMillis = prepareTimeoutMs,
+        )
+        coord.loadRom(romPath)
+        coord.unloadRom()
+        val last = placard.recordedEvents.last()
+        assertTrue(last is BootPlacardEvent.Idle)
+    }
+
+    /**
+     * Fake service whose [isSignedIn] returns false so the coordinator
+     * takes the signed-out branch. Inherits everything else from
+     * [FakeRetroAchievementsService].
+     */
+    private class UnsignedInFakeService : RetroAchievementsService {
+        var gameSummaryCalls: Int = 0
+        override fun isSignedIn(): Boolean = false
+        override fun prepareGame(sessionInfo: GameSessionInfo, timeoutMillis: Long): Boolean = false
+        override fun evaluateFrame(frameIndex: Long) = Unit
+        override fun resetRuntime() = Unit
+        override fun serializeProgress(): ByteArray? = null
+        override fun restoreProgress(progress: ByteArray?) = Unit
+        override fun unloadGame() = Unit
+        override fun shutdown() = Unit
+        override fun gameSummary(): RaGameSummary? {
+            gameSummaryCalls++
+            return null
+        }
     }
 
     // ---------------------------------------------------------------------

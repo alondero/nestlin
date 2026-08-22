@@ -32,6 +32,30 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#if defined(_WIN32)
+#  include <windows.h>
+#else
+#  include <time.h>
+#endif
+
+/* Cross-platform millisecond sleep used by ra_facade_wait_for_load_settle.
+ * The rcheevos compat layer doesn't expose a sleep of its own, so we
+ * inline the platform call here. */
+static void facade_sleep_ms(int ms) {
+    if (ms <= 0) return;
+#if defined(_WIN32)
+    Sleep((DWORD)ms);
+#else
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    while (nanosleep(&ts, &ts) == -1) {
+        /* interrupted by signal — sleep the remainder */
+        if (ts.tv_sec == 0 && ts.tv_nsec == 0) break;
+    }
+#endif
+}
+
 /* -------------------------------------------------------------------------- */
 /* Build identity                                                            */
 /* -------------------------------------------------------------------------- */
@@ -737,6 +761,153 @@ RA_FACADE_EXPORT int32_t ra_facade_set_memory_reader(void* handle,
      * constant. The shim always calls back into facade->read_fn at frame
      * time, so changing the function pointer here takes effect on the
      * next rc_client_do_frame() call. */
+    return (int32_t)RA_OK;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Hash + identity (issue #269)                                              */
+/* -------------------------------------------------------------------------- */
+
+RA_FACADE_EXPORT int32_t ra_facade_hash_nes_rom(const uint8_t* rom_bytes,
+                                                int32_t rom_len,
+                                                char* out_hash) {
+    if (rom_bytes == NULL || rom_len <= 0) return (int32_t)RA_ERR_INVALID_ARG;
+    if (out_hash == NULL) return (int32_t)RA_ERR_INVALID_ARG;
+    /* rc_hash_generate_from_buffer is the same routine rc_client uses for NES
+     * games; passing the explicit RC_CONSOLE_NINTENDO keeps the hash aligned
+     * with the server-side expected value. */
+    int ok = rc_hash_generate_from_buffer(out_hash, RC_CONSOLE_NINTENDO,
+                                          rom_bytes, (size_t)rom_len);
+    if (!ok) return (int32_t)RA_ERR_INTERNAL;
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_get_user_game_summary(void* handle,
+                                                         ra_user_game_summary_t* out) {
+    if (handle == NULL || out == NULL) return (int32_t)RA_ERR_INVALID_ARG;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return (int32_t)RA_ERR_DESTROYED;
+    memset(out, 0, sizeof(*out));
+    if (rc_client_get_user_info(facade->client) == NULL) {
+        return (int32_t)RA_ERR_NOT_SIGNED_IN;
+    }
+    if (rc_client_is_game_loaded(facade->client) == 0) {
+        return (int32_t)RA_ERR_NO_GAME;
+    }
+    rc_client_user_game_summary_t summary;
+    memset(&summary, 0, sizeof(summary));
+    rc_client_get_user_game_summary(facade->client, &summary);
+    out->num_core_achievements = summary.num_core_achievements;
+    out->num_unofficial_achievements = summary.num_unofficial_achievements;
+    out->num_unlocked_achievements = summary.num_unlocked_achievements;
+    out->num_unsupported_achievements = summary.num_unsupported_achievements;
+    out->points_core = summary.points_core;
+    out->points_unlocked = summary.points_unlocked;
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_get_game_summary(void* handle,
+                                                    ra_game_summary_t* out) {
+    if (handle == NULL || out == NULL) return (int32_t)RA_ERR_INVALID_ARG;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return (int32_t)RA_ERR_DESTROYED;
+    memset(out, 0, sizeof(*out));
+    const rc_client_game_t* game = rc_client_get_game_info(facade->client);
+    if (game == NULL) return (int32_t)RA_ERR_NO_GAME;
+    out->id = game->id;
+    copy_truncated(out->title, sizeof(out->title), game->title);
+    copy_truncated(out->hash, sizeof(out->hash), game->hash);
+    copy_truncated(out->badge_name, sizeof(out->badge_name), game->badge_name);
+    if (game->badge_url != NULL) {
+        copy_truncated(out->image_url, sizeof(out->image_url), game->badge_url);
+    } else if (game->badge_name[0] != '\0') {
+        /* Fall back to the official URL helper when rcheevos hasn't populated
+         * a full URL yet (typical during IDENTIFYING/STARTING before the
+         * patchdata fetch resolves). */
+        if (rc_client_game_get_image_url(game, out->image_url,
+                                         sizeof(out->image_url)) != RC_OK) {
+            out->image_url[0] = '\0';
+        }
+    }
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_wait_for_load_settle(void* handle,
+                                                        int32_t timeout_ms,
+                                                        int32_t poll_ms,
+                                                        int32_t* out_state) {
+    if (handle == NULL) return (int32_t)RA_ERR_NULL_HANDLE;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return (int32_t)RA_ERR_DESTROYED;
+    if (poll_ms <= 0) poll_ms = 50;
+    if (timeout_ms <= 0) timeout_ms = 1000;
+    /* Spin until we see a terminal state, the deadline passes, or the façade
+     * is destroyed. We treat IDENTIFYING + STARTING as transient; READY +
+     * FAILED + ABORTED + IDLE as terminal. The HTTP bridge still runs on
+     * its own executor, so the load can complete between polls without
+     * blocking the rcheevos thread pool. */
+    int32_t elapsed = 0;
+    int32_t observed = (int32_t)RA_LOAD_STATE_IDLE;
+    while (elapsed < timeout_ms) {
+        observed = (int32_t)rc_client_get_load_game_state(facade->client);
+        switch (observed) {
+            case RC_CLIENT_LOAD_GAME_STATE_DONE:
+            case RC_CLIENT_LOAD_GAME_STATE_ABORTED:
+                if (out_state) *out_state = (int32_t)RA_LOAD_STATE_READY;
+                if (observed == RC_CLIENT_LOAD_GAME_STATE_ABORTED && out_state) {
+                    *out_state = (int32_t)RA_LOAD_STATE_ABORTED;
+                }
+                return (int32_t)RA_OK;
+            default:
+                break;
+        }
+        /* Anything that rc_client considers "no game" maps to FAILED in our
+         * flat enum; IDENTIFYING_GAME + STARTING_SESSION stay transient. */
+        if (observed == RC_CLIENT_LOAD_GAME_STATE_NONE ||
+            observed == RC_CLIENT_LOAD_GAME_STATE_AWAIT_LOGIN) {
+            /* AWAIT_LOGIN means the load is doomed (no signed-in user) and
+             * there's no point waiting — but we still drive idle() so any
+             * queued SERVER_ERROR has a chance to settle. */
+            if (observed == RC_CLIENT_LOAD_GAME_STATE_AWAIT_LOGIN) {
+                rc_client_idle(facade->client);
+                if (out_state) *out_state = (int32_t)RA_LOAD_STATE_FAILED;
+                return (int32_t)RA_OK;
+            }
+            /* NONE: load was never prepared. Treat as failure. */
+            if (out_state) *out_state = (int32_t)RA_LOAD_STATE_FAILED;
+            return (int32_t)RA_OK;
+        }
+        rc_client_idle(facade->client);
+        facade_sleep_ms(poll_ms);
+        elapsed += poll_ms;
+    }
+    /* Timed out — observed is whatever we last saw. */
+    if (out_state) *out_state = observed;
+    return (int32_t)RA_ERR_INTERNAL;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_badge_url(const char* badge_name,
+                                             char* out_url,
+                                             int32_t out_url_capacity) {
+    if (badge_name == NULL || out_url == NULL || out_url_capacity <= 0) {
+        return (int32_t)RA_ERR_INVALID_ARG;
+    }
+    memset(out_url, 0, (size_t)out_url_capacity);
+    /* rcheevos's RC_IMAGE_HOST may differ between forks; for the official
+     * server the badge path is "/Images/<badge>.png". We hard-code the
+     * documented path here so the image cache never depends on which
+     * rcheevos build the user happens to have vendored. */
+    static const char prefix[] = "https://retroachievements.org/Images/";
+    static const char suffix[] = ".png";
+    size_t prefix_len = sizeof(prefix) - 1;
+    size_t badge_len = strlen(badge_name);
+    size_t suffix_len = sizeof(suffix) - 1;
+    if (prefix_len + badge_len + suffix_len + 1 > (size_t)out_url_capacity) {
+        return (int32_t)RA_ERR_BUFFER_TOO_SMALL;
+    }
+    memcpy(out_url, prefix, prefix_len);
+    memcpy(out_url + prefix_len, badge_name, badge_len);
+    memcpy(out_url + prefix_len + badge_len, suffix, suffix_len + 1);
     return (int32_t)RA_OK;
 }
 

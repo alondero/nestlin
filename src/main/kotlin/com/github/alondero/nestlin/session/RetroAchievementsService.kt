@@ -45,21 +45,33 @@ interface RetroAchievementsService {
     fun isSignedIn(): Boolean
 
     /**
-     * Prepare the service for a new game session.
+     * Prepare the service for a new game session (issue #269).
      *
      * For the no-op this completes immediately and returns `true`. A real
      * implementation may need to identify the ROM against a remote service,
      * download achievement sets, etc. — work that can take seconds and can
-     * fail on network or auth errors.
+     * fail on network or auth errors. Real implementations MUST block until
+     * the load settles (success, failure, or the budget elapses) and return
+     * within the budget supplied by the coordinator.
      *
-     * On failure the coordinator still permits the first emulated frame; the
-     * failure surfaces as `false` (and the service stays idle) rather than as
-     * an exception. The contract is: **never throw**, always return.
+     * The contract is: **never throw**, always return. A `false` return means
+     * the prepare failed and the service is idle for this session — gameplay
+     * proceeds with no achievements (issue #269 AC #12: failure never
+     * prevents gameplay).
      *
-     * Returns `true` if the service is now actively evaluating the game,
-     * `false` if the prepare failed and the service is idle for this session.
+     * The [RomContent.hash] is always populated by the coordinator before
+     * this call, so the service never has to re-hash the bytes; the service
+     * can use [GameSessionInfo.nesHash] as the canonical RA database key.
+     *
+     * @param sessionInfo canonical ROM identity + region
+     * @param timeoutMillis upper bound on the prepare round-trip. A real
+     *   implementation must return within this budget (positive integer; the
+     *   coordinator clamps to a sensible default if zero).
+     * @return `true` if the service is now actively evaluating the game,
+     *   `false` if the prepare failed or timed out and the service is idle
+     *   for this session.
      */
-    fun prepareGame(sessionInfo: GameSessionInfo): Boolean
+    fun prepareGame(sessionInfo: GameSessionInfo, timeoutMillis: Long): Boolean
 
     /**
      * Feed one emulated frame's worth of state into the active runtime.
@@ -127,6 +139,26 @@ interface RetroAchievementsService {
      * generation guard will discard it.
      */
     fun unloadGame()
+
+    /**
+     * Snapshot the active game's title, image URL, and the signed-in user's
+     * progress against the core achievement set (issue #269 — boot placard).
+     *
+     * Returns `null` when:
+     *   - the user is not signed in (the boot placard treats this as
+     *     "no placard should be displayed" — AC #8), or
+     *   - no game is currently prepared, or
+     *   - the prepare round-trip has not yet settled on READY.
+     *
+     * Returns a populated [RaGameSummary] when the prepare round-trip has
+     * reached READY. The coordinator uses this to distinguish "ROM recognized
+     * with core achievements" (placard shows full counts) from "ROM recognized
+     * without core achievements" (placard says so clearly — AC #7) from
+     * "ROM unrecognized" (placard says so subtly — AC #7).
+     *
+     * Safe to call from any thread.
+     */
+    fun gameSummary(): RaGameSummary?
 
     /**
      * Permanent teardown: invalidate every pending callback, release client

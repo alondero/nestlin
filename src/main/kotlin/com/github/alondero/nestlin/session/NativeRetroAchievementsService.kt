@@ -71,8 +71,14 @@ internal class NativeRetroAchievementsService private constructor(
         }
     }
 
-    override fun prepareGame(sessionInfo: GameSessionInfo): Boolean {
+    override fun prepareGame(sessionInfo: GameSessionInfo, timeoutMillis: Long): Boolean {
         synchronized(prepareLock) {
+            // Issue #269: the coordinator requires a bounded round-trip so
+            // the first emulated frame is never blocked indefinitely. We
+            // pass through the timeout (with a sensible default for the
+            // legacy tests that don't supply one).
+            val budgetMs = if (timeoutMillis > 0) timeoutMillis.toInt() else DEFAULT_PREPARE_TIMEOUT_MS
+            val pollMs = DEFAULT_PREPARE_POLL_MS
             val rc = try {
                 bindings.ra_facade_prepare_game(
                     handle,
@@ -83,12 +89,73 @@ internal class NativeRetroAchievementsService private constructor(
             } catch (e: UnsatisfiedLinkError) {
                 return false
             }
-            // The C side returns RA_ERR_NOT_SIGNED_IN (-6) until #268
-            // ships login; the coordinator treats any non-OK result as
-            // "service is idle for this session". RA_OK means the request
-            // was accepted and the runtime will settle on the next idle().
-            return rc == RaStatus.OK
+            // The C side returns RA_ERR_NOT_SIGNED_IN (-6) when no user is
+            // authenticated; the coordinator treats any non-OK result as
+            // "service is idle for this session" — gameplay proceeds, no
+            // achievements. RA_OK means the request was accepted and the
+            // runtime will settle (READY / FAILED) within the budget.
+            if (rc != RaStatus.OK) return false
+            // Block on the C side until the load settles. The poll happens
+            // on the calling thread; we hold the prepareLock the entire
+            // time so the coordinator's serial prepare-game semantics are
+            // preserved. The C side polls rcheevos's load state and drives
+            // rc_client_idle() internally, so the rcheevos internal thread
+            // pool continues to drain HTTP callbacks during the wait.
+            val stateRef = com.sun.jna.ptr.IntByReference(0)
+            val settleRc = try {
+                bindings.ra_facade_wait_for_load_settle(handle, budgetMs, pollMs, stateRef)
+            } catch (e: UnsatisfiedLinkError) {
+                return false
+            }
+            // RA_OK on settle = the load settled on READY or ABORTED.
+            // RA_ERR_INTERNAL = timed out before settling. Both surface
+            // as a "not ready" answer; the coordinator treats this as
+            // "service is idle for this session" and proceeds with gameplay.
+            // The boot-placard controller checks [gameSummary] separately
+            // to decide what (if anything) to display.
+            return settleRc == RaStatus.OK && stateRef.value == RaLoadState.READY
         }
+    }
+
+    override fun gameSummary(): RaGameSummary? {
+        // The C side returns RA_ERR_NOT_SIGNED_IN when no user is logged in
+        // and RA_ERR_NO_GAME when the load hasn't reached READY. Both are
+        // expected non-error outcomes from the JNA layer's perspective —
+        // the boot placard treats them as "no placard" (AC #8).
+        val info = RaGameSummarySlot()
+        try {
+            info.write()
+            val rc = bindings.ra_facade_get_game_summary(handle, info)
+            if (rc != RaStatus.OK) return null
+            info.read()
+        } catch (e: UnsatisfiedLinkError) {
+            return null
+        }
+        val progress = RaUserGameSummary()
+        var unlocked = 0
+        var pointsUnlocked = 0
+        try {
+            progress.write()
+            val rc = bindings.ra_facade_get_user_game_summary(handle, progress)
+            if (rc == RaStatus.OK) {
+                progress.read()
+                unlocked = progress.numUnlockedAchievements
+                pointsUnlocked = progress.pointsUnlocked
+            }
+        } catch (e: UnsatisfiedLinkError) {
+            // No game loaded / no signed-in user — leave zeros.
+        }
+        return RaGameSummary(
+            gameId = info.id,
+            title = bytesToString(info.title),
+            hash = bytesToString(info.hash),
+            badgeName = bytesToString(info.badgeName),
+            imageUrl = bytesToString(info.imageUrl),
+            numCoreAchievements = progress.numCoreAchievements,
+            pointsCore = progress.pointsCore,
+            numUnlockedAchievements = unlocked,
+            pointsUnlocked = pointsUnlocked,
+        )
     }
 
     override fun evaluateFrame(frameIndex: Long) {
@@ -289,6 +356,17 @@ internal class NativeRetroAchievementsService private constructor(
 
         /** User-Agent passed to rcheevos. */
         private const val USER_AGENT = "Nestlin/1.0"
+
+        /**
+         * Default upper bound on a `prepareGame` round-trip (issue #269).
+         * RA achievement fetches typically settle in <2s on warm caches;
+         * 10s gives plenty of headroom for cold caches and slow networks
+         * while still bounding the wait before the first emulated frame.
+         */
+        const val DEFAULT_PREPARE_TIMEOUT_MS: Int = 10_000
+
+        /** Poll interval used inside the C-side wait helper. */
+        const val DEFAULT_PREPARE_POLL_MS: Int = 50
 
         // Per-instance map of native handles to JVM-side readers. The
         // pointer key is unique per facade instance, so a stale entry
