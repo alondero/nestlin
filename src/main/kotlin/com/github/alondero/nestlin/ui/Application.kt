@@ -121,6 +121,18 @@ class NestlinApplication : FrameListener, Application() {
             println("[APP] RetroAchievements service init failed: ${t.javaClass.simpleName}: ${t.message}")
             NoOpRetroAchievementsService
         }
+        // Issue #271: wire the RA progress trailer into Nestlin's save-state
+        // path. Every Nestlin.saveState() (and every per-frame rewind
+        // snapshot, since the buffer stores opaque blobs) now embeds the
+        // current runtime progress; every Nestlin.loadState() — including
+        // back-compat v4–v6 loads — resets the runtime against the
+        // restored memory through the coordinator's restoreProgress hook.
+        // The bridges live on Nestlin rather than on the Application so
+        // the file-format coupling stays in the same module as the file
+        // format itself (SaveState.kt). The coordinator is the only knob
+        // exposed to the application.
+        nestlin.raProgressCapture = SaveState.ProgressCapture { sessionCoordinator.captureProgress() }
+        nestlin.raProgressRestore = SaveState.ProgressRestore { progress -> sessionCoordinator.restoreProgress(progress) }
         GameSessionCoordinator(
             nestlin = nestlin,
             service = raService,

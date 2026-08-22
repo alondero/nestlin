@@ -10,10 +10,18 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Save-state format migration test for the v4 → v5 transition (issue: 2-player support).
+ * Save-state format migration tests for v4 → v5 (issue: 2-player support)
+ * and v6 → v7 (issue #271, RA progress trailer).
  *
  * v5 adds a `ports` sub-block recording the [InputDevice.DeviceType] of each
  * controller port. v4 files load with both ports defaulting to STANDARD_GAMEPAD.
+ *
+ * v7 appends an optional length-prefixed RetroAchievements runtime-progress
+ * trailer (issue #271). v4–v6 files load unchanged with the runtime reset
+ * against the restored emulator memory; v7+ files round-trip the progress
+ * bytes through the [SaveState.ProgressCapture] / [SaveState.ProgressRestore]
+ * callbacks. The dedicated v7 behaviour lives in
+ * [com.github.alondero.nestlin.session.SaveStateProgressTest].
  *
  * Uses the in-repo `nestest.nes` so the test is self-contained — no external ROM,
  * no Mesen2, no display. The round-trip is the cheapest proof that the new bytes
@@ -29,12 +37,12 @@ import java.nio.file.Path
 class SaveStateMigrationTest {
 
     @Test
-    fun `SaveState VERSION is 6 to record the optional 4-screen VRAM block`() {
+    fun `SaveState VERSION is 7 to record the optional RA progress trailer`() {
         // Sanity check — fails fast if someone bumps or forgets the version
         // migration. The kdoc on SaveState and the load() version branch both
-        // hinge on this constant. v6 (GH #105) adds two optional 1 KB nametables
-        // to the PPU block, written only when mirroring is FOUR_SCREEN.
-        assertThat(SaveState.VERSION, equalTo(6))
+        // hinge on this constant. v7 (issue #271) appends an optional
+        // length-prefixed RA runtime-progress block to every save.
+        assertThat(SaveState.VERSION, equalTo(7))
     }
 
     @Test

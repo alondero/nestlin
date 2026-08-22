@@ -318,11 +318,31 @@ class Nestlin {
     /** Number of frames currently retained in the rewind buffer (diagnostics/tests). */
     fun rewindBufferSize(): Int = rewindBuffer.size
 
+    /**
+     * Capture / restore seams for the optional RetroAchievements runtime
+     * progress trailer embedded in v7+ save states (issue #271). The
+     * application wires these to the
+     * [com.github.alondero.nestlin.session.GameSessionCoordinator] once
+     * that coordinator exists; the default values produce a file format
+     * identical to a save taken with no service wired (zero-length
+     * trailer), so every existing call site that ignores the bridge
+     * continues to produce and consume byte-identical saves.
+     *
+     * Both are `@Volatile` because the production setter runs on the
+     * JavaFX thread (Application.lazy sessionCoordinator block) and the
+     * reader runs on the emulation thread (capture inside the per-frame
+     * PPU frame-completion listener; restore inside the Backspace key
+     * handler).
+     */
+    @Volatile var raProgressCapture: SaveState.ProgressCapture = SaveState.ProgressCapture { null }
+
+    @Volatile var raProgressRestore: SaveState.ProgressRestore = SaveState.ProgressRestore { /* no-op */ }
+
     /** Write the current emulator state to [out]. Caller is responsible for closing. */
-    fun saveState(out: OutputStream) = SaveState.save(this, out)
+    fun saveState(out: OutputStream) = SaveState.save(this, out, raProgressCapture)
 
     /** Restore emulator state from [input]. Caller is responsible for closing. */
-    fun loadState(input: InputStream) = SaveState.load(this, input)
+    fun loadState(input: InputStream) = SaveState.load(this, input, raProgressRestore)
 
     /** Convenience overload: write save state to a file path. */
     fun saveState(path: Path) {
@@ -403,13 +423,22 @@ class Nestlin {
     /** Serialise the current state into a savestate blob — used by [RewindStateMachine.saveState]. */
     private fun saveCurrentStateToBytes(): ByteArray {
         val out = java.io.ByteArrayOutputStream()
-        SaveState.save(this, out)
+        // Issue #271: thread the configured RA progress bridge into every
+        // rewind snapshot. Without this, every per-frame rewind capture
+        // would produce a zero-length trailer (the SaveState default) and
+        // the runtime progress would never ride alongside the snapshot —
+        // defeating the central property the issue requires.
+        SaveState.save(this, out, raProgressCapture)
         return out.toByteArray()
     }
 
     /** Restore from a savestate blob — used by [RewindStateMachine.loadState]. */
     private fun loadCurrentStateFromBytes(bytes: ByteArray) {
-        SaveState.load(this, java.io.ByteArrayInputStream(bytes))
+        // Issue #271: pair counterpart to saveCurrentStateToBytes. The
+        // rewind loader routes through the same restore callback as the
+        // public loadState, so the runtime timeline stays in sync with
+        // the emulator timeline on every scrub step.
+        SaveState.load(this, java.io.ByteArrayInputStream(bytes), raProgressRestore)
     }
 
     /**

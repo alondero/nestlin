@@ -159,12 +159,17 @@ class SaveStateTest {
         runCpuSteps(nes, 500)
         val bytes = snapshot(nes).copyOf()
 
-        // The per-mapper version byte is the LAST byte of the file: for a
-        // mapper with no other state (Mapper0), saveState writes only the
-        // version stamp and nothing else.
-        val versionByteOffset = bytes.size - 1
+        // The mapper version byte lives at the end of the mapper block,
+        // which is itself preceded by a 4-byte length prefix and (for v7+)
+        // followed by a 4-byte RA trailer length prefix. For Mapper0 the
+        // mapper block is exactly one byte (the version stamp), so with
+        // the default zero-length RA trailer the version byte is at
+        // bytes.size - 5. With a non-empty trailer it would be
+        // bytes.size - 5 - trailerBodyLen. We assert against the zero-length
+        // trailer case here because that's what this test fixture produces.
+        val versionByteOffset = bytes.size - 5
         assertThat(
-            "Sanity check: the final byte should be the per-mapper version (1)",
+            "Sanity check: the byte before the RA trailer length prefix should be the per-mapper version (1)",
             bytes[versionByteOffset].toInt() and 0xFF,
             equalTo(1)
         )
