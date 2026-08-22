@@ -62,6 +62,17 @@ class RaNotificationController(
     val systemErrorDurationMillis: Long = DEFAULT_SYSTEM_ERROR_MS,
 ) {
 
+    // All mutating methods + visibleAt use this monitor. The controller is
+    // cross-thread: the native service's event drain (issue #270) calls
+    // publishUnlock / publishSystem on the emulation thread, and the
+    // JavaFX render pump calls visibleAt on the JavaFX Application Thread.
+    // `ArrayDeque` is not thread-safe and a torn (system,
+    // systemPublishedAtMillis) pair would let backdated system messages
+    // leak — see the comment on `systemPublishedAtMillis` below. The
+    // monitor makes every read+write atomic without forcing one thread
+    // to a particular scheduling pattern.
+    private val lock = Any()
+
     private val unlocks: ArrayDeque<UnlockNotification> = ArrayDeque()
     private var system: SystemNotification? = null
     // Tracks when the current system message was published, so visibleAt
@@ -77,18 +88,18 @@ class RaNotificationController(
      * overlay is already empty.
      */
     val hasPending: Boolean
-        get() = unlocks.isNotEmpty() || system != null
+        get() = synchronized(lock) { unlocks.isNotEmpty() || system != null }
 
     /**
      * Snapshot of the unlock backlog for diagnostics + tests. The list is a
      * copy — mutating it does not affect the controller.
      */
     val pendingUnlocks: List<UnlockNotification>
-        get() = unlocks.toList()
+        get() = synchronized(lock) { unlocks.toList() }
 
     /** Snapshot of the system slot (or null). */
     val currentSystem: SystemNotification?
-        get() = system
+        get() = synchronized(lock) { system }
 
     /**
      * Queue an unlock notification. Does NOT take effect on [visibleAt] until
@@ -102,7 +113,7 @@ class RaNotificationController(
         points: Int,
         badgeUrl: String,
         nowMillis: Long,
-    ): UnlockNotification {
+    ): UnlockNotification = synchronized(lock) {
         // Each unlock gets its own full 5 s window. Three unlocks fired
         // at the same instant would all have displayUntilMillis = nowMillis +
         // 5_000 and only the head would ever be visible; instead, we
@@ -124,7 +135,7 @@ class RaNotificationController(
             displayUntilMillis = newExpiry,
         )
         unlocks.addLast(n)
-        return n
+        n
     }
 
     /**
@@ -136,7 +147,7 @@ class RaNotificationController(
         severity: SystemSeverity,
         message: String,
         nowMillis: Long,
-    ): SystemNotification {
+    ): SystemNotification = synchronized(lock) {
         val duration = when (severity) {
             SystemSeverity.INFO -> systemInfoDurationMillis
             SystemSeverity.ERROR -> systemErrorDurationMillis
@@ -148,7 +159,7 @@ class RaNotificationController(
         )
         system = n
         systemPublishedAtMillis = nowMillis
-        return n
+        n
     }
 
     /**
@@ -163,7 +174,7 @@ class RaNotificationController(
      * read. This keeps [pendingUnlocks] in sync with what [visibleAt] would
      * return on a follow-up call.
      */
-    fun visibleAt(nowMillis: Long): RaNotification? {
+    fun visibleAt(nowMillis: Long): RaNotification? = synchronized(lock) {
         val s = system
         if (s != null) {
             // Two conditions: nowMillis is at-or-after the system message's
@@ -174,7 +185,7 @@ class RaNotificationController(
             } else if (nowMillis >= s.displayUntilMillis) {
                 system = null
             } else {
-                return s
+                return@synchronized s
             }
         }
         while (unlocks.isNotEmpty()) {
@@ -182,10 +193,10 @@ class RaNotificationController(
             if (nowMillis >= head.displayUntilMillis) {
                 unlocks.pollFirst()
             } else {
-                return head
+                return@synchronized head
             }
         }
-        return null
+        null
     }
 
     /**
@@ -200,7 +211,7 @@ class RaNotificationController(
      * message no longer describes the user's reality. The next DISCONNECTED /
      * RECONNECTED event from the new game repopulates the slot.
      */
-    fun markRomChange() {
+    fun markRomChange() = synchronized(lock) {
         unlocks.clear()
         system = null
         systemPublishedAtMillis = 0L
@@ -211,7 +222,7 @@ class RaNotificationController(
      * banner). Unlock queue is untouched. Not part of the issue's required
      * AC; exposed for the future "dismiss banner" affordance.
      */
-    fun clearSystem() {
+    fun clearSystem() = synchronized(lock) {
         system = null
         systemPublishedAtMillis = 0L
     }
@@ -220,7 +231,7 @@ class RaNotificationController(
      * Drop only the unlock queue. System slot is untouched. Useful for the
      * "clear all toasts" menu action without losing the offline indicator.
      */
-    fun clearUnlocks() {
+    fun clearUnlocks() = synchronized(lock) {
         unlocks.clear()
     }
 

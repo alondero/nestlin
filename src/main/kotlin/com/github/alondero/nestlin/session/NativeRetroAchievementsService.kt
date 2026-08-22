@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.session
 
+import com.github.alondero.nestlin.Memory
 import com.sun.jna.Pointer
 
 /**
@@ -626,7 +627,7 @@ internal class NativeRetroAchievementsService private constructor(
  *
  * Tests against this helper are in `MemoryPeekRaReaderTest`.
  */
-internal fun peekReader(memory: com.github.alondero.nestlin.Memory): RaReadMemoryFn =
+internal fun peekReader(memory: Memory): RaReadMemoryFn =
     RaReadMemoryFn { address, buffer, numBytes ->
         if (address < 0 || address > 0xFFFF) return@RaReadMemoryFn 0
         if (numBytes <= 0) return@RaReadMemoryFn 0

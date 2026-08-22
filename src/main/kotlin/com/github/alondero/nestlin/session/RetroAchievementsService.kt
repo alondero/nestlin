@@ -102,14 +102,17 @@ interface RetroAchievementsService {
      * to rcheevos. The native client overrides this to push the
      * [RaReadMemoryFn] into the façade's `ra_facade_set_memory_reader`.
      *
-     * Side-effect-free reads (issue #270 AC): the function MUST NOT mutate
-     * PPU/APU/controller/mapper/bus state. Implementations call
-     * `Memory.peek(address)` rather than `Memory.get(address)`.
+     * Side-effect-free reads (issue #270 AC): the reader MUST NOT mutate
+     * PPU/APU/controller/mapper/bus state. The coordinator's wrapping
+     * [peekReader] reads through `Memory.peek(address)` rather than
+     * `Memory.get(address)` so PPU vblank flags, controller shift
+     * registers, APU IRQ latches, and the open-bus data latch are
+     * all left intact.
      *
      * Bounds-safe (issue #270 AC): addresses outside `[0x0000, 0xFFFF]`
      * and read counts `<= 0` return 0; requests for more bytes than the
      * destination buffer can hold are clamped to the buffer size. The
-     * coordinator's wrapping `peekReader` already enforces both.
+     * coordinator's wrapping `peekReader` enforces both.
      */
     fun installMemoryReader(reader: RaReadMemoryFn) { /* default no-op */ }
 
