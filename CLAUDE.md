@@ -66,6 +66,22 @@ java -jar build/libs/nestlin-all.jar replay rom.nes bug.fm2 --frame N  # capture
 java -jar build/libs/nestlin-all.jar replay rom.nes bug.fm2 \
     --expect-state <sha> --expect-frame <sha>                          # verify: exit 0 match / 1 mismatch
 # Exit codes: 0 ok/match · 1 hash mismatch · 2 usage/checksum · 3 emulator threw mid-replay.
+
+# Native RA smoke (issue #273 AC: each release platform runs a native
+# smoke test). Loads the bundled native library + MANIFEST.json,
+# exercises client lifetime / version / NES hashing / mock login /
+# memory / events / progress / callback teardown. No network access;
+# safe to run on an air-gapped CI machine.
+java -jar build/libs/nestlin-all.jar nra-smoke [--rom rom.nes]
+# Exit codes: 0 all steps PASS · 1 any step FAIL · 3 native library missing.
+# Gradle wrapper: ./gradlew nraSmoke [-Prom=rom.nes]
+
+# RA performance benchmark (issue #273 AC: p95 evaluation latency
+# under 1 ms; no observable audio underruns). Boots a ROM headless,
+# ticks N frames through the production per-frame evaluateFrame
+# path, and reports p95 / fps / silent-reads. Exits 1 if p95 >= 1 ms.
+java -jar build/libs/nestlin-all.jar ra-bench --rom src/test/resources/nestest.nes
+# Gradle wrapper: ./gradlew raBench -Prom=src/test/resources/nestest.nes [-Pframes=1000] [-Pwarmup=120]
 ```
 
 **Requirements:** JDK 21 (Gradle toolchain pinned in `build.gradle.kts`), Kotlin 1.9.22, JavaFX 21.0.1.

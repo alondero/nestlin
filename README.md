@@ -21,6 +21,7 @@ A Nintendo Entertainment System emulator written in Kotlin. Personal learning pr
 - **Input** — configurable keyboard and gamepad (via JInput); default keymap written to `~/.config/nestlin/input.json` on first run.
 - **Display** — 1×/2×/3×/4× integer scale, Fit-to-window, fullscreen, nearest-neighbour pixel scaling.
 - **Quality-of-life** — hold-Tab fast-forward, hold-Backspace rewind, pause, speed-throttle toggle, screenshot capture, recent-ROMs menu.
+- **RetroAchievements** (optional, **softcore-only**) — sign in, ROM recognition, achievements window, unlock notifications, save-state progress sync. Native capability via vendored rcheevos v12.4.0 + a small C façade + JNA. Disabled in hardcore, leaderboards, unofficial achievement sets, and authoring. No-network default. See [`RA_INTEGRATION.md`](RA_INTEGRATION.md) for design and [`docs/MANUAL_RA_ACCEPTANCE.md`](docs/MANUAL_RA_ACCEPTANCE.md) for the per-OS manual acceptance script.
 
 ---
 

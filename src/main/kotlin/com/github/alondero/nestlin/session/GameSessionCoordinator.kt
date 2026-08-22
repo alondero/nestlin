@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.session
 
 import com.github.alondero.nestlin.Nestlin
+import com.github.alondero.nestlin.util.Redactor
 import java.nio.file.Path
 
 /**
@@ -310,8 +311,13 @@ class GameSessionCoordinator(
             service.evaluateFrame(idx)
         } catch (t: Throwable) {
             // Defensive: a service-side bug must not propagate into the
-            // emulation thread's frame-completion listener.
-            System.err.println("[GAME-SESSION] evaluateFrame threw ${t.javaClass.simpleName}: ${t.message}")
+            // emulation thread's frame-completion listener. The message
+            // is run through the Redactor so a misbehaving service that
+            // echoes credentials / tokens in its exception can't leak.
+            System.err.println(
+                "[GAME-SESSION] evaluateFrame threw ${t.javaClass.simpleName}: " +
+                    Redactor.redactMessage(t.message)
+            )
         }
     }
 
@@ -570,7 +576,13 @@ class GameSessionCoordinator(
             try {
                 service.prepareGame(info, prepareTimeoutMillis)
             } catch (t: Throwable) {
-                System.err.println("[GAME-SESSION] prepareGame threw ${t.javaClass.simpleName}: ${t.message}")
+                // Route exception message through Redactor so a misbehaving
+                // service that echoes credentials / tokens can't leak via
+                // its own exception message (issue #273 AC).
+                System.err.println(
+                    "[GAME-SESSION] prepareGame threw ${t.javaClass.simpleName}: " +
+                        Redactor.redactMessage(t.message)
+                )
                 false
             }
         }

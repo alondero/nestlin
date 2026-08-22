@@ -140,4 +140,39 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $libPath)) {
 
 $libSize = (Get-Item $libPath).Length
 Write-Host "[BUILD-NATIVE-RA] Built: $libPath ($libSize bytes)" -ForegroundColor Green
+
+# Emit a per-platform manifest fragment (issue #273 AC: runtime validates
+# checksum + pinned rcheevos version). The Gradle :buildNative task picks
+# up this file alongside the .dll / .so / .dylib and merges the per-platform
+# fragments into a single MANIFEST.json that ships in the runnable JAR.
+#
+# Fields:
+#   platformId      - the canonical id RaManifest.currentPlatformId() emits
+#   libraryFilename - the file JNA resolves at Native.load time
+#   resourcePath    - the JAR-relative slash path
+#   sha256Hex       - lowercase 64-char hex digest of the library bytes
+#   sizeBytes       - library size in bytes (cheap pre-check vs. corruption)
+$platformId = if ($isWindows) { "windows-x86_64" }
+              elseif ($isMac) { "macos-universal" }
+              else { "linux-x86_64" }
+$resourcePath = "native-ra/" + ($libName -replace '^libr','') -replace '\.(dll|so|dylib)$',''
+$resourcePath = "native-ra/" + (if ($isWindows) { "windows" } elseif ($isMac) { "macos" } else { "linux" }) + "/" + $libName
+$sha256 = (Get-FileHash -Path $libPath -Algorithm SHA256).Hash.ToLower()
+$manifestPath = Join-Path $OutputDir 'MANIFEST.fragment.json'
+$fragment = @"
+{
+  "platforms": [
+    {
+      "platformId": "$platformId",
+      "libraryFilename": "$libName",
+      "resourcePath": "$resourcePath",
+      "sha256Hex": "$sha256",
+      "sizeBytes": $libSize
+    }
+  ]
+}
+"@
+Set-Content -Path $manifestPath -Value $fragment -Encoding UTF8
+Write-Host "[BUILD-NATIVE-RA] Wrote manifest fragment: $manifestPath"
+
 exit 0

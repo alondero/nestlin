@@ -164,6 +164,108 @@ val copyNativeRa = tasks.register("copyNativeRa") {
     }
 }
 
+// Aggregate the per-platform MANIFEST.fragment.json files emitted by the
+// build scripts into a single MANIFEST.json that ships in the runnable
+// JAR. The runtime loader (RaManifest) reads this file to validate the
+// bundled library's SHA-256 + pinned rcheevos / façade versions before
+// handing the binding to JNA. Without this task, the loader would see
+// `MANIFEST_MISSING` and fall back to NoOp.
+//
+// A CI matrix that runs :buildNative on Windows + Linux + macOS produces
+// three fragments which this task merges. A local single-host build
+// produces one fragment; the merged file still satisfies the loader
+// (the loader only needs the entry for the current OS+arch).
+val writeNativeRaManifest = tasks.register("writeNativeRaManifest") {
+    group = "build"
+    description = "Aggregates per-platform MANIFEST.fragment.json into a single MANIFEST.json in resources"
+    dependsOn("buildNative")
+    val manifestOut = layout.buildDirectory.file("resources/main/native-ra/MANIFEST.json")
+    outputs.file(manifestOut)
+    doLast {
+        val fragments = mutableListOf<java.io.File>()
+        // Walk every host subdir under build/native-ra/ for a fragment file.
+        val nativeRaRoot = layout.buildDirectory.dir("native-ra").get().asFile
+        if (!nativeRaRoot.exists()) {
+            logger.warn("[writeNativeRaManifest] No native-ra build dir at $nativeRaRoot; " +
+                "skipping (RaManifest will report MANIFEST_MISSING at runtime).")
+            return@doLast
+        }
+        nativeRaRoot.listFiles()?.forEach { hostDir ->
+            if (hostDir.isDirectory) {
+                val frag = hostDir.resolve("MANIFEST.fragment.json")
+                if (frag.exists()) fragments += frag
+            }
+        }
+        if (fragments.isEmpty()) {
+            logger.warn("[writeNativeRaManifest] No MANIFEST.fragment.json files found under $nativeRaRoot; " +
+                "skipping. (Older build scripts may not emit fragments; rebuild with the latest tools/build-native-ra.*)")
+            return@doLast
+        }
+        val merged = mergeFragments(fragments)
+        val dst = manifestOut.get().asFile
+        dst.parentFile.mkdirs()
+        dst.writeText(merged)
+        logger.lifecycle("[writeNativeRaManifest] Wrote $dst (${fragments.size} platform(s))")
+    }
+}
+
+/**
+ * Merge per-platform MANIFEST.fragment.json files into a single JSON
+ * object whose schema is what RaManifest parses. The fragments each
+ * have a `platforms: [...]` array; the merged result concatenates the
+ * arrays, dedupes by `platformId`, and pins the rcheevos / façade
+ * version to the value from the C source (currently embedded in
+ * ra_facade.c — see RC_FACADE_VERSION_STRING and the literal in
+ * ra_facade_rcheevos_version()).
+ *
+ * Implemented in plain Kotlin so the build script stays self-contained
+ * (no jq / node dependency on PATH).
+ */
+fun mergeFragments(fragments: List<java.io.File>): String {
+    val entries = LinkedHashMap<String, String>()  // platformId -> JSON object
+    fragments.forEach { frag ->
+        val text = frag.readText()
+        // Crude but robust: find "platforms": [ ... ] and extract the inner array.
+        val key = "\"platforms\""
+        val keyIdx = text.indexOf(key)
+        if (keyIdx < 0) return@forEach
+        val arrStart = text.indexOf('[', keyIdx)
+        if (arrStart < 0) return@forEach
+        // Walk to the matching closing bracket (single level — no nested arrays in our entries).
+        var depth = 0
+        var arrEnd = -1
+        for (i in arrStart until text.length) {
+            when (text[i]) {
+                '[' -> depth++
+                ']' -> { depth--; if (depth == 0) { arrEnd = i; break } }
+            }
+        }
+        if (arrEnd < 0) return@forEach
+        val arr = text.substring(arrStart + 1, arrEnd).trim()
+        if (arr.isEmpty()) return@forEach
+        // Split on top-level `}, {` boundaries.
+        arr.split("},{").forEach { entry ->
+            val fixed = entry.trim().removePrefix("{").removeSuffix("}").trim()
+            val idMatch = Regex("\"platformId\"\\s*:\\s*\"([^\"]+)\"").find(fixed)
+            val id = idMatch?.groupValues?.get(1) ?: return@forEach
+            entries[id] = "{${fixed}}"
+        }
+    }
+    val merged = entries.values.joinToString(",\n    ")
+    return """{
+  "schemaVersion": 1,
+  "rcheevosVersion": "12.4.0",
+  "facadeVersion": "1.0.0",
+  "platforms": [
+    $merged
+  ]
+}"""
+}
+
+tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
+    dependsOn(copyNativeRa, writeNativeRaManifest)
+}
+
 // Wire the native lib into the runnable JAR. `:shadowJar` is the canonical
 // "build a redistributable" task; users who want the JAR to carry the
 // native library chain `:buildNative → :copyNativeRa → :shadowJar`. The
@@ -236,7 +338,7 @@ tasks.test {
 tasks.register<Test>("testNativeRa") {
     group = "verification"
     description = "Runs native RetroAchievements contract tests (loads rcheevos_facade via JNA)"
-    dependsOn("buildNative")
+    dependsOn("buildNative", "writeNativeRaManifest")
     useJUnitPlatform {
         includeTags("nativeRa")
     }
@@ -328,6 +430,51 @@ tasks.register<JavaExec>("diverge") {
     val mesen2Path = System.getenv("MESEN2_PATH")
     if (mesen2Path != null) {
         environment("MESEN2_PATH", mesen2Path)
+    }
+}
+
+// RA performance benchmark (issue #273 AC: "A repeatable benchmark
+// uses a real-sized achievement set and records p95 evaluation latency
+// and audio health"). Boots a ROM headless, ticks N frames through
+// the production per-frame evaluateFrame path, and prints the p95 +
+// throughput + silent-reads count.
+//
+// Usage: ./gradlew raBench -Prom=src/test/resources/nestest.nes [-Pframes=1000] [-Pwarmup=120]
+tasks.register<JavaExec>("raBench") {
+    group = "verification"
+    description = "Runs the RA performance benchmark against a ROM (use -Prom=, optional -Pframes=, -Pwarmup=)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.cli.RaBenchKt")
+
+    // Args are evaluated lazily at execution time via doFirst so a
+    // missing -Prom= errors with a usage message instead of failing
+    // task configuration.
+    doFirst {
+        val rom = project.findProperty("rom") as String?
+            ?: throw GradleException("Missing -Prom=<path-to-rom>. Usage: ./gradlew raBench -Prom=rom.nes [-Pframes=1000] [-Pwarmup=120]")
+        val frames = project.findProperty("frames") as String?
+        val warmup = project.findProperty("warmup") as String?
+        args = buildList {
+            add("--rom"); add(rom)
+            if (frames != null) { add("--frames"); add(frames) }
+            if (warmup != null) { add("--warmup"); add(warmup) }
+        }
+    }
+}
+
+// Native RA smoke runner (issue #273 AC: "Each release platform runs
+// a native smoke test"). Boots no ROM; just exercises the C façade.
+//
+// Usage: ./gradlew nraSmoke [-Prom=path/to/rom.nes]
+tasks.register<JavaExec>("nraSmoke") {
+    group = "verification"
+    description = "Runs the native RetroAchievements smoke runner (optional -Prom=)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.cli.NativeRaSmokeKt")
+
+    val rom = project.findProperty("rom") as String?
+    args = buildList {
+        if (rom != null) { add("--rom"); add(rom) }
     }
 }
 

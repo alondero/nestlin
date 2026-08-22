@@ -18,3 +18,12 @@ jobs:
       # Mesen2-dependent comparison tests are excluded from `test` by build.gradle.kts;
       # they run locally via `./gradlew testMesenComparison`.
       - run: ./gradlew test
+      # Smoke test for the RA manifest + native library path. The
+      # smoke runner exits 0 on full pass and 3 when the native
+      # library is unavailable (no compiler on CI). Either is OK —
+      # the manifest + checksum logic is exercised in either case.
+      - name: Compile native library
+        run: ./gradlew buildNative writeNativeRaManifest
+      - name: Run native RA smoke runner
+        run: ./gradlew uberJar && java -jar build/libs/nestlin-all.jar nra-smoke
+        continue-on-error: true

@@ -236,25 +236,123 @@ internal interface RaFacadeBindings : Library {
          * `native-ra/<platform>/`, (2) the java.library.path system
          * property (set by Gradle's JavaExec from the build/native-ra
          * directory), (3) the standard OS library search path.
+         *
+         * ## Integrity + version validation (issue #273)
+         *
+         * Before JNA touches the library, [RaManifest.loadForCurrentPlatform]
+         * verifies:
+         *
+         *   1. The manifest JSON is bundled in the JAR.
+         *   2. A manifest entry exists for the current OS+arch.
+         *   3. The library file is present in the JAR.
+         *   4. The library size matches the manifest.
+         *   5. The library SHA-256 matches the manifest.
+         *
+         * After JNA loads the library, this method also verifies:
+         *
+         *   6. `ra_facade_rcheevos_version()` matches the manifest's pinned
+         *      rcheevos version.
+         *   7. `ra_facade_version()` matches the manifest's pinned façade
+         *      version.
+         *
+         * Any failure produces a one-line stderr diagnostic via
+         * [logFailure] and returns null. The factory then falls back to
+         * [NoOpRetroAchievementsService]. Credentials / tokens are never
+         * part of any diagnostic — the failure messages name only the
+         * platform, the file path, and the version strings.
          */
         fun load(): RaFacadeBindings? {
-            return try {
-                val lib = Native.load("rcheevos_facade", RaFacadeBindings::class.java)
-                lib
-            } catch (e: UnsatisfiedLinkError) {
-                // Library not on the path or failed to load. Logged at
-                // the call site (NativeRetroAchievementsService.tryLoad)
-                // so the diagnostic reaches stderr exactly once.
-                null
-            } catch (e: ExceptionInInitializerError) {
-                // Static initializer in the native library threw — usually
-                // a version skew (rcheevos expects a newer libc, etc.).
-                null
-            } catch (e: Throwable) {
-                // Defensive: any other JNA failure (corrupt .so, missing
-                // symbol, etc.) also falls back to NoOp.
-                null
+            // Pre-flight 1-5: manifest check (no JNA call yet).
+            val preflight = RaManifest.loadForCurrentPlatform()
+            if (preflight is RaManifest.LoadResult.Failure) {
+                logFailure(preflight)
+                return null
             }
+            val success = preflight as RaManifest.LoadResult.Success
+
+            // JNA load — may throw UnsatisfiedLinkError, ExceptionInInitializerError,
+            // or other Throwable. All are normalised to null + structured log.
+            val lib: RaFacadeBindings = try {
+                Native.load("rcheevos_facade", RaFacadeBindings::class.java)
+                    ?: return logFailureAndReturnNull(
+                        RaManifest.LoadResult.Failure(
+                            reason = RaManifest.LoadResult.Reason.NATIVE_LOAD_FAILED,
+                            message = "JNA returned null binding for rcheevos_facade on ${success.entry.platformId}.",
+                        )
+                    )
+            } catch (e: UnsatisfiedLinkError) {
+                return logFailureAndReturnNull(
+                    RaManifest.LoadResult.Failure(
+                        reason = RaManifest.LoadResult.Reason.NATIVE_LOAD_FAILED,
+                        message = "UnsatisfiedLinkError loading rcheevos_facade on ${success.entry.platformId}: ${e.message}",
+                    )
+                )
+            } catch (e: ExceptionInInitializerError) {
+                return logFailureAndReturnNull(
+                    RaManifest.LoadResult.Failure(
+                        reason = RaManifest.LoadResult.Reason.NATIVE_LOAD_FAILED,
+                        message = "Native library static initializer failed on ${success.entry.platformId}: " +
+                            "${e.exception?.javaClass?.simpleName}: ${e.exception?.message}",
+                    )
+                )
+            } catch (e: Throwable) {
+                return logFailureAndReturnNull(
+                    RaManifest.LoadResult.Failure(
+                        reason = RaManifest.LoadResult.Reason.NATIVE_LOAD_FAILED,
+                        message = "Unexpected load failure on ${success.entry.platformId}: " +
+                            "${e.javaClass.simpleName}: ${e.message}",
+                    )
+                )
+            }
+
+            // Post-flight 6-7: version pinning via the library's own
+            // exported symbols. A library whose checksum matched but
+            // whose embedded version string disagrees with the manifest
+            // is treated as "wrong library entirely" — the SHA covers
+            // bytes, the version pin covers semantics.
+            val expectedRcheevosVersion = RaManifest.loadManifest()?.rcheevosVersion
+            val expectedFacadeVersion = RaManifest.loadManifest()?.facadeVersion
+            val actualRcheevosVersion = try { lib.ra_facade_rcheevos_version() } catch (e: Throwable) { null }
+            val actualFacadeVersion = try { lib.ra_facade_version() } catch (e: Throwable) { null }
+
+            if (expectedRcheevosVersion != null && actualRcheevosVersion != null &&
+                actualRcheevosVersion != expectedRcheevosVersion) {
+                return logFailureAndReturnNull(
+                    RaManifest.LoadResult.Failure(
+                        reason = RaManifest.LoadResult.Reason.RCHEEVOS_VERSION_MISMATCH,
+                        message = "rcheevos version mismatch: expected $expectedRcheevosVersion, " +
+                            "library reports $actualRcheevosVersion.",
+                    )
+                )
+            }
+            if (expectedFacadeVersion != null && actualFacadeVersion != null &&
+                actualFacadeVersion != expectedFacadeVersion) {
+                return logFailureAndReturnNull(
+                    RaManifest.LoadResult.Failure(
+                        reason = RaManifest.LoadResult.Reason.FACADE_VERSION_MISMATCH,
+                        message = "Façade version mismatch: expected $expectedFacadeVersion, " +
+                            "library reports $actualFacadeVersion.",
+                    )
+                )
+            }
+
+            return lib
+        }
+
+        /**
+         * Log a [LoadResult.Failure] to stderr. The single-line format
+         * is the contract the [RetroAchievementsServiceFactory] and the
+         * JavaFX menu's availability indicator both rely on — see
+         * [RetroAchievementsServiceFactory.create] for the call site
+         * that translates "load returned null" into "fall back to NoOp".
+         */
+        private fun logFailure(failure: RaManifest.LoadResult.Failure) {
+            System.err.println("[RA] Native library unavailable — ${failure.reason}: ${failure.message}")
+        }
+
+        private fun logFailureAndReturnNull(failure: RaManifest.LoadResult.Failure): RaFacadeBindings? {
+            logFailure(failure)
+            return null
         }
     }
 }

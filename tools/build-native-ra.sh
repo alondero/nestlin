@@ -150,4 +150,31 @@ fi
 
 LIB_SIZE=$(stat -c %s "$LIB_PATH" 2>/dev/null || stat -f %z "$LIB_PATH" 2>/dev/null || echo "?")
 echo "[BUILD-NATIVE-RA] Built: $LIB_PATH ($LIB_SIZE bytes)"
+
+# Emit a per-platform manifest fragment (issue #273 AC: runtime validates
+# checksum + pinned rcheevos version). The Gradle :buildNative task picks
+# up this file alongside the .so / .dylib and merges the per-platform
+# fragments into a single MANIFEST.json that ships in the runnable JAR.
+case "$HOST" in
+    macos)   PLATFORM_ID="macos-universal";   RESOURCE_DIR="macos" ;;
+    linux)   PLATFORM_ID="linux-x86_64";       RESOURCE_DIR="linux" ;;
+    *)       echo "Unsupported host: $HOST" >&2; exit 1 ;;
+esac
+SHA256=$(sha256sum "$LIB_PATH" 2>/dev/null | awk '{print $1}')
+MANIFEST_PATH="$OUT_DIR/MANIFEST.fragment.json"
+cat > "$MANIFEST_PATH" <<EOF
+{
+  "platforms": [
+    {
+      "platformId": "$PLATFORM_ID",
+      "libraryFilename": "$LIB_NAME",
+      "resourcePath": "native-ra/$RESOURCE_DIR/$LIB_NAME",
+      "sha256Hex": "$SHA256",
+      "sizeBytes": $LIB_SIZE
+    }
+  ]
+}
+EOF
+echo "[BUILD-NATIVE-RA] Wrote manifest fragment: $MANIFEST_PATH"
+
 exit 0
