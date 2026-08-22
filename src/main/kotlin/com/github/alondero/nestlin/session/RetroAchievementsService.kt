@@ -93,6 +93,30 @@ interface RetroAchievementsService {
     fun evaluateFrame(frameIndex: Long)
 
     /**
+     * Install the function rcheevos will call to read emulated memory
+     * (issue #270). Called once per `prepareGame` so the runtime can
+     * evaluate trigger / measured conditions against live Nestlin state.
+     *
+     * The default no-op is correct for [NoOpRetroAchievementsService]
+     * (no runtime = no reads needed) and any service that doesn't talk
+     * to rcheevos. The native client overrides this to push the
+     * [RaReadMemoryFn] into the façade's `ra_facade_set_memory_reader`.
+     *
+     * Side-effect-free reads (issue #270 AC): the reader MUST NOT mutate
+     * PPU/APU/controller/mapper/bus state. The coordinator's wrapping
+     * [peekReader] reads through `Memory.peek(address)` rather than
+     * `Memory.get(address)` so PPU vblank flags, controller shift
+     * registers, APU IRQ latches, and the open-bus data latch are
+     * all left intact.
+     *
+     * Bounds-safe (issue #270 AC): addresses outside `[0x0000, 0xFFFF]`
+     * and read counts `<= 0` return 0; requests for more bytes than the
+     * destination buffer can hold are clamped to the buffer size. The
+     * coordinator's wrapping `peekReader` enforces both.
+     */
+    fun installMemoryReader(reader: RaReadMemoryFn) { /* default no-op */ }
+
+    /**
      * Reset the active runtime. No-op if no game is currently prepared.
      *
      * Called by [GameSessionCoordinator] on power and soft reset, matching

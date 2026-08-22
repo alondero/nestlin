@@ -213,7 +213,7 @@ internal interface RaFacadeBindings : Library {
  * (set by `evaluate_frame` before the native call returns). See
  * `NativeRetroAchievementsService.currentHandle`.
  */
-internal fun interface RaReadMemoryFn {
+fun interface RaReadMemoryFn {
     fun read(address: Int, buffer: ByteArray, numBytes: Int): Int
 }
 

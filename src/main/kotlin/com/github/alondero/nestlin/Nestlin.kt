@@ -64,6 +64,24 @@ class Nestlin {
     internal lateinit var rewind: RewindStateMachine
 
     /**
+     * Issue #270 — RA per-frame seam. Runs on the emulation thread at the
+     * PPU's frame-completion boundary, BEFORE the rewind snapshot is captured.
+     * Wired by [com.github.alondero.nestlin.ui.NestlinApplication] (or the
+     * production caller) to `GameSessionCoordinator::evaluateFrameNext`.
+     *
+     * Nullable + volatile: nullable so non-RA paths (CLI replay, bootcheck,
+     * tests) pay zero cost; volatile because the JavaFX thread installs it
+     * at startup and the emulation thread reads it on every frame.
+     *
+     * The hook MUST NOT throw — it runs on the emulation thread inside the
+     * frame-completion listener, so an uncaught exception would kill the
+     * emulator. Production callers wrap in try/catch or use [GameSessionCoordinator]'s
+     * own service-call defensive try.
+     */
+    @Volatile
+    internal var preFrameCaptureHook: (() -> Unit)? = null
+
+    /**
      * The emulation loop, owned here so [start]/[stop] can be called from the JavaFX app
      * thread without exposing the loop internals. Constructed lazily on first [start] so tests
      * that never run the loop (movie, replay, bootcheck, Mesen2 comparison) don't allocate it.
@@ -112,7 +130,16 @@ class Nestlin {
 
         // One savestate per frame into the rewind ring. Registered on the long-lived PPU so it
         // survives ROM loads/resets; fires on the emulation thread at a clean frame boundary.
+        //
+        // Issue #270: a [preFrameCaptureHook] runs BEFORE [rewind.captureFrame] so the
+        // RA runtime sees the just-completed frame's emulator state, then the rewind
+        // snapshot captures a runtime+emulator pair that are in sync. Without this hook,
+        // a rewind would rewind to a state where rcheevos's condition counters hadn't
+        // yet observed the frame the snapshot represents — diagnosing scrub drift would
+        // be a nightmare. The hook is nullable: headless / no-RA / test paths leave it
+        // null and pay zero per-frame cost.
         ppu.addFrameCompletionListener {
+            preFrameCaptureHook?.invoke()
             rewind.captureFrame { error ->
                 // Capture failure runs on the emulation thread for EVERY frame, so an unhandled
                 // throw here (e.g. a mapper with an incomplete saveState, or OOM building the

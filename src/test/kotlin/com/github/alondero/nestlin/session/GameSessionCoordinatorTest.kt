@@ -54,6 +54,7 @@ class GameSessionCoordinatorTest {
         service: FakeRetroAchievementsService = FakeRetroAchievementsService(),
         hooks: GameSessionHooks = GameSessionHooks.NONE,
         placardController: RaBootPlacardController = RaBootPlacardController(),
+        notificationController: RaNotificationController = RaNotificationController(),
         prepareTimeoutMillis: Long = prepareTimeoutMs,
     ): Pair<GameSessionCoordinator, FakeRetroAchievementsService> {
         val coord = GameSessionCoordinator(
@@ -61,6 +62,7 @@ class GameSessionCoordinatorTest {
             service = service,
             hooks = hooks,
             placardController = placardController,
+            notificationController = notificationController,
             romHasher = Sha256RomHasher,
             prepareTimeoutMillis = prepareTimeoutMillis,
         )
@@ -444,11 +446,13 @@ class GameSessionCoordinatorTest {
         // Exactly one before / one after.
         assertEquals(1, counts.before)
         assertEquals(1, counts.after)
-        // Three service calls (UnloadGame + PrepareGame + gameSummary),
-        // each bookended. Issue #269 added the gameSummary poll after
-        // prepareGame settles.
-        assertEquals(3, counts.serviceStart)
-        assertEquals(3, counts.serviceEnd)
+        // Four service calls (InstallMemoryReader + UnloadGame + PrepareGame
+        // + gameSummary), each bookended. Issue #269 added the gameSummary
+        // poll after prepareGame settles; issue #270 added the
+        // installMemoryReader call so rcheevos's read_memory callback
+        // resolves to a side-effect-free Memory.peek reader.
+        assertEquals(4, counts.serviceStart)
+        assertEquals(4, counts.serviceEnd)
         // Sanity: a PrepareGame actually fired.
         assertTrue(fake.calls.any { it is FakeRetroAchievementsService.Call.PrepareGame })
     }
@@ -876,5 +880,100 @@ class GameSessionCoordinatorTest {
         var after: Int = 0
         var serviceStart: Int = 0
         var serviceEnd: Int = 0
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue #270 — per-frame evaluateFrame + memory reader + ROM-change
+    // notification clearing.
+    // ---------------------------------------------------------------------
+
+    @Test
+    fun `evaluateFrameNext increments the frame counter monotonically`() {
+        val nestlin = Nestlin()
+        val (coord, fake) = coordinator(nestlin)
+        coord.loadRom(romPath)
+        fake.calls.clear()
+        coord.evaluateFrameNext()
+        coord.evaluateFrameNext()
+        coord.evaluateFrameNext()
+        fake.assertCallsInOrder(
+            FakeRetroAchievementsService.Call.EvaluateFrame(0L),
+            FakeRetroAchievementsService.Call.EvaluateFrame(1L),
+            FakeRetroAchievementsService.Call.EvaluateFrame(2L),
+        )
+    }
+
+    @Test
+    fun `evaluateFrameNext is a no-op when no ROM is loaded`() {
+        val (coord, fake) = coordinator()
+        coord.evaluateFrameNext()
+        assertEquals(0, fake.calls.size)
+    }
+
+    @Test
+    fun `loadRom installs the memory reader`() {
+        // Issue #270: every successful prepare installs the side-effect-free
+        // memory reader so rcheevos can evaluate triggers against live state.
+        val (coord, fake) = coordinator()
+        coord.loadRom(romPath)
+        fake.assertCallsInOrder(
+            FakeRetroAchievementsService.Call.InstallMemoryReader,
+            FakeRetroAchievementsService.Call.GameSummary,
+        )
+    }
+
+    @Test
+    fun `loadRom clears the notification controller`() {
+        // Pre-publish an unlock + a system message so the controller has
+        // something to clear. The ROM load is the documented "ROM change"
+        // boundary that issue #270 wants cleared.
+        val nestlin = Nestlin()
+        val controller = RaNotificationController()
+        val (coord, _) = coordinator(nestlin, notificationController = controller)
+        controller.publishUnlock(1, "Test", "desc", 5, "", nowMillis = 0L)
+        controller.publishSystem(SystemSeverity.INFO, "Offline", nowMillis = 0L)
+        assertTrue(controller.hasPending)
+        coord.loadRom(romPath)
+        assertTrue(!controller.hasPending)
+        assertEquals(0, controller.pendingUnlocks.size)
+        assertNull(controller.currentSystem)
+    }
+
+    @Test
+    fun `unloadRom clears the notification controller`() {
+        val controller = RaNotificationController()
+        val (coord, _) = coordinator(notificationController = controller)
+        coord.loadRom(romPath)
+        controller.publishUnlock(1, "Test", "desc", 5, "", nowMillis = 0L)
+        assertTrue(controller.hasPending)
+        coord.unloadRom()
+        assertTrue(!controller.hasPending)
+    }
+
+    @Test
+    fun `prepareServiceForCurrent resets frame counter for a new ROM`() {
+        // After a fresh loadRom, evaluateFrameNext starts at index 0 again —
+        // "this ROM's frame 0" means the same thing across a fresh boot.
+        val (coord, fake) = coordinator()
+        coord.loadRom(romPath)
+        coord.evaluateFrameNext()  // index 0
+        coord.evaluateFrameNext()  // index 1
+        coord.loadRom(romPath)     // reset to 0
+        fake.calls.clear()
+        coord.evaluateFrameNext()  // should be 0 again
+        fake.assertCallsInOrder(
+            FakeRetroAchievementsService.Call.EvaluateFrame(0L),
+        )
+    }
+
+    @Test
+    fun `powerReset clears the notification controller`() {
+        val controller = RaNotificationController()
+        val (coord, _) = coordinator(notificationController = controller)
+        coord.loadRom(romPath)
+        controller.publishUnlock(1, "Test", "desc", 5, "", nowMillis = 0L)
+        assertTrue(controller.hasPending)
+        coord.powerReset()
+        assertTrue(!controller.hasPending)
     }
 }
