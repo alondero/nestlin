@@ -39,6 +39,16 @@ internal class NativeRetroAchievementsService private constructor(
     private val handle: Pointer,
 ) : RetroAchievementsService {
 
+    /**
+     * Package-private accessors used by [RaSignInManager] to wire the HTTP
+     * bridge (issue #268). The bridge talks to the same façade instance —
+     * sharing these pointers is the entire reason the manager and service
+     * live in the same package. Production code that reaches for the
+     * bindings/handle must use [RaSignInManager], not these.
+     */
+    internal fun bridgeBindings(): RaFacadeBindings = bindings
+    internal fun bridgeHandle(): Pointer = handle
+
     // The native library version is captured at construction so the UI's
     // availability indicator doesn't have to re-call into the C side on
     // every menu redraw.

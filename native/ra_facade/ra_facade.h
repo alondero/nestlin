@@ -151,6 +151,29 @@ typedef struct ra_game_info_s {
 #define RA_FACADE_API_MAX          128
 #define RA_FACADE_TRACKER_MAX       64
 
+/* HTTP bridge (issue #268) */
+#define RA_FACADE_HTTP_URL_MAX            512
+#define RA_FACADE_HTTP_BODY_MAX          4096
+#define RA_FACADE_HTTP_CONTENT_TYPE_MAX    64
+
+/* User info (issue #268) */
+#define RA_FACADE_USERNAME_MAX           128
+#define RA_FACADE_DISPLAY_NAME_MAX       128
+#define RA_FACADE_AVATAR_URL_MAX         256
+#define RA_FACADE_TOKEN_MAX               64
+
+/* Snapshot of the signed-in user's profile. Strings are NUL-terminated within
+ * their respective fixed-size arrays; the JVM side copies what it retains. */
+typedef struct ra_user_info_s {
+    char     username[RA_FACADE_USERNAME_MAX];
+    char     display_name[RA_FACADE_DISPLAY_NAME_MAX];
+    char     avatar_url[RA_FACADE_AVATAR_URL_MAX];
+    char     token[RA_FACADE_TOKEN_MAX];
+    uint32_t score;
+    uint32_t score_softcore;
+    uint32_t num_unread_messages;
+} ra_user_info_t;
+
 typedef struct ra_event_s {
     int32_t  type;                       /* ra_event_type_e */
 
@@ -227,10 +250,104 @@ RA_FACADE_EXPORT void* ra_facade_create(const char* server_url,
 RA_FACADE_EXPORT int32_t ra_facade_destroy(void* handle);
 
 /*
- * Sign-in state. Issue #267 does not implement login (that's #268); the
- * façade always returns 0 here until #268 wires the login methods.
+ * Sign-in state. Returns 1 when the rcheevos client currently holds a logged-in
+ * user (after a successful password OR token login), 0 otherwise. The value is
+ * a snapshot — call again later to re-check after a login / logout cycle.
  */
 RA_FACADE_EXPORT int32_t ra_facade_is_signed_in(void* handle);
+
+/*
+ * Begin a password login. Asynchronous — the actual HTTP round-trip happens
+ * via the ra_facade HTTP bridge (issue #268); rc_client fires its callback
+ * when the response arrives or fails. Returns RA_OK when the request was
+ * accepted; RA_ERR_LIBRARY_STATE when a login/logout is already in flight.
+ *
+ * `username` and `password` are UTF-8 NUL-terminated. Both are COPIED — the
+ * caller may zero/free its buffers immediately on return. The password is
+ * never persisted in façade-internal state and is dropped after the request
+ * is enqueued.
+ *
+ * Single-flight: a second call before the first callback fires returns
+ * RA_ERR_LIBRARY_STATE; the caller must wait for the previous attempt to
+ * settle (success, failure, or explicit logout).
+ */
+RA_FACADE_EXPORT int32_t ra_facade_begin_login_with_password(void* handle,
+                                                             const char* username,
+                                                             const char* password);
+
+/*
+ * Begin a token login (used for token restoration at Nestlin startup). Same
+ * semantics as ra_facade_begin_login_with_password — asynchronous, single-flight,
+ * both arguments copied.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_begin_login_with_token(void* handle,
+                                                          const char* username,
+                                                          const char* token);
+
+/*
+ * Logout. Tears down the current user session and invalidates the cached
+ * token. Synchronous. Idempotent — safe to call when not signed in.
+ */
+RA_FACADE_EXPORT void ra_facade_logout(void* handle);
+
+/*
+ * Snapshot the signed-in user's profile into `out`. Strings are written into
+ * fixed-size NUL-terminated buffers owned by `out`. Returns RA_OK on success,
+ * RA_ERR_NOT_SIGNED_IN when no user is logged in.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_get_user_info(void* handle,
+                                                 ra_user_info_t* out);
+
+/* -------------------------------------------------------------------------- */
+/* HTTP bridge (issue #268)                                                   */
+/*                                                                            */
+/* rcheevos builds an HTTP request (URL + method + optional POST body) and    */
+/* hands it to the server-call callback. Until #268 the façade returned a     */
+/* stub CLIENT_ERROR; the HTTP bridge replaces that stub by enqueuing the     */
+/* request, then waiting for the Kotlin side to POST the response back via    */
+/* ra_facade_complete_http_request. The Kotlin side drives the queue from a   */
+/* background thread (see src/.../session/RaHttpBridge.kt).                   */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * One queued HTTP request. Strings are NUL-terminated; the JVM side MUST copy
+ * any field it intends to retain past the call. The generation field matches
+ * the facade's current generation when the request was enqueued; the JVM
+ * side uses it to drop stale responses after logout / a newer login.
+ */
+typedef struct ra_http_request_s {
+    uint32_t generation;          /* matches facade->generation at enqueue time */
+    char     url[RA_FACADE_HTTP_URL_MAX];
+    char     post_data[RA_FACADE_HTTP_BODY_MAX];
+    char     content_type[RA_FACADE_HTTP_CONTENT_TYPE_MAX];
+    uint8_t  has_post_data;       /* 1 = POST with body, 0 = GET */
+    uint8_t  reserved[3];         /* explicit padding for stable struct layout */
+} ra_http_request_t;
+
+/*
+ * Pop the next pending HTTP request into `out`. Returns 1 if a request was
+ * written, 0 if the queue is empty. The request is left on the queue until
+ * the matching ra_facade_complete_http_request call delivers the response.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_dequeue_http_request(void* handle,
+                                                        ra_http_request_t* out);
+
+/*
+ * Deliver the HTTP response back to rcheevos. `status` is the HTTP status
+ * code (e.g. 200, 401, 500); pass a negative rc_api value (e.g.
+ * RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR) for transport failures
+ * that rcheevos should treat as retryable. `body` may be NULL with
+ * body_length=0 for empty/error responses.
+ *
+ * The generation in the original request and the facade's current generation
+ * are compared — a stale response (from before logout / a newer login) is
+ * dropped silently. Returns 1 if delivered, 0 if dropped.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_complete_http_request(void* handle,
+                                                          uint32_t generation,
+                                                          int32_t status,
+                                                          const char* body,
+                                                          int32_t body_length);
 
 /* -------------------------------------------------------------------------- */
 /* Game lifecycle                                                            */

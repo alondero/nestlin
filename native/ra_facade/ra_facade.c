@@ -83,6 +83,125 @@ static int event_queue_pop(ra_facade_event_queue_t* q, ra_event_t* dst) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* HTTP request queue (issue #268)                                            */
+/*                                                                            */
+/* rcheevos's server-call shim enqueues a request; the Kotlin-side bridge      */
+/* (RaHttpBridge) polls ra_facade_dequeue_http_request from a background      */
+/* thread, executes the request via Java's HttpClient, then calls             */
+/* ra_facade_complete_http_request to deliver the response back. Each slot    */
+/* carries the generation counter at enqueue time so a stale response (the    */
+/* user logged out before the request returned) is discarded instead of       */
+/* poisoning the next login session.                                           */
+/* -------------------------------------------------------------------------- */
+
+#define RA_FACADE_HTTP_QUEUE_CAP 8
+
+typedef struct ra_http_slot_s {
+    /* A slot is "in flight" while the bridge is executing the request. The
+     * generation on enqueue lets the completion path detect a stale response. */
+    int32_t              in_flight;
+    uint32_t             generation;
+    rc_api_request_t     request;   /* owned by the slot; freed on completion */
+    rc_client_server_callback_t callback;
+    void*                callback_data;
+    rc_client_t*         client;
+} ra_http_slot_t;
+
+typedef struct ra_facade_http_queue_s {
+    ra_http_slot_t  slots[RA_FACADE_HTTP_QUEUE_CAP];
+    int32_t         head;
+    int32_t         tail;
+    int32_t         count;
+} ra_facade_http_queue_t;
+
+static void http_queue_init(ra_facade_http_queue_t* q) {
+    memset(q, 0, sizeof(*q));
+}
+
+static void http_queue_clear(ra_facade_http_queue_t* q) {
+    /* rc_api_destroy_request frees the rc_api_request_t's owned buffer. */
+    for (int32_t i = 0; i < q->count; ++i) {
+        int32_t idx = (q->head + i) % RA_FACADE_HTTP_QUEUE_CAP;
+        rc_api_destroy_request(&q->slots[idx].request);
+    }
+    q->head = 0;
+    q->tail = 0;
+    q->count = 0;
+}
+
+/*
+ * Enqueue the request and return the slot index. Caller passes the rcheevos
+ * request together with the callback trio rc_client will fire once we
+ * deliver the response. The slot is "in flight" until completion. The slot
+ * is OWNED by the queue; rc_api_destroy_request is called on completion OR
+ * queue-clear (e.g. on logout, destroy).
+ */
+static int32_t http_queue_push(ra_facade_http_queue_t* q,
+                               uint32_t generation,
+                               const rc_api_request_t* request,
+                               rc_client_server_callback_t callback,
+                               void* callback_data,
+                               rc_client_t* client) {
+    if (q->count >= RA_FACADE_HTTP_QUEUE_CAP) {
+        /* Backpressure: drop oldest so the newest login attempt can complete.
+         * The dropped slot's rc_api_request_t is freed here. */
+        int32_t old_idx = q->head;
+        rc_api_destroy_request(&q->slots[old_idx].request);
+        q->slots[old_idx].in_flight = 0;
+        q->head = (q->head + 1) % RA_FACADE_HTTP_QUEUE_CAP;
+        q->count--;
+    }
+    int32_t idx = q->tail;
+    q->slots[idx].in_flight = 1;
+    q->slots[idx].generation = generation;
+    q->slots[idx].request = *request;        /* shallow copy of the struct */
+    q->slots[idx].callback = callback;
+    q->slots[idx].callback_data = callback_data;
+    q->slots[idx].client = client;
+    q->tail = (q->tail + 1) % RA_FACADE_HTTP_QUEUE_CAP;
+    q->count++;
+    return idx;
+}
+
+/* Returns 1 on match (response delivered + slot freed), 0 on stale slot. */
+static int http_queue_complete(ra_facade_http_queue_t* q,
+                               uint32_t generation,
+                               int32_t status,
+                               const char* body,
+                               int32_t body_length) {
+    for (int32_t i = 0; i < q->count; ++i) {
+        int32_t idx = (q->head + i) % RA_FACADE_HTTP_QUEUE_CAP;
+        if (!q->slots[idx].in_flight) continue;
+        if (q->slots[idx].generation != generation) continue;
+        /* Match found. Deliver and free. */
+        rc_api_server_response_t response;
+        memset(&response, 0, sizeof(response));
+        response.body = body;
+        response.body_length = (size_t)(body_length < 0 ? 0 : body_length);
+        response.http_status_code = status;
+        rc_client_server_callback_t cb = q->slots[idx].callback;
+        void* cb_data = q->slots[idx].callback_data;
+        rc_api_destroy_request(&q->slots[idx].request);
+        q->slots[idx].in_flight = 0;
+        /* Remove the slot by advancing head; since slots are FIFO-ordered by
+         * generation-increment, the matching slot may be head or later. To
+         * keep the simple ring buffer correct, we leave the slot zeroed and
+         * shift subsequent slots forward. */
+        for (int32_t j = i; j > 0; --j) {
+            int32_t dst = (q->head + j) % RA_FACADE_HTTP_QUEUE_CAP;
+            int32_t src = (q->head + j - 1) % RA_FACADE_HTTP_QUEUE_CAP;
+            q->slots[dst] = q->slots[src];
+            q->slots[src] = (ra_http_slot_t){0};
+        }
+        q->head = (q->head + 1) % RA_FACADE_HTTP_QUEUE_CAP;
+        q->count--;
+        cb(&response, cb_data);
+        return 1;
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Opaque handle: the façade-internal state                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -102,6 +221,19 @@ struct ra_facade_s {
      * the active game (so an in-flight rc_client_idle callback that fires
      * after unload_game can be detected and ignored). */
     uint32_t                  generation;
+
+    /* HTTP request queue (issue #268). Drained by the Kotlin-side bridge via
+     * ra_facade_dequeue_http_request; responses delivered back via
+     * ra_facade_complete_http_request. Each slot carries the generation at
+     * enqueue time so a stale response (user logged out before it returned)
+     * is dropped instead of poisoning the next session. */
+    ra_facade_http_queue_t    http;
+
+    /* Single-flight guard for login. 0 = idle, 1 = a login is in flight.
+     * Prevents a second password/token call from queueing a duplicate request
+     * while the first is pending. Cleared by login_completion_callback (or
+     * by ra_facade_logout). */
+    int32_t                   login_in_flight;
 
     /* Diagnostic counters — for the contract tests and the menu indicator. */
     int32_t                   hardcore_enabled_snapshot;
@@ -215,32 +347,61 @@ static void handle_event(const rc_client_event_t* event, rc_client_t* client) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* rcheevos server-call shim — rejects every request with "no network"      */
+/* rcheevos login-completion callback (issue #268)                            */
 /* -------------------------------------------------------------------------- */
 
 /*
- * rcheevos's HTTP layer calls this when it wants to send a request. We
- * respond synchronously with RC_API_SERVER_RESPONSE_CLIENT_ERROR so the
- * caller treats it as a permanent failure (not a retryable transient).
+ * Fired by rcheevos when a login round-trip settles (success OR failure).
+ * Clears the single-flight guard so the UI can issue a follow-up login /
+ * logout. The user_info struct is now populated on success; the SERVER_ERROR
+ * event was already queued by handle_event on failure.
  *
- * This is intentional: issue #267 ships the client + façade but NOT the
- * HTTP transport. Login (issue #268) will replace this stub with a real
- * libcurl-backed implementation. Until then, the façade can construct,
- * run frames, serialize progress, and tear down — it just never completes
- * a server round-trip. isSignedIn() always returns 0.
+ * The `result` is rcheevos's RC_OK (0) on success; non-zero carries a
+ * server-side error message via error_message. We deliberately do not log
+ * the message here — it can contain server-internal context that shouldn't
+ * leak into Nestlin's log files (see redaction policy in issue #268).
+ */
+static void login_completion_callback(int result,
+                                      const char* error_message,
+                                      rc_client_t* client,
+                                      void* callback_userdata) {
+    (void)result;
+    (void)error_message;
+    ra_facade_t* facade = (ra_facade_t*)callback_userdata;
+    if (facade == NULL) return;
+    facade->login_in_flight = 0;
+}
+
+/* -------------------------------------------------------------------------- */
+/* rcheevos server-call shim — enqueues HTTP requests for the Kotlin bridge   */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * rcheevos's HTTP layer calls this when it wants to send a request. We enqueue
+ * the request onto the façade's HTTP queue and return immediately — the
+ * Kotlin-side RaHttpBridge (src/main/kotlin/.../session/RaHttpBridge.kt)
+ * drains the queue on a background thread, executes the request via Java's
+ * HttpClient, and delivers the response back through
+ * ra_facade_complete_http_request.
+ *
+ * rcheevos expects this callback to be cheap and non-blocking; the actual
+ * network I/O happens off-thread. The request struct's strings are owned by
+ * rcheevos for the lifetime of the callback, so a shallow copy is safe.
  */
 static void server_call_shim(const rc_api_request_t* request,
                              rc_client_server_callback_t callback,
                              void* callback_data,
                              rc_client_t* client) {
-    (void)request;
-    (void)client;
-    rc_api_server_response_t response;
-    memset(&response, 0, sizeof(response));
-    response.body = NULL;
-    response.body_length = 0;
-    response.http_status_code = RC_API_SERVER_RESPONSE_CLIENT_ERROR;
-    callback(&response, callback_data);
+    ra_facade_t* facade = (ra_facade_t*)rc_client_get_userdata(client);
+    if (facade == NULL || request == NULL) {
+        rc_api_server_response_t response;
+        memset(&response, 0, sizeof(response));
+        response.http_status_code = RC_API_SERVER_RESPONSE_CLIENT_ERROR;
+        if (callback != NULL) callback(&response, callback_data);
+        return;
+    }
+    http_queue_push(&facade->http, facade->generation, request,
+                    callback, callback_data, client);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -265,13 +426,15 @@ static uint32_t read_memory_shim(uint32_t address,
 
 RA_FACADE_EXPORT void* ra_facade_create(const char* server_url,
                                         const char* user_agent) {
-    (void)server_url;  /* Reserved for #268; the no-network shim ignores it. */
+    (void)server_url;
     (void)user_agent;
     ra_facade_t* facade = (ra_facade_t*)calloc(1, sizeof(ra_facade_t));
     if (facade == NULL) return NULL;
 
     event_queue_init(&facade->events);
+    http_queue_init(&facade->http);
     facade->generation = 1;
+    facade->login_in_flight = 0;
     facade->hardcore_enabled_snapshot = 0;
     facade->load_state_snapshot = (int32_t)RA_LOAD_STATE_IDLE;
 
@@ -309,6 +472,7 @@ RA_FACADE_EXPORT int32_t ra_facade_destroy(void* handle) {
          * prevents the event handler from firing on a freed handle. */
         rc_client_unload_game(facade->client);
         event_queue_clear(&facade->events);
+        http_queue_clear(&facade->http);
         facade->generation++;
         rc_client_destroy(facade->client);
         facade->client = NULL;
@@ -323,10 +487,119 @@ RA_FACADE_EXPORT int32_t ra_facade_destroy(void* handle) {
 
 RA_FACADE_EXPORT int32_t ra_facade_is_signed_in(void* handle) {
     if (handle == NULL) return 0;
-    /* Issue #267: login is owned by #268. Until that lands, every state
-     * reports "not signed in". This is the documented "fall back to NoOp"
-     * behaviour the JNA layer relies on for tests + menu availability. */
-    return 0;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return 0;
+    return rc_client_get_user_info(facade->client) != NULL ? 1 : 0;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_begin_login_with_password(void* handle,
+                                                             const char* username,
+                                                             const char* password) {
+    if (handle == NULL) return (int32_t)RA_ERR_NULL_HANDLE;
+    if (username == NULL || password == NULL) return (int32_t)RA_ERR_INVALID_ARG;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return (int32_t)RA_ERR_DESTROYED;
+    if (facade->login_in_flight) return (int32_t)RA_ERR_LIBRARY_STATE;
+    facade->login_in_flight = 1;
+    /* Async login — rc_client fires login_completion_callback when the
+     * round-trip settles, which clears login_in_flight. The HTTP request
+     * itself travels through server_call_shim → HTTP queue → Kotlin bridge
+     * → complete_http_request → rcheevos callback → login_completion. */
+    rc_client_begin_login_with_password(
+        facade->client, username, password,
+        login_completion_callback, facade);
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_begin_login_with_token(void* handle,
+                                                          const char* username,
+                                                          const char* token) {
+    if (handle == NULL) return (int32_t)RA_ERR_NULL_HANDLE;
+    if (username == NULL || token == NULL) return (int32_t)RA_ERR_INVALID_ARG;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return (int32_t)RA_ERR_DESTROYED;
+    if (facade->login_in_flight) return (int32_t)RA_ERR_LIBRARY_STATE;
+    facade->login_in_flight = 1;
+    rc_client_begin_login_with_token(
+        facade->client, username, token,
+        login_completion_callback, facade);
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT void ra_facade_logout(void* handle) {
+    if (handle == NULL) return;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return;
+    /* Bump the generation so any in-flight HTTP callback the bridge might
+     * still be holding is silently discarded on completion. */
+    facade->generation++;
+    facade->login_in_flight = 0;
+    /* Drop any queued HTTP requests — they're now stale. */
+    http_queue_clear(&facade->http);
+    http_queue_init(&facade->http);
+    rc_client_logout(facade->client);
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_get_user_info(void* handle, ra_user_info_t* out) {
+    if (handle == NULL || out == NULL) return (int32_t)RA_ERR_INVALID_ARG;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->client == NULL) return (int32_t)RA_ERR_DESTROYED;
+    const rc_client_user_t* user = rc_client_get_user_info(facade->client);
+    if (user == NULL) return (int32_t)RA_ERR_NOT_SIGNED_IN;
+    memset(out, 0, sizeof(*out));
+    copy_truncated(out->username, sizeof(out->username), user->username);
+    copy_truncated(out->display_name, sizeof(out->display_name), user->display_name);
+    /* rc_client_user_get_image_url writes the avatar URL into a caller buffer
+     * when the field is non-NULL on the user struct; on older rcheevos the
+     * field may be absent, so we fall back to user->avatar_url directly. */
+    char url_buffer[RA_FACADE_AVATAR_URL_MAX];
+    memset(url_buffer, 0, sizeof(url_buffer));
+    if (rc_client_user_get_image_url(user, url_buffer, sizeof(url_buffer)) == RC_OK) {
+        copy_truncated(out->avatar_url, sizeof(out->avatar_url), url_buffer);
+    } else if (user->avatar_url != NULL) {
+        copy_truncated(out->avatar_url, sizeof(out->avatar_url), user->avatar_url);
+    }
+    copy_truncated(out->token, sizeof(out->token), user->token);
+    out->score = user->score;
+    out->score_softcore = user->score_softcore;
+    out->num_unread_messages = user->num_unread_messages;
+    return (int32_t)RA_OK;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_dequeue_http_request(void* handle,
+                                                        ra_http_request_t* out) {
+    if (handle == NULL || out == NULL) return 0;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    if (facade->http.count == 0) return 0;
+    memset(out, 0, sizeof(*out));
+    out->generation = facade->http.slots[facade->http.head].generation;
+    const rc_api_request_t* req = &facade->http.slots[facade->http.head].request;
+    if (req->url != NULL) {
+        copy_truncated(out->url, sizeof(out->url), req->url);
+    }
+    if (req->post_data != NULL) {
+        copy_truncated(out->post_data, sizeof(out->post_data), req->post_data);
+        out->has_post_data = 1;
+    }
+    if (req->content_type != NULL) {
+        copy_truncated(out->content_type, sizeof(out->content_type), req->content_type);
+    }
+    return 1;
+}
+
+RA_FACADE_EXPORT int32_t ra_facade_complete_http_request(void* handle,
+                                                          uint32_t generation,
+                                                          int32_t status,
+                                                          const char* body,
+                                                          int32_t body_length) {
+    if (handle == NULL) return 0;
+    ra_facade_t* facade = (ra_facade_t*)handle;
+    /* The single-flight login_in_flight flag is cleared by
+     * login_completion_callback, NOT here — a login may issue multiple HTTP
+     * round-trips, and clearing on the first response would let the user
+     * issue a duplicate login before rcheevos has updated user_info. */
+    return http_queue_complete(&facade->http, generation, status,
+                               body, body_length);
 }
 
 /* -------------------------------------------------------------------------- */

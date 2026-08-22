@@ -35,6 +35,23 @@ tasks.named<ShadowJar>("shadowJar") {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
+// Plain `jar` reads the same resources tree as shadowJar (which copies the
+// native library in via copyNativeRa). Declaring the explicit dependency
+// here stops Gradle 8.5's "implicit dependency" validation from failing
+// the basic `./gradlew build` path on worktrees that have the native
+// resources directory in place. The dependency is a no-op when the native
+// build is skipped — copyNativeRa itself is opt-in via `:buildNative`.
+tasks.named("jar") {
+    dependsOn(copyNativeRa)
+}
+
+// Same dependency for `:test` — the test task transitively reads
+// `processTestResources` which can pick up the native tree. Without this,
+// `./gradlew build` (which runs `test`) fails the same validation.
+tasks.named("test") {
+    dependsOn(copyNativeRa)
+}
+
 // Friendly alias so `./gradlew uberJar` still works for humans and the CI step.
 tasks.register("uberJar") {
     group = "build"
