@@ -354,7 +354,14 @@ val writeNativeRaManifest = tasks.register("writeNativeRaManifest") {
 fun mergeFragments(fragments: List<java.io.File>): String {
     val entries = LinkedHashMap<String, String>()  // platformId -> JSON object
     fragments.forEach { frag ->
-        val text = frag.readText()
+        // Read bytes explicitly as UTF-8. Default File.readText uses
+        // the JVM platform charset (Windows-1252 on windows-latest),
+        // which silently mangles any non-ASCII byte the upstream
+        // PowerShell script wrote — the runtime then reads back
+        // replacement chars (�) for fields like sha256Hex that happen
+        // to contain no non-ASCII bytes only by coincidence. Use
+        // Files.readString with Charsets.UTF_8 for the read side.
+        val text = Files.readString(frag.toPath(), Charsets.UTF_8)
         // Crude but robust: find "platforms": [ ... ] and extract the inner array.
         val key = "\"platforms\""
         val keyIdx = text.indexOf(key)
