@@ -170,7 +170,14 @@ if ($isWindows) {
     $resourceSubdir = 'linux'
 }
 $resourcePath = "native-ra/$resourceSubdir/$libName"
-$sha256 = (Get-FileHash -Path $libPath -Algorithm SHA256).Hash.ToLower()
+# Get-FileHash returns an object with .Hash as a [string]. On PowerShell
+# 5.1 the runtime can sometimes return a wrapped object that serializes
+# to JSON as {"Value": "...", "Length": 64} instead of the bare string
+# when interpolated into a here-string — explicitly cast through [string]
+# to force the bare-string form.
+$sha256 = [string](Get-FileHash -Path $libPath -Algorithm SHA256).Hash
+$sha256 = $sha256.ToLowerInvariant()
+$libSize = (Get-Item -Path $libPath).Length
 $manifestPath = Join-Path $OutputDir 'MANIFEST.fragment.json'
 # Build the JSON fragment via plain string concatenation. PowerShell
 # 5.1's here-string parser can choke on bodies that mix quoted JSON,
