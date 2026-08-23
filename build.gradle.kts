@@ -1,5 +1,6 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import java.net.URL
+import java.nio.file.Files
 import java.util.zip.ZipInputStream
 
 plugins {
@@ -326,7 +327,14 @@ val writeNativeRaManifest = tasks.register("writeNativeRaManifest") {
         val merged = mergeFragments(fragments)
         val dst = manifestOut.get().asFile
         dst.parentFile.mkdirs()
-        dst.writeText(merged)
+        // Force UTF-8 (no BOM) so the file round-trips byte-for-byte on
+        // Windows runners. The default for File.writeText is the JVM
+        // platform charset, which is Windows-1252 on a windows-latest
+        // GitHub runner — that corrupts any non-ASCII byte in the
+        // merged JSON and the runtime reads back � for the sha256Hex
+        // field. Use Files.write with an explicit UTF-8 charset + no
+        // BOM.
+        Files.write(dst.toPath(), merged.toByteArray(Charsets.UTF_8))
         logger.lifecycle("[writeNativeRaManifest] Wrote $dst (${fragments.size} platform(s))")
     }
 }
