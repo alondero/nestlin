@@ -443,7 +443,7 @@ internal interface RaFacadeBindings : Library {
  * (set by `evaluate_frame` before the native call returns). See
  * `NativeRetroAchievementsService.currentHandle`.
  */
-fun interface RaReadMemoryFn {
+fun interface RaReadMemoryFn : com.sun.jna.Callback {
     fun read(address: Int, buffer: ByteArray, numBytes: Int): Int
 }
 
