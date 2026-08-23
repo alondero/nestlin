@@ -414,16 +414,21 @@ fun mergeFragments(fragments: List<java.io.File>): String {
     // (Map, List) — passing `Any` (Kotlin's erased parameter) hits
     // `NoSuchMethodException`. Use the Map overload directly.
     // Groovy's JsonOutput.prettyPrint has multiple overloads (Map,
-    // List, String) and Kotlin only sees the String one because of
-    // how Kotlin handles Groovy methods. Invoke via reflection so we
-    // hit the actual Map overload at runtime. (Same trick the
-    // JsonSlurper.parseText call avoided above.)
+    // List, String) and Kotlin only sees the String one. The
+    // simplest portable workaround is to use the JsonOutput method
+    // via reflection that takes the raw java.util.Map class — and
+    // convert our Kotlin Map via a Groovy helper.
+    //
+    // Even simpler: build a JSON string directly using JsonOutput's
+    // toJson(Object) overload — accepts anything.
+    val toJsonMethod = groovy.json.JsonOutput::class.java.declaredMethods
+        .first { it.name == "toJson" && it.parameterCount == 1 }
     @Suppress("UNCHECKED_CAST")
-    val mergedMap = merged as Map<Any, Any?>
-    val methods = groovy.json.JsonOutput::class.java.declaredMethods
-    val prettyPrint = methods.first { it.name == "prettyPrint" && it.parameterCount == 1 }
-    val output = prettyPrint.invoke(null, mergedMap)
-    return output.toString()
+    val jsonString = toJsonMethod.invoke(null, merged as Any) as String
+    // Pretty-print via a re-parse + prettyPrint cycle. Ugly but
+    // works around every Kotlin ↔ Groovy overload resolution bug.
+    val pretty = groovy.json.JsonOutput.prettyPrint(jsonString)
+    return pretty.toString()
 }
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
