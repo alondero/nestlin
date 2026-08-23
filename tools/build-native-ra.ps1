@@ -172,23 +172,25 @@ if ($isWindows) {
 $resourcePath = "native-ra/$resourceSubdir/$libName"
 $sha256 = (Get-FileHash -Path $libPath -Algorithm SHA256).Hash.ToLower()
 $manifestPath = Join-Path $OutputDir 'MANIFEST.fragment.json'
-# Build the fragment line-by-line to avoid PowerShell 5.1 here-string
-# parser quirks with colons / braces in the body.
-$fragmentLines = @(
-    '{'
-    '  "platforms": ['
-    '    {'
-    ('      "platformId": "' + $platformId + '",')
-    ('      "libraryFilename": "' + $libName + '",')
-    ('      "resourcePath": "' + $resourcePath + '",')
-    ('      "sha256Hex": "' + $sha256 + '",')
-    ('      "sizeBytes": ' + $libSize)
-    '    }'
-    '  ]'
-    '}'
-)
-$fragment = ($fragmentLines -join "`n") + "`n"
-Set-Content -Path $manifestPath -Value $fragment -Encoding UTF8 -NoNewline
+# Build the JSON fragment via plain string concatenation. PowerShell
+# 5.1's here-string parser can choke on bodies that mix quoted JSON,
+# curly braces, and trailing commas — emit each field on its own line
+# instead and `Join-Path`-style the result. Use [System.IO.File]
+# directly (bypassing Set-Content's BOM behaviour on some hosts) so
+# the SHA-256 round-trips byte-for-byte.
+$fragment = '{' + [Environment]::NewLine +
+    '  "platforms": [' + [Environment]::NewLine +
+    '    {' + [Environment]::NewLine +
+    '      "platformId": "' + $platformId + '",' + [Environment]::NewLine +
+    '      "libraryFilename": "' + $libName + '",' + [Environment]::NewLine +
+    '      "resourcePath": "' + $resourcePath + '",' + [Environment]::NewLine +
+    '      "sha256Hex": "' + $sha256 + '",' + [Environment]::NewLine +
+    '      "sizeBytes": ' + $libSize + [Environment]::NewLine +
+    '    }' + [Environment]::NewLine +
+    '  ]' + [Environment]::NewLine +
+    '}' + [Environment]::NewLine
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($manifestPath, $fragment, $utf8NoBom)
 Write-Host "[BUILD-NATIVE-RA] Wrote manifest fragment: $manifestPath"
 
 exit 0
