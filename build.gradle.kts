@@ -177,7 +177,17 @@ val copyNativeRa = tasks.register("copyNativeRa") {
             logger.warn("[copyNativeRa] No built artifact at $src; skipping (JNA will fall back to NoOp).")
             return@doLast
         }
-        val dst = resDir.get().asFile
+        // Copy into a per-host subdirectory so the resourcePath emitted
+        // by the build scripts into MANIFEST.fragment.json (e.g.
+        // "native-ra/linux/librcheevos_facade.so") resolves at runtime.
+        // The host segment matches nativeRaPlatformId above.
+        val hostSegment = when (nativeRaPlatformId) {
+            "windows-x86_64" -> "windows"
+            "linux-x86_64" -> "linux"
+            "macos-universal" -> "macos"
+            else -> error("Unknown platformId: $nativeRaPlatformId")
+        }
+        val dst = resDir.get().asFile.resolve(hostSegment)
         dst.mkdirs()
         src.listFiles()?.forEach { f ->
             if (f.isFile) f.copyTo(dst.resolve(f.name), overwrite = true)
