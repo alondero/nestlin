@@ -1,4 +1,5 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import com.google.gson.GsonBuilder
 import java.io.StringWriter
 import java.net.URL
 import java.nio.file.Files
@@ -13,6 +14,16 @@ plugins {
 
 repositories {
     mavenCentral()
+}
+
+// Pull Gson into the buildscript classpath so mergeFragments can
+// serialize JSON without fighting Groovy's overloaded prettyPrint
+// overload-resolution bug (Kotlin only sees the String overload,
+// calls with a Map<Any, Any?> arg fail with 'argument type mismatch').
+buildscript {
+    dependencies {
+        classpath("com.google.code.gson:gson:2.10.1")
+    }
 }
 
 java {
@@ -413,23 +424,13 @@ fun mergeFragments(fragments: List<java.io.File>): String {
     // Groovy's JsonOutput.prettyPrint has specific overloads
     // (Map, List) — passing `Any` (Kotlin's erased parameter) hits
     // `NoSuchMethodException`. Use the Map overload directly.
-    // Groovy's JsonOutput.prettyPrint has multiple overloads (Map,
-    // List, String) and Kotlin only sees the String one — which
-    // means a Kotlin Map<Any, Any?> gets rejected with
-    // "argument type mismatch" at runtime.
-    //
-    // Workaround: serialize via toJson(Object) (which Kotlin sees
-    // correctly) then re-prettyPrint the String. Two round-trips
-    // through the same library, but the only portable path given
-    // Kotlin's broken view of Groovy overloads.
-    val toJsonMethod = groovy.json.JsonOutput::class.java.methods
-        .first { it.name == "toJson" }
-    val prettyPrintMethod = groovy.json.JsonOutput::class.java.methods
-        .first { it.name == "prettyPrint" && it.parameterTypes.size == 1 }
-    @Suppress("UNCHECKED_CAST")
-    val jsonString = toJsonMethod.invoke(null, merged as Any).toString()
-    val pretty = prettyPrintMethod.invoke(null, jsonString).toString()
-    return pretty
+    // Use Gson (added to the buildscript classpath above) rather
+    // than Groovy's JsonOutput. Kotlin's view of Groovy's overloaded
+    // prettyPrint rejects Map<Any, Any?> arguments with
+    // "argument type mismatch" — every reflection workaround hits
+    // the same root cause. Gson is a regular Kotlin/Java library, so
+    // overload resolution works normally.
+    return GsonBuilder().setPrettyPrinting().create().toJson(merged)
 }
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
