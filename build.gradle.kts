@@ -1,4 +1,5 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import java.io.StringWriter
 import java.net.URL
 import java.nio.file.Files
 import java.util.zip.ZipInputStream
@@ -242,18 +243,30 @@ val fetchNativeRa = tasks.register("fetchNativeRa") {
             val releaseJson = URL(releaseUrl).openStream().use { stream ->
                 stream.bufferedReader().readText()
             }
-            // Crude-but-robust parse: find the asset with our name and
-            // capture its browser_download_url. Avoids pulling in a JSON
-            // library just for this one lookup; the schema is stable.
-            val assetRegex = Regex(
-                "\"name\"\\s*:\\s*\"$assetName\"[^}]*?\"browser_download_url\"\\s*:\\s*\"([^\"]+)\""
-            )
-            val assetUrl = assetRegex.find(releaseJson)?.groupValues?.get(1)
-                ?: run {
-                    logger.warn("[fetchNativeRa] Release does not include asset '$assetName' " +
-                        "(platform=$nativeRaPlatformId). JNA will fall back to NoOp.")
-                    return@doLast
-                }
+            // Use Groovy's JsonSlurper (built into Gradle's buildscript
+            // classpath) rather than a hand-rolled regex. The regex
+            // approach assumed "name" appears before "browser_download_url"
+            // in the GitHub API JSON; if the API ever reorders fields
+            // or reformats whitespace, the asset URL is silently missed
+            // and the build ends up with no native lib. JsonSlurper
+            // handles whatever the API emits.
+            val slurper = groovy.json.JsonSlurper()
+            val release = try {
+                slurper.parseText(releaseJson) as? Map<*, *>
+            } catch (e: Exception) {
+                logger.warn("[fetchNativeRa] Release JSON not parseable: ${e.message}")
+                return@doLast
+            }
+            if (release == null) return@doLast
+            @Suppress("UNCHECKED_CAST")
+            val assets = release["assets"] as? List<Map<*, *>> ?: emptyList()
+            val assetUrl = assets.firstOrNull { (it["name"] as? String) == assetName }
+                ?.get("browser_download_url") as? String
+            if (assetUrl == null) {
+                logger.warn("[fetchNativeRa] Release does not include asset '$assetName' " +
+                    "(platform=$nativeRaPlatformId). JNA will fall back to NoOp.")
+                return@doLast
+            }
             logger.lifecycle("[fetchNativeRa] Downloading $assetUrl")
             val zipBytes = URL(assetUrl).openStream().use { stream ->
                 stream.readAllBytes()
@@ -301,7 +314,15 @@ val fetchNativeRa = tasks.register("fetchNativeRa") {
 val writeNativeRaManifest = tasks.register("writeNativeRaManifest") {
     group = "build"
     description = "Aggregates per-platform MANIFEST.fragment.json into a single MANIFEST.json in resources"
-    dependsOn("buildNative")
+    // Depends on both buildNative (local compile) and fetchNativeRa
+    // (downloads pre-built artifacts from GitHub Releases). Without
+    // the fetchNativeRa dependency, on a host with neither a working
+    // C compiler nor a populated pre-built download, Gradle's DAG
+    // could schedule this task before fetchNativeRa has finished
+    // populating build/native-ra/<host>/MANIFEST.fragment.json —
+    // leaving the merged MANIFEST.json empty and the runtime loading
+    // fails with MANIFEST_MISSING.
+    dependsOn("buildNative", "fetchNativeRa")
     val manifestOut = layout.buildDirectory.file("resources/main/native-ra/MANIFEST.json")
     outputs.file(manifestOut)
     doLast {
@@ -342,61 +363,61 @@ val writeNativeRaManifest = tasks.register("writeNativeRaManifest") {
 /**
  * Merge per-platform MANIFEST.fragment.json files into a single JSON
  * object whose schema is what RaManifest parses. The fragments each
- * have a `platforms: [...]` array; the merged result concatenates the
- * arrays, dedupes by `platformId`, and pins the rcheevos / façade
- * version to the value from the C source (currently embedded in
- * ra_facade.c — see RC_FACADE_VERSION_STRING and the literal in
+ * have a `platforms: [...]` array; the merged result concatenates
+ * the arrays, dedupes by `platformId`, and pins the rcheevos /
+ * façade version to the value from the C source (currently embedded
+ * in ra_facade.c — see RC_FACADE_VERSION_STRING and the literal in
  * ra_facade_rcheevos_version()).
  *
- * Implemented in plain Kotlin so the build script stays self-contained
- * (no jq / node dependency on PATH).
+ * Uses Gson (already a dependency) rather than string-splitting the
+ * JSON so we tolerate formatting differences (whitespace, key order,
+ * indentation) between the bash and PowerShell build scripts.
  */
 fun mergeFragments(fragments: List<java.io.File>): String {
-    val entries = LinkedHashMap<String, String>()  // platformId -> JSON object
+    val slurper = groovy.json.JsonSlurper()
+    // Use Map<String, Any?> rather than a data class so we tolerate
+    // extra fields the upstream scripts may add.
+    val merged: MutableMap<String, Any?> = LinkedHashMap()
+    merged["schemaVersion"] = 1
+    merged["rcheevosVersion"] = "12.4.0"
+    merged["facadeVersion"] = "1.0.0"
+    merged["platforms"] = mutableListOf<Map<String, Any?>>()
+    @Suppress("UNCHECKED_CAST")
+    val mergedPlatforms = merged["platforms"] as MutableList<Map<String, Any?>>
+
     fragments.forEach { frag ->
-        // Read bytes explicitly as UTF-8. Default File.readText uses
-        // the JVM platform charset (Windows-1252 on windows-latest),
-        // which silently mangles any non-ASCII byte the upstream
-        // PowerShell script wrote — the runtime then reads back
-        // replacement chars (�) for fields like sha256Hex that happen
-        // to contain no non-ASCII bytes only by coincidence. Use
-        // Files.readString with Charsets.UTF_8 for the read side.
+        // Read bytes explicitly as UTF-8 — default File.readText uses
+        // the JVM platform charset (Windows-1252 on windows-latest).
         val text = Files.readString(frag.toPath(), Charsets.UTF_8)
-        // Crude but robust: find "platforms": [ ... ] and extract the inner array.
-        val key = "\"platforms\""
-        val keyIdx = text.indexOf(key)
-        if (keyIdx < 0) return@forEach
-        val arrStart = text.indexOf('[', keyIdx)
-        if (arrStart < 0) return@forEach
-        // Walk to the matching closing bracket (single level — no nested arrays in our entries).
-        var depth = 0
-        var arrEnd = -1
-        for (i in arrStart until text.length) {
-            when (text[i]) {
-                '[' -> depth++
-                ']' -> { depth--; if (depth == 0) { arrEnd = i; break } }
+        val parsed = try {
+            slurper.parseText(text) as? Map<*, *>
+        } catch (e: Exception) {
+            logger.warn("[writeNativeRaManifest] Skipping malformed fragment $frag: ${e.message}")
+            return@forEach
+        }
+        if (parsed == null) return@forEach
+        @Suppress("UNCHECKED_CAST")
+        val platforms = parsed["platforms"] as? List<Map<*, *>> ?: return@forEach
+        platforms.forEach { rawEntry ->
+            // Normalize to Map<String, Any?> — Groovy's slurper gives
+            // us Map<Any, Any> for JSON objects.
+            @Suppress("UNCHECKED_CAST")
+            val entry = rawEntry as Map<String, Any?>
+            // Dedupe by platformId — first occurrence wins.
+            val id = entry["platformId"] as? String ?: return@forEach
+            if (mergedPlatforms.none { (it as Map<*, *>)["platformId"] == id }) {
+                mergedPlatforms += entry
             }
         }
-        if (arrEnd < 0) return@forEach
-        val arr = text.substring(arrStart + 1, arrEnd).trim()
-        if (arr.isEmpty()) return@forEach
-        // Split on top-level `}, {` boundaries.
-        arr.split("},{").forEach { entry ->
-            val fixed = entry.trim().removePrefix("{").removeSuffix("}").trim()
-            val idMatch = Regex("\"platformId\"\\s*:\\s*\"([^\"]+)\"").find(fixed)
-            val id = idMatch?.groupValues?.get(1) ?: return@forEach
-            entries[id] = "{${fixed}}"
-        }
     }
-    val merged = entries.values.joinToString(",\n    ")
-    return """{
-  "schemaVersion": 1,
-  "rcheevosVersion": "12.4.0",
-  "facadeVersion": "1.0.0",
-  "platforms": [
-    $merged
-  ]
-}"""
+    // Groovy's JsonOutput.prettyPrint returns Any from Kotlin's
+    // perspective (Groovy's erased return type). Call it via reflection
+    // so the Kotlin compiler sees a String.
+    val method = groovy.json.JsonOutput::class.java.getMethod(
+        "prettyPrint", Any::class.java
+    )
+    val result = method.invoke(null, merged as Any) as String
+    return result
 }
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {

@@ -499,13 +499,13 @@ RA_FACADE_EXPORT int32_t ra_facade_destroy(void* handle) {
     if (handle == NULL) return (int32_t)RA_OK;
     ra_facade_t* facade = (ra_facade_t*)handle;
     if (facade->client != NULL) {
-        /* No explicit rc_client_unload_game call: the client is about
-         * to be destroyed anyway, so the unload is redundant. Calling
-         * unload_game here also crashes inside rcheevos when the
-         * client never had a game loaded (issue #273 CI: SIGABRT in
-         * rc_client_unload_game+0x7a after evaluate_frame / idle on
-         * a bare client). rc_client_destroy below frees the entire
-         * client state including any scheduled callbacks. */
+        /* Tear down any in-flight async handle by unloading first; this
+         * prevents the event handler from firing on a freed handle.
+         * The vendored rcheevos patches rc_client_unload_game to be
+         * safe on bare clients (game == NULL && state.load == NULL),
+         * so this call no longer SIGABRTs when called on a client that
+         * never had prepare_game succeed (issue #273). */
+        rc_client_unload_game(facade->client);
         event_queue_clear(&facade->events);
         http_queue_clear(&facade->http);
         if (facade->achievement_list != NULL) {

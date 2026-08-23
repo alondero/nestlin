@@ -233,25 +233,46 @@ The nine steps are:
 
 1. **manifest** — `MANIFEST.json` is bundled; entry for the host
    OS+arch exists; bundled library size matches; SHA-256 matches.
-2. **load** — JNA can `Native.load("rcheevos_facade")`.
+2. **load** — JNA can load the library (via the absolute path of
+   the temp file the runner extracts from the JAR).
 3. **version** — the loaded library's `ra_facade_rcheevos_version()`
    and `ra_facade_version()` match the manifest's pinned strings.
 4. **client-lifetime** — `ra_facade_create` returns non-null;
-   `ra_facade_destroy` is idempotent.
+   `ra_facade_destroy` is called twice (idempotent check) and
+   returns `RA_OK` both times; `ra_facade_create` after destroy
+   also returns non-null.
 5. **nes-hashing** — `ra_facade_hash_nes_rom` returns a 32-char
    lowercase hex digest; hashing the same ROM twice returns the
    same digest.
 6. **mock-login** — `isSignedIn()` returns false after create
    (the forced-softcore contract).
-7. **memory-events** — the read-memory callback is not invoked
-   on the no-game path (no spurious reads).
+7. **memory-events** — `set_memory_reader` accepts a JNA callback
+   and returns `RA_OK`; `poll_event` reports no events on the
+   bare client. The runner does NOT tick `evaluate_frame` /
+   `idle` here (those assume rcheevos's internal scheduler is in
+   a clean state, which only holds after a `prepare_game` round-trip).
 8. **progress-serialization** — `progress_size` and
    `serialize_progress` return 0 on the no-game path.
-9. **callback-teardown** — destroying a handle drains the event
-   queue; the new handle's queue starts empty.
+9. **callback-teardown** — `poll_event` drains any pending events;
+   `ra_facade_destroy` returns `RA_OK`; a fresh `ra_facade_create`
+   succeeds; the new handle's event queue starts empty; the second
+   handle is torn down too so the process exits cleanly.
 
 The runner never reaches the network. It is safe to run on an
 air-gapped CI machine.
+
+### Bare-client safety (issue #273 follow-up)
+
+The vendored rcheevos library is patched so `rc_client_unload_game`
+early-returns when both `client->game == NULL` and
+`client->state.load == NULL`. This makes every `ra_facade_destroy`
+safe on a bare client — important because the production shutdown
+path (`NativeRetroAchievementsService.shutdown`) calls destroy
+unconditionally, including when the user enables RA but never loads
+a game. Before the patch, this crashed the JVM with SIGABRT in the
+scheduled_callbacks walk. The
+`NativeRetroAchievementsServiceBareShutdownTest` JUnit test
+exercises this path on a real native library (`./gradlew testNativeRa`).
 
 ## Per-OS notes
 

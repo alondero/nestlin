@@ -163,7 +163,23 @@ case "$HOST" in
     windows) PLATFORM_ID="windows-x86_64";     RESOURCE_DIR="windows" ;;
     *)       echo "Unsupported host: $HOST" >&2; exit 1 ;;
 esac
-SHA256=$(sha256sum "$LIB_PATH" 2>/dev/null | awk '{print $1}')
+# SHA-256: macOS ships `shasum -a 256`, not GNU `sha256sum`. Try GNU
+# first, fall back to the BSD/macOS utility. On any platform without
+# either, log an empty hash and let the runtime's CHECKSUM_MISMATCH
+# failure surface the problem — never silently produce an empty digest.
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA256=$(sha256sum "$LIB_PATH" 2>/dev/null | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    # shasum -a 256 prints "<hash>  <file>" — same shape as sha256sum.
+    SHA256=$(shasum -a 256 "$LIB_PATH" 2>/dev/null | awk '{print $1}')
+elif command -v openssl >/dev/null 2>&1; then
+    # openssl dgst -sha256 -hex prints "SHA256(stdin)= <hash>".
+    SHA256=$(openssl dgst -sha256 -hex "$LIB_PATH" 2>/dev/null | \
+        awk '{print $NF}')
+else
+    echo "[BUILD-NATIVE-RA] WARNING: no SHA-256 tool on PATH (tried sha256sum, shasum, openssl); emitting empty digest." >&2
+    SHA256=""
+fi
 MANIFEST_PATH="$OUT_DIR/MANIFEST.fragment.json"
 cat > "$MANIFEST_PATH" <<EOF
 {

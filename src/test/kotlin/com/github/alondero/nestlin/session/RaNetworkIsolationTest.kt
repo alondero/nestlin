@@ -29,71 +29,71 @@ class RaNetworkIsolationTest {
     @Test
     fun `JavaHttpClientTransport has no hardcoded RA host`() {
         // The production transport takes whatever URL rcheevos hands
-        // it via the bridge — it never embeds a host. Assert this on
-        // the compiled bytecode: the strings table of the class must
-        // not contain the production host.
-        val noHost = javaHttpClientTransportFieldStrings()
-            .none { it.contains("retroachievements", ignoreCase = true) }
-        assertTrue(noHost,
-            "JavaHttpClientTransport fields must not contain the production RA host. " +
-                "The transport is host-agnostic by design.")
-    }
-
-    /**
-     * Reflectively walk every (static + instance) field on
-     * `JavaHttpClientTransport` and return its String value. A
-     * field that holds the production host would surface here; if
-     * any future code added a hardcoded `const val HOST`, this
-     * helper would surface it.
-     */
-    private fun javaHttpClientTransportFieldStrings(): List<String> {
-        val cls = JavaHttpClientTransport::class.java
-        val out = mutableListOf<String>()
-        // Static const vals are inlined into the bytecode constant
-        // pool, so a hardcoded host like "https://retroachievements.org"
-        // embedded in a `const val` would NOT show up via field
-        // reflection — it lives in the class's constant pool. We
-        // check that pool too.
-        val constantPoolStrings = runCatching {
-            cls.declaredFields.flatMap { f ->
-                f.isAccessible = true
-                val value = f.get(null) ?: f.get(JavaHttpClientTransport())
-                when (value) {
-                    is String -> listOf(value)
-                    else -> emptyList()
-                }
-            }
-        }.getOrDefault(emptyList())
-        out += constantPoolStrings
-        // Also scan any inner enum / static companion object's
-        // declared fields for string values that might host the URL.
-        val innerStrings = cls.declaredClasses.flatMap { inner ->
-            inner.declaredFields.mapNotNull { f ->
-                runCatching { f.isAccessible = true; f.get(null) as? String }.getOrNull()
-            }
-        }
-        out += innerStrings
-        return out
+        // it via the bridge — it never embeds a host. Assert this by
+        // scanning the bytecode's constant pool for the production
+        // host string (which is what would be inlined for any
+        // hardcoded `const val`).
+        val classBytes = JavaHttpClientTransport::class.java
+            .getResourceAsStream("JavaHttpClientTransport.class")?.readAllBytes()
+            ?: error("Could not read JavaHttpClientTransport.class")
+        val hostInBytecode = classBytes.toString(Charsets.ISO_8859_1)
+            .contains("retroachievements", ignoreCase = true)
+        assertTrue(!hostInBytecode,
+            "JavaHttpClientTransport bytecode must not contain 'retroachievements' — " +
+                "the transport is host-agnostic by design (URLs come from rcheevos at runtime).")
     }
 
     @Test
     fun `FakeRaHttpTransport is the only test transport variant`() {
-        // Tests must use FakeRaHttpTransport, not a live HTTP client.
-        // A new test transport variant that talks to production is a
-        // regression that this test pins.
+        // We assert via the source layout: there must be exactly one
+        // `RaHttpTransport` impl in src/test/kotlin/.../session/. A
+        // new test variant would appear in the test source tree and
+        // break this count.
         //
-        // We don't enumerate types (that would couple to Kotlin
-        // reflection); we assert the documented invariant: the
-        // production transport interface has exactly two impls in
-        // the source tree — JavaHttpClientTransport and the test
-        // FakeRaHttpTransport.
-        //
-        // This test is a documentation pin: if a new transport
-        // appears, the developer is expected to confirm it never
-        // reaches production retroachievements.org.
-        assertNotNull(RaHttpTransport::class.java)  // the interface itself
-        assertTrue(true)  // see the comment above; the structural check is the
-                          // code-review step that catches a new live-transport impl.
+        // The source path is computed relative to the working
+        // directory of the Gradle daemon — which is the repo root
+        // by default but may be a daemon-specific dir on some setups.
+        // We try the cwd-relative path first; if that doesn't exist,
+        // we walk up looking for a `src/test/kotlin/...` directory.
+        val cwd = java.io.File(".").canonicalFile
+        val testSourceDir = generateSequence(cwd) { it.parentFile }
+            .map { java.io.File(it, "src/test/kotlin/com/github/alondero/nestlin/session") }
+            .first { it.exists() && it.isDirectory }
+        // The cleanest invariant is "the FakeRaHttpTransport file
+        // exists and is the only top-level *Transport.kt file with
+        // RaHttpTransport as the declared supertype". Internal test
+        // transports (e.g. RaImageCacheTest's AsyncFakeTransport)
+        // are allowed because they're test fixtures, not transport
+        // alternatives — but a new top-level FakeXxxHttpTransport.kt
+        // file would be a regression.
+        val fakeTransportFile = java.io.File(testSourceDir, "FakeRaHttpTransport.kt")
+        assertTrue(fakeTransportFile.exists(),
+            "FakeRaHttpTransport.kt must exist at ${fakeTransportFile.absolutePath}")
+        val text = fakeTransportFile.readText()
+        assertTrue(
+            Regex("""(class|object)\s+FakeRaHttpTransport\s*:\s*RaHttpTransport""").containsMatchIn(text),
+            "FakeRaHttpTransport.kt must declare FakeRaHttpTransport : RaHttpTransport"
+        )
+        // Look for additional top-level test transport files (any
+        // *.kt in the test session directory whose name ends in
+        // 'Transport.kt' AND declares a class/object extending
+        // RaHttpTransport). The FakeRaHttpTransport is the canonical
+        // fixture; a new FakeFooTransport.kt would be the
+        // regression we want to catch.
+        val extraTransports = testSourceDir.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { it.name.endsWith("Transport.kt") && it.name != "FakeRaHttpTransport.kt" }
+            .filter { file ->
+                // Top-level declaration only — `private class X` inside
+                // a test class is a fixture, not a new transport.
+                Regex("""^(class|object)\s+\w+\s*:\s*RaHttpTransport""", RegexOption.MULTILINE).containsMatchIn(file.readText())
+            }
+            .map { it.nameWithoutExtension }
+            .toList()
+        assertEquals(emptyList<String>(), extraTransports,
+            "No new top-level RaHttpTransport implementations beyond FakeRaHttpTransport. " +
+                "Found: $extraTransports. " +
+                "Add an entry to this test's expected list if the new transport is intentional.")
     }
 
     @Test

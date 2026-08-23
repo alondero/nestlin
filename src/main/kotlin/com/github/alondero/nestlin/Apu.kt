@@ -218,13 +218,6 @@ class Apu(private val dmaPort: DmaPort) {
     fun getAudioSamples(): ShortArray {
         val available = audioBuffer.availableSamples()
         if (available == 0) {
-            // Audio health probe: increment the silent-reads counter so
-            // the RA performance benchmark (and any future
-            // audio-underrun diagnostic) can observe this without
-            // touching the audio playback loop. The counter is
-            // thread-safe so the FX audio thread and the benchmark
-            // reader can race freely.
-            silentReadsCounter.incrementAndGet()
             return ShortArray(0)
         }
 
@@ -232,26 +225,6 @@ class Apu(private val dmaPort: DmaPort) {
         audioBuffer.read(output, available)
         return output
     }
-
-    /**
-     * Total number of times [getAudioSamples] returned an empty
-     * buffer (the APU produced nothing for this poll). Useful for
-     * diagnosing audio underruns from a headless benchmark; never
-     * reset by the production audio loop. The benchmark CLI resets
-     * it via [resetSilentReadsCounter] when it wants a per-window
-     * count.
-     *
-     * Thread-safe; the production audio thread and any diagnostic
-     * reader can both touch it without locking.
-     */
-    fun silentReads(): Long = silentReadsCounter.get()
-
-    /** Reset the silent-reads counter. Used by the benchmark CLI for
-     *  per-window measurement; production never calls this. */
-    fun resetSilentReadsCounter() { silentReadsCounter.set(0L) }
-
-    private val silentReadsCounter: java.util.concurrent.atomic.AtomicLong =
-        java.util.concurrent.atomic.AtomicLong(0L)
 
     // Integrate with Memory for register writes/reads
     fun handleRegisterWrite(address: Int, value: Byte) {

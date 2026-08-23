@@ -3,12 +3,27 @@ package com.github.alondero.nestlin.cli
 import com.github.alondero.nestlin.session.RaEvent
 import com.github.alondero.nestlin.session.RaFacadeBindings
 import com.github.alondero.nestlin.session.RaManifest
+import com.github.alondero.nestlin.session.RaReadMemoryFn
 import com.github.alondero.nestlin.session.RaStatus
 import com.github.alondero.nestlin.util.Redactor
 import com.sun.jna.Pointer
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+
+/**
+ * Static pre-registered JNA read-memory callback. JNA rejects freshly-built
+ * SAM lambdas at set_memory_reader time with
+ * `Unsupported argument type NativeRaSmoke$$Lambda@xxx` because the
+ * Callback proxy has to be wired at first-call site, not at every
+ * invocation. A static instance bypasses the issue: JNA wraps it once
+ * at first use and reuses the native trampoline for subsequent calls.
+ *
+ * Returns zero bytes for every read — the smoke's contract is "the
+ * reader was installed successfully and was NOT called on the no-game
+ * path" (we never tick evaluate_frame / idle on a bare client).
+ */
+private val smokeMemoryReader = RaReadMemoryFn { _, _, _ -> 0 }
 
 /**
  * Native RetroAchievements smoke runner (issue #273 AC: "Each release
@@ -107,37 +122,46 @@ object NativeRaSmoke {
                 "rcheevos='$rcheevos' facade='$facade' (expected 12.4.0 / 1.0.0)")
         }
 
-        // Step 4: client lifetime. We deliberately do NOT call
-        // ra_facade_destroy on a freshly-created bare client — rcheevos's
-        // internal rc_client_destroy unconditionally calls
-        // rc_client_unload_game (line 211 of rc_client.c), which SIGABRTs
-        // on a bare client in the scheduled_callbacks walk (issue #273 CI
-        // history — see commits deaad1e + 0a1f125). The destroy contract
-        // is exercised by:
-        //   - The JUnit test suite (RaFacadeBindingsTest, etc.) which runs
-        //     on every PR.
-        //   - The Kotlin NativeRetroAchievementsService.shutdown() code
-        //     path which the production UI calls on app exit.
-        //   - The NativeRaSmokeTest "exits cleanly" assertion that the
-        //     runner doesn't SIGABRT on a host without the native lib.
-        // For the no-game smoke path, the JVM exit handler frees the
-        // temp-extracted .so file (registered via deleteOnExit).
-        val liveHandle: Pointer? = lib.ra_facade_create(null, null)
-        val lifetimeOk = liveHandle != null
-        results += StepResult(4, "client-lifetime", if (lifetimeOk) Verdict.PASS else Verdict.FAIL,
-            "create=${if (liveHandle != null) "non-null" else "null"} " +
-                "(destroy exercised by JUnit suite + production shutdown; " +
-                "skipping here to avoid the rcheevos unload_game crash)")
-        if (liveHandle == null) {
+        // Step 4: client lifetime + idempotent destroy. We create a
+        // single handle and pass it through the remaining steps so the
+        // "callback teardown" step has a real event queue to drain.
+        // The destroy contract is a release-blocking invariant; the
+        // vendored rcheevos patch (see native/rcheevos/NOTICE) makes
+        // rc_client_unload_game safe on bare clients, so this no
+        // longer SIGABRTs.
+        val handle: Pointer = lib.ra_facade_create(null, null) ?: run {
+            results += StepResult(4, "client-lifetime", Verdict.FAIL,
+                "ra_facade_create returned null")
             results.forEach { printStep(it, out) }
             return Verdict.FAIL
         }
-        // Steps 5..9 each create their own handle. We don't share
-        // `liveHandle` because (a) destroy isn't safe on bare clients
-        // and (b) keeping each step self-contained makes failures
-        // easier to attribute. The first `liveHandle` leaks — the
-        // deleteOnExit hook on the temp file cleans up the .so on JVM
-        // exit; the rc_client_t* itself is freed when the process exits.
+        var firstDestroy = -1
+        var secondDestroy = -1
+        var postDestroyCreate: Pointer? = null
+        val lifetimeOk = try {
+            firstDestroy = lib.ra_facade_destroy(handle)
+            secondDestroy = lib.ra_facade_destroy(handle)  // idempotency
+            postDestroyCreate = lib.ra_facade_create(null, null)
+            firstDestroy == RaStatus.OK && secondDestroy == RaStatus.OK &&
+                postDestroyCreate != null
+        } catch (t: Throwable) {
+            // Catching here is defence-in-depth — a JNI fault from the
+            // destroy path is a bug, not a test failure to surface as
+            // PASS. The test's value is "no crash", not "throw".
+            false
+        }
+        // Re-create the handle the remaining steps will use.
+        val liveHandle: Pointer = postDestroyCreate ?: lib.ra_facade_create(null, null) ?: run {
+            results += StepResult(4, "client-lifetime", Verdict.FAIL,
+                "ra_facade_create (post-destroy) returned null; " +
+                    "destroy1=$firstDestroy destroy2=$secondDestroy")
+            results.forEach { printStep(it, out) }
+            return Verdict.FAIL
+        }
+        results += StepResult(4, "client-lifetime", if (lifetimeOk) Verdict.PASS else Verdict.FAIL,
+            "create=non-null destroy1=$firstDestroy destroy2=$secondDestroy (idempotent) " +
+                "recreate=${if (postDestroyCreate != null) "ok" else "null"}")
+        val h: Pointer = liveHandle
 
         results += runStep(5, "nes-hashing") {
             val fixture: ByteArray = try {
@@ -186,28 +210,21 @@ object NativeRaSmoke {
         }
 
         results += runStep(7, "memory-events") {
-            // Each step creates its own handle (see note in step 4
-            // about destroy being unsafe on bare clients). Confirm
-            // poll_event reports no events on the bare client. We
-            // deliberately do NOT register a JNA read-memory callback
-            // (the SAM lambda registration was failing with
-            // "Unsupported argument type Lambda" on the first CI run
-            // — JNA's per-callback registration rejects freshly-built
-            // lambdas that close over nothing; production
-            // installMemoryReader uses a static pre-registered
-            // instance) and we don't tick evaluate_frame / idle (see
-            // step 4 note on the rcheevos crash).
-            val hStep7: Pointer? = lib.ra_facade_create(null, null)
-            if (hStep7 == null) {
-                return@runStep StepResult(0, "memory-events", Verdict.FAIL,
-                    "ra_facade_create returned null")
-            }
+            // Install the JNA read-memory callback via the static
+            // `smokeMemoryReader` instance (see top-of-file comment on
+            // why a fresh lambda fails). On a bare client the callback
+            // must NOT be invoked (the façade short-circuits before
+            // rcheevos is asked to read memory). We deliberately do NOT
+            // tick evaluate_frame / idle here — those assume rcheevos's
+            // internal scheduler is in a clean state, which only holds
+            // after a prepare_game round-trip.
+            val setRc = lib.ra_facade_set_memory_reader(h, smokeMemoryReader, null)
             val ev = RaEvent()
-            val polled = lib.ra_facade_poll_event(hStep7, ev)
-            val ok = polled == 0
+            val polled = lib.ra_facade_poll_event(h, ev)
+            val ok = setRc == RaStatus.OK && polled == 0
             StepResult(0, "memory-events", if (ok) Verdict.PASS else Verdict.FAIL,
-                "eventsPolled=$polled (expected 0 on no-game path; " +
-                    "callback registration covered by JUnit MemoryPeekRaReaderTest)")
+                "set_memory_reader=$setRc eventsPolled=$polled " +
+                    "(expected 0 events on no-game path; no evaluate_frame / idle)")
         }
 
         results += runStep(8, "progress-serialization") {
@@ -226,27 +243,38 @@ object NativeRaSmoke {
         }
 
         results += runStep(9, "callback-teardown") {
-            // Create a fresh handle, confirm its event queue starts
-            // empty, and verify the create path is repeatable across
-            // invocations. We do NOT call destroy (see step 4 note).
-            // The destroy idempotency contract is covered by
-            // RaFacadeBindingsTest in the JUnit suite.
-            val hStep9a: Pointer? = lib.ra_facade_create(null, null)
-            val ev1 = RaEvent()
-            val firstQueueEmpty: Int = if (hStep9a != null) {
-                lib.ra_facade_poll_event(hStep9a, ev1)
-            } else -1
-            val hStep9b: Pointer? = lib.ra_facade_create(null, null)
-            val ev2 = RaEvent()
-            val secondQueueEmpty: Int = if (hStep9b != null) {
-                lib.ra_facade_poll_event(hStep9b, ev2)
-            } else -1
-            val ok = hStep9a != null && hStep9b != null &&
-                firstQueueEmpty == 0 && secondQueueEmpty == 0
-            StepResult(0, "callback-teardown", if (ok) Verdict.PASS else Verdict.FAIL,
-                "create1=${if (hStep9a != null) "ok" else "null"} queue1Empty=${firstQueueEmpty == 0} " +
-                    "create2=${if (hStep9b != null) "ok" else "null"} queue2Empty=${secondQueueEmpty == 0} " +
-                    "(event queue per-handle; destroy idempotency exercised by JUnit suite)")
+            // Drain any pending events, then destroy + re-create to
+            // prove no event from the previous session leaks into the
+            // new one. The event queue is a per-handle resource; a
+            // destroyed handle's events must not bleed across. The
+            // vendored rcheevos patch makes destroy safe on a bare
+            // client, so this can exercise the real teardown path
+            // (instead of leaking the handle as a previous version
+            // did — see issue #273 review notes).
+            val ev = RaEvent()
+            var drainedEvents = 0
+            while (lib.ra_facade_poll_event(h, ev) != 0) drainedEvents++
+            var destroyRc = -1
+            var newHandle: Pointer? = null
+            var newQueueHasEvent = -1
+            val teardownOk = try {
+                destroyRc = lib.ra_facade_destroy(h)
+                newHandle = lib.ra_facade_create(null, null)
+                if (newHandle != null) {
+                    val newEv = RaEvent()
+                    newQueueHasEvent = lib.ra_facade_poll_event(newHandle, newEv)
+                }
+                destroyRc == RaStatus.OK && newHandle != null && newQueueHasEvent == 0
+            } catch (t: Throwable) {
+                false
+            }
+            // Clean up the new handle too.
+            if (newHandle != null) {
+                try { lib.ra_facade_destroy(newHandle) } catch (_: Throwable) {}
+            }
+            StepResult(0, "callback-teardown", if (teardownOk) Verdict.PASS else Verdict.FAIL,
+                "destroy=$destroyRc recreate=${if (newHandle != null) "ok" else "null"} " +
+                    "drainedEvents=$drainedEvents newQueueEmpty=${newQueueHasEvent == 0}")
         }
 
         // Print + summarise.
@@ -322,7 +350,11 @@ object NativeRaSmokeCli {
     }
 }
 
-/** Entry point for the `nra-smoke` JavaExec task (or `java -jar nestlin-all.jar nra-smoke`). */
+/*
+ * Entry point for the `nra-smoke` JavaExec task
+ * (or `java -jar nestlin-all.jar nra-smoke`).
+ */
 fun main(args: Array<String>) {
     kotlin.system.exitProcess(NativeRaSmokeCli.main(args.toList()))
 }
+

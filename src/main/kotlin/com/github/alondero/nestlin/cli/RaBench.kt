@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.cli
 
 import com.github.alondero.nestlin.Nestlin
+import com.github.alondero.nestlin.apu.AudioHealthObserver
 import com.github.alondero.nestlin.session.GameSessionCoordinator
 import com.github.alondero.nestlin.session.NativeRetroAchievementsService
 import com.github.alondero.nestlin.session.RaLatencyTracker
@@ -101,6 +102,15 @@ object RaBench {
         val service = RetroAchievementsServiceFactory.create()
         val coord = GameSessionCoordinator(nestlin, service)
 
+        // Audio health: wrap the APU's sample source with an observer
+        // that records underruns at the consumer layer (NOT inside the
+        // Apu class itself — see AudioHealthObserver's class doc for
+        // why). The benchmark owns the observer; production audio
+        // paths that don't care about health metrics wrap with a
+        // pass-through observer.
+        val audioObserver = AudioHealthObserver()
+        val audioSource = audioObserver.wrap(nestlin.apu)
+
         // When the service is the native impl, attach a tracker so
         // the production evaluateFrame call records its own
         // wall-clock duration. The tracker field is `internal var`
@@ -113,16 +123,16 @@ object RaBench {
 
         // Warmup: tick frames, but discard the latency samples so
         // JIT warm-up + audio buffer fill don't poison the p95.
-        tickFrames(nestlin, warmupFrames)
+        tickFrames(nestlin, warmupFrames, audioSource)
         tracker?.reset()
-        nestlin.apu.resetSilentReadsCounter()
+        audioObserver.reset()
 
         // Measured window: full tracker, full audio health.
         val start = System.nanoTime()
-        tickFrames(nestlin, frames)
+        tickFrames(nestlin, frames, audioSource)
         val totalNanos = System.nanoTime() - start
 
-        val silentReadsMeasured = nestlin.apu.silentReads()
+        val silentReadsMeasured = audioObserver.silentReads()
         coord.shutdown()
 
         val p95Micros = if (tracker != null) tracker.p95Nanos() / 1_000.0 else 0.0
@@ -162,10 +172,19 @@ object RaBench {
      * `preFrameCaptureHook` → `evaluateFrameNext`), so this drives
      * the full per-frame path.
      */
-    private fun tickFrames(nestlin: Nestlin, frames: Int) {
+    private fun tickFrames(
+        nestlin: Nestlin,
+        frames: Int,
+        audioSource: AudioHealthObserver.AudioSampleSource,
+    ) {
         var completed = 0
         while (completed < frames) {
             nestlin.stepCpuCycle()
+            // Drain any audio samples produced this cycle so the
+            // observer can record underruns. Production code wires
+            // this through Application.kt's audio thread; the bench
+            // drains inline because there's no separate audio thread.
+            audioSource.getAudioSamples()
             if (nestlin.ppu.frameJustCompleted()) {
                 completed++
             }

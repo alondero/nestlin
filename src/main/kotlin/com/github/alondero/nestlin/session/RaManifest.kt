@@ -84,6 +84,10 @@ data class RaManifest(
         data class Success(
             val entry: Entry,
             val actualSha256Hex: String,
+            /** Already-verified library bytes — passes through to
+             *  RaFacadeBindings.extractBundledLibrary so the resource
+             *  stream isn't reopened for the temp-file write. */
+            val libraryBytes: ByteArray,
             val actualRcheevosVersion: String?,
             val actualFacadeVersion: String?,
         ) : LoadResult
@@ -190,6 +194,11 @@ data class RaManifest(
                 message = "Bundled library missing for $platformId (expected at ${entry.resourcePath}).",
             )
 
+            // Read the library bytes ONCE here; the returned
+            // LoadResult.Success carries them so the caller (load() in
+            // RaFacadeBindings) can extract to a temp file without
+            // reopening the JAR resource stream. Avoids a redundant
+            // resource read for every JNA callback install.
             val bytes = resourceStream.use { it.readAllBytes() }
             if (bytes.size.toLong() != entry.sizeBytes) {
                 return LoadResult.Failure(
@@ -211,6 +220,11 @@ data class RaManifest(
             return LoadResult.Success(
                 entry = entry,
                 actualSha256Hex = actualSha,
+                // Carry the verified bytes through so RaFacadeBindings
+                // can write them to a temp file without re-reading the
+                // JAR resource. Eliminates one classloader.getResource
+                // round-trip per load (issue #273 review).
+                libraryBytes = bytes,
                 actualRcheevosVersion = null,
                 actualFacadeVersion = null,
             )
@@ -232,6 +246,64 @@ data class RaManifest(
                 sb.append((b.toInt() and 0xF).toString(16))
             }
             return sb.toString()
+        }
+
+        /**
+         * Internal test-only hook: parse a manifest JSON string into
+         * a [RaManifest]. Returns null on parse failure. Used by the
+         * synthetic-fixture tests in [RaManifestParseAndValidateTest]
+         * to exercise the parsing path without depending on the JAR
+         * classpath.
+         */
+        @JvmStatic
+        fun fromJsonForTesting(json: String): RaManifest? {
+            return try {
+                Gson().fromJson(json, RaManifest::class.java)
+            } catch (e: JsonSyntaxException) {
+                null
+            }
+        }
+
+        /**
+         * Internal test-only hook: run the size + SHA + entry lookup
+         * checks against an already-parsed [RaManifest]. Mirrors
+         * [loadForCurrentPlatform]'s logic without touching the JAR
+         * classpath. The production caller still goes through
+         * [loadForCurrentPlatform]; this is for unit tests only.
+         */
+        @JvmStatic
+        fun validateForTesting(
+            manifest: RaManifest,
+            platformId: String,
+            libraryBytes: ByteArray,
+        ): LoadResult {
+            val entry = manifest.platforms.firstOrNull { it.platformId == platformId }
+                ?: return LoadResult.Failure(
+                    reason = LoadResult.Reason.PLATFORM_UNSUPPORTED,
+                    message = "Manifest has no entry for platform '$platformId'.",
+                )
+            if (libraryBytes.size.toLong() != entry.sizeBytes) {
+                return LoadResult.Failure(
+                    reason = LoadResult.Reason.SIZE_MISMATCH,
+                    message = "Library size ${libraryBytes.size}B != manifest ${entry.sizeBytes}B for $platformId " +
+                        "(truncated or corrupt bundle).",
+                )
+            }
+            val actualSha = sha256Hex(libraryBytes)
+            if (!actualSha.equals(entry.sha256Hex, ignoreCase = true)) {
+                return LoadResult.Failure(
+                    reason = LoadResult.Reason.CHECKSUM_MISMATCH,
+                    message = "Library SHA-256 mismatch for $platformId " +
+                        "(expected ${entry.sha256Hex.take(12)}…, got ${actualSha.take(12)}…).",
+                )
+            }
+            return LoadResult.Success(
+                entry = entry,
+                actualSha256Hex = actualSha,
+                libraryBytes = libraryBytes,
+                actualRcheevosVersion = null,
+                actualFacadeVersion = null,
+            )
         }
     }
 }

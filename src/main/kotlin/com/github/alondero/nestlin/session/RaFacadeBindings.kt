@@ -278,8 +278,13 @@ internal interface RaFacadeBindings : Library {
             // to a temp file is hermetic (no `java.library.path`
             // mutation) and the cleanup is registered with the JVM
             // shutdown hook.
+            //
+            // Pass the already-verified bytes from RaManifest so the
+            // resource stream isn't reopened (issue #273 review: this
+            // was loading the same library bytes twice in back-to-back
+            // resource reads).
             val extracted = try {
-                extractBundledLibrary(success.entry)
+                writeLibraryToTemp(success.entry, success.libraryBytes)
             } catch (e: Throwable) {
                 return logFailureAndReturnNull(
                     RaManifest.LoadResult.Failure(
@@ -339,9 +344,12 @@ internal interface RaFacadeBindings : Library {
             // exported symbols. A library whose checksum matched but
             // whose embedded version string disagrees with the manifest
             // is treated as "wrong library entirely" — the SHA covers
-            // bytes, the version pin covers semantics.
-            val expectedRcheevosVersion = RaManifest.loadManifest()?.rcheevosVersion
-            val expectedFacadeVersion = RaManifest.loadManifest()?.facadeVersion
+            // bytes, the version pin covers semantics. Read the
+            // manifest once and reuse it (loadManifest() reparses the
+            // JAR resource on every call — issue #273 review).
+            val manifest = RaManifest.loadManifest()
+            val expectedRcheevosVersion = manifest?.rcheevosVersion
+            val expectedFacadeVersion = manifest?.facadeVersion
             val actualRcheevosVersion = try { lib.ra_facade_rcheevos_version() } catch (e: Throwable) { null }
             val actualFacadeVersion = try { lib.ra_facade_version() } catch (e: Throwable) { null }
 
@@ -370,10 +378,11 @@ internal interface RaFacadeBindings : Library {
         }
 
         /**
-         * Extract the bundled library bytes from the JAR's classpath
-         * to a per-process temp file and return its absolute path. JNA
-         * doesn't search the `native-ra/<host>/` resource subdirectory
-         * by name, so we have to load by absolute path.
+         * Write [bytes] (already verified against the manifest's
+         * SHA-256 by RaManifest) to a per-process temp file and
+         * return its absolute path. JNA doesn't search the
+         * `native-ra/<host>/` resource subdirectory by name, so we
+         * have to load by absolute path.
          *
          * The temp file is named after the platform's library
          * filename so a debug `ls -la /tmp` is informative, and is
@@ -383,15 +392,15 @@ internal interface RaFacadeBindings : Library {
          * a writable temp dir is the only filesystem permission we
          * require.
          *
-         * Returns null when the resource is absent (caller logs a
+         * Caller is responsible for the source of [bytes] — this
+         * function does NOT re-read the JAR resource. It only
+         * extracts already-loaded bytes to a file JNA can load.
+         *
+         * Returns null when [bytes] is empty (caller logs a
          * [RaManifest.LoadResult.Reason.LIBRARY_MISSING] diagnostic).
-         * Throws on any other failure (caller logs a
-         * [RaManifest.LoadResult.Reason.NATIVE_LOAD_FAILED] diagnostic).
          */
-        private fun extractBundledLibrary(entry: RaManifest.Entry): java.io.File? {
-            val resourceStream = RaFacadeBindings::class.java.classLoader
-                .getResourceAsStream(entry.resourcePath) ?: return null
-            val bytes = resourceStream.use { it.readAllBytes() }
+        private fun writeLibraryToTemp(entry: RaManifest.Entry, bytes: ByteArray): java.io.File? {
+            if (bytes.isEmpty()) return null
             val suffix = when {
                 entry.libraryFilename.endsWith(".dll") -> ".dll"
                 entry.libraryFilename.endsWith(".dylib") -> ".dylib"
