@@ -180,22 +180,22 @@ object NativeRaSmoke {
 
         results += runStep(7, "memory-events") {
             // Install the JNA callback via set_memory_reader, then
-            // tick one frame. With no game loaded, the façade
-            // short-circuits before rcheevos is asked to read memory,
-            // so no reader invocation should be observable. The
-            // callback we install increments a counter; the assertion
-            // is that the counter stays at 0.
-            var readerCalls = 0
-            val reader = RaReadMemoryFn { _, _, _ -> readerCalls++; 0 }
+            // confirm poll_event reports no events without ever ticking
+            // a frame. We deliberately do NOT call evaluate_frame /
+            // idle here — those operations assume rcheevos's internal
+            // scheduler is in a clean state, which only holds after a
+            // prepare_game round-trip. Ticking them on a bare client
+            // leaves the scheduler with a half-initialized async
+            // handle that rcheevos's later destroy path SIGABRTs on
+            // (issue #273 CI history — see commit deaad1e).
+            val reader = RaReadMemoryFn { _, _, _ -> 0 }
             val setRc = lib.ra_facade_set_memory_reader(h, reader, null)
             val ev = RaEvent()
-            lib.ra_facade_evaluate_frame(h, 0L)
-            lib.ra_facade_idle(h)
             val polled = lib.ra_facade_poll_event(h, ev)
-            val ok = setRc == RaStatus.OK && readerCalls == 0
+            val ok = setRc == RaStatus.OK && polled == 0
             StepResult(0, "memory-events", if (ok) Verdict.PASS else Verdict.FAIL,
-                "set_memory_reader=$setRc; readerCalls=$readerCalls (expected 0 on no-game path) " +
-                    "eventsPolled=$polled")
+                "set_memory_reader=$setRc eventsPolled=$polled " +
+                    "(expected 0 events on no-game path; no evaluate_frame / idle)")
         }
 
         results += runStep(8, "progress-serialization") {
@@ -211,8 +211,10 @@ object NativeRaSmoke {
         results += runStep(9, "callback-teardown") {
             // Drain any pending events, then destroy + re-create to
             // prove no event from the previous session leaks into the
-            // new one. The event queue is a per-handle resource; a
-            // destroyed handle's events must not bleed across.
+            // new one. We deliberately do this BEFORE any
+            // evaluate_frame / idle so rcheevos's internal scheduler
+            // is still in its initial state (no async handles pending)
+            // and destroy can safely tear it down.
             val ev = RaEvent()
             var drainedEvents = 0
             while (lib.ra_facade_poll_event(h, ev) != 0) drainedEvents++

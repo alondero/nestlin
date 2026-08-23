@@ -87,4 +87,18 @@ class NativeRaSmokeTest {
         assertTrue(rc in setOf(0, 1, 3),
             "Smoke runner must exit 0/1/3, got $rc. Output: $out")
     }
+
+    @Test
+    fun `smoke runner exits cleanly on a host without native lib`() {
+        // Verifies the exit-code contract from the other side — the
+        // smoke must NOT crash (exit 134 SIGABRT or exit 139 SIGSEGV)
+        // when the native library is missing. A SIGABRT here would
+        // indicate the runner leaked a crash path that hits native
+        // code despite the load() returning null.
+        val out = StringBuilder()
+        val rc = NativeRaSmokeCli.main(emptyList(), out)
+        // Anything above 128 is a Unix signal — must not happen.
+        assertTrue(rc < 128,
+            "Smoke runner crashed with signal (exit=$rc). Output: $out")
+    }
 }
