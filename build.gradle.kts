@@ -410,14 +410,20 @@ fun mergeFragments(fragments: List<java.io.File>): String {
             }
         }
     }
-    // Groovy's JsonOutput.prettyPrint returns Any from Kotlin's
-    // perspective (Groovy's erased return type). Call it via reflection
-    // so the Kotlin compiler sees a String.
-    val method = groovy.json.JsonOutput::class.java.getMethod(
-        "prettyPrint", Any::class.java
-    )
-    val result = method.invoke(null, merged as Any) as String
-    return result
+    // Groovy's JsonOutput.prettyPrint has specific overloads
+    // (Map, List) — passing `Any` (Kotlin's erased parameter) hits
+    // `NoSuchMethodException`. Use the Map overload directly.
+    // Groovy's JsonOutput.prettyPrint has multiple overloads (Map,
+    // List, String) and Kotlin only sees the String one because of
+    // how Kotlin handles Groovy methods. Invoke via reflection so we
+    // hit the actual Map overload at runtime. (Same trick the
+    // JsonSlurper.parseText call avoided above.)
+    @Suppress("UNCHECKED_CAST")
+    val mergedMap = merged as Map<Any, Any?>
+    val methods = groovy.json.JsonOutput::class.java.declaredMethods
+    val prettyPrint = methods.first { it.name == "prettyPrint" && it.parameterCount == 1 }
+    val output = prettyPrint.invoke(null, mergedMap)
+    return output.toString()
 }
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
