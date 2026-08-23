@@ -1,4 +1,4 @@
-# Pre-built native RetroAchievements library release (issue #273).
+# Pre-built native RetroAchievements library release (issue #273 follow-up).
 #
 # Builds the vendored rcheevos v12.4.0 + flat C façade on each of the
 # three supported platforms, packages each result as a zip alongside
@@ -8,11 +8,7 @@
 #
 # Triggers on:
 #   - push of a v* tag (e.g. v1.2.3)
-#   - manual dispatch (for testing — uses a synthetic tag)
-#
-# The release tag is what consumers pin via NESTLIN_RA_RELEASE_TAG. By
-# default the consumer-side task uses "latest", which the GitHub API
-# resolves to the most recent published release.
+#   - manual dispatch (for testing — uses an optional synthetic tag)
 #
 # Output assets (one per host):
 #   rcheevos_facade-windows-x86_64.zip
@@ -37,13 +33,28 @@ on:
         required: false
         default: ''
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    name: build (${{ matrix.os }})
+    name: build (${{ matrix.os_label }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            os_label: linux
+            host_dir: build/native-ra/linux
+            platform_id: linux-x86_64
+          - os: windows-latest
+            os_label: windows
+            host_dir: build/native-ra/windows
+            platform_id: windows-x86_64
+          - os: macos-latest
+            os_label: macos
+            host_dir: build/native-ra/macos
+            platform_id: macos-universal
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -73,32 +84,22 @@ jobs:
         # side can pattern-match. The MANIFEST.fragment.json must be
         # next to the library so the consumer's :writeNativeRaManifest
         # can pick it up and merge it into the shipped MANIFEST.json.
+        # zip is pre-installed on all three runner images.
         shell: bash
         run: |
-          PLATFORM_ID="${{ matrix.os == 'windows-latest' && 'windows-x86_64' || '' }}"
-          PLATFORM_ID="${{ matrix.os == 'macos-latest' && 'macos-universal' || PLATFORM_ID }}"
-          PLATFORM_ID="${{ matrix.os == 'ubuntu-latest' && 'linux-x86_64' || PLATFORM_ID }}"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            HOST_DIR="build/native-ra/windows"
-          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            HOST_DIR="build/native-ra/macos"
-          else
-            HOST_DIR="build/native-ra/linux"
-          fi
-          ASSET="rcheevos_facade-${PLATFORM_ID}.zip"
-          echo "Host dir: $HOST_DIR"
+          set -e
+          ASSET="rcheevos_facade-${{ matrix.platform_id }}.zip"
+          echo "Host dir: ${{ matrix.host_dir }}"
           echo "Asset:    $ASSET"
-          ls -la "$HOST_DIR"
-          # PowerShell's Compress-Archive handles both Windows and POSIX
-          # callers via bash's shell-shim on Windows runners.
-          (cd "$HOST_DIR" && zip -r "../../${ASSET}" .)
+          ls -la "${{ matrix.host_dir }}"
+          (cd "${{ matrix.host_dir }}" && zip -r "../../$ASSET" .)
           echo "Asset contents:"
-          unzip -l "${ASSET}"
+          unzip -l "$ASSET"
 
       - name: Upload build artifact (for verification)
         uses: actions/upload-artifact@v4
         with:
-          name: rcheevos_facade-${{ matrix.os }}
+          name: rcheevos_facade-${{ matrix.os_label }}
           path: rcheevos_facade-*.zip
           if-no-files-found: error
 
@@ -106,12 +107,7 @@ jobs:
     name: Attach assets to GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    # softprops/action-gh-release needs write access.
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download all platform artifacts
         uses: actions/download-artifact@v4
         with:
@@ -120,21 +116,19 @@ jobs:
       - name: List downloaded artifacts
         run: ls -la artifacts/
 
-      # Tag-push trigger: attach to that release. Manual dispatch:
-      # create (or update) a release with the input tag if non-blank,
-      # otherwise skip the release step (the build still succeeded —
-      # the artifacts are downloadable from the workflow run page).
+      # Resolve the tag — push events use github.ref_name, dispatch
+      # events use the input. Tag-push trigger: attach to that release.
+      # Manual dispatch with a non-blank tag: create (or update) a
+      # release with that synthetic tag. Manual dispatch with a blank
+      # tag: skip the release step (build artifacts are still
+      # downloadable from the workflow run page).
       - name: Attach assets to release
-        if: |
-          startsWith(github.event_name, 'push') ||
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+        if: ${{ github.event_name == 'push' || github.event.inputs.tag != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          # Resolve the tag — push events use github.ref_name, dispatch
-          # events use the input. Fail with a clear message if neither
-          # is set.
+          set -e
           if [ "${{ github.event_name }}" = "push" ]; then
             TAG="${GITHUB_REF_NAME:-}"
           else
@@ -145,12 +139,18 @@ jobs:
             exit 1
           fi
           echo "Attaching to release tag: $TAG"
-          # Ensure the release exists (create-as-draft for tag-push,
-          # so maintainers can publish manually after a quick sanity check).
-          gh release create "$TAG" \
-            --draft \
-            --title "Nestlin $TAG" \
-            --generate-notes \
-            artifacts/*/rcheevos_facade-*.zip \
-            || gh release upload "$TAG" artifacts/*/rcheevos_facade-*.zip --clobber
-          echo "Done. Verify the release at: https://github.com/${{ github.repository }}/releases/tag/$TAG"
+          # Create the release as draft so a maintainer can publish
+          # manually after a quick sanity check. If the release already
+          # exists (re-run), upload clobbers the existing assets.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists; uploading assets with --clobber."
+            gh release upload "$TAG" artifacts/*/rcheevos_facade-*.zip --clobber
+          else
+            echo "Creating draft release $TAG."
+            gh release create "$TAG" \
+              --draft \
+              --title "Nestlin $TAG" \
+              --generate-notes \
+              artifacts/*/rcheevos_facade-*.zip
+          fi
+          echo "Done. Verify at: https://github.com/${{ github.repository }}/releases/tag/$TAG"
