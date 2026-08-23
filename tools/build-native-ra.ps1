@@ -152,27 +152,43 @@ Write-Host "[BUILD-NATIVE-RA] Built: $libPath ($libSize bytes)" -ForegroundColor
 #   resourcePath    - the JAR-relative slash path
 #   sha256Hex       - lowercase 64-char hex digest of the library bytes
 #   sizeBytes       - library size in bytes (cheap pre-check vs. corruption)
-$platformId = if ($isWindows) { "windows-x86_64" }
-              elseif ($isMac) { "macos-universal" }
-              else { "linux-x86_64" }
-$resourcePath = "native-ra/" + ($libName -replace '^libr','') -replace '\.(dll|so|dylib)$',''
-$resourcePath = "native-ra/" + (if ($isWindows) { "windows" } elseif ($isMac) { "macos" } else { "linux" }) + "/" + $libName
+#
+# Note: PowerShell 5.1 (the default on GitHub Actions windows-latest) does
+# NOT support `if` as an expression — only as a statement. The earlier
+# `$resourcePath = "native-ra/" + (if (...) { "windows" } ...)` form errors
+# out with "The term 'if' is not recognized", leaves $resourcePath at
+# its previous value (a stripped-extension string), and the runtime then
+# fails with LIBRARY_MISSING. Use a switch instead.
+if ($isWindows) {
+    $platformId = 'windows-x86_64'
+    $resourceSubdir = 'windows'
+} elseif ($isMac) {
+    $platformId = 'macos-universal'
+    $resourceSubdir = 'macos'
+} else {
+    $platformId = 'linux-x86_64'
+    $resourceSubdir = 'linux'
+}
+$resourcePath = "native-ra/$resourceSubdir/$libName"
 $sha256 = (Get-FileHash -Path $libPath -Algorithm SHA256).Hash.ToLower()
 $manifestPath = Join-Path $OutputDir 'MANIFEST.fragment.json'
-$fragment = @"
-{
-  "platforms": [
-    {
-      "platformId": "$platformId",
-      "libraryFilename": "$libName",
-      "resourcePath": "$resourcePath",
-      "sha256Hex": "$sha256",
-      "sizeBytes": $libSize
-    }
-  ]
-}
-"@
-Set-Content -Path $manifestPath -Value $fragment -Encoding UTF8
+# Build the fragment line-by-line to avoid PowerShell 5.1 here-string
+# parser quirks with colons / braces in the body.
+$fragmentLines = @(
+    '{'
+    '  "platforms": ['
+    '    {'
+    ('      "platformId": "' + $platformId + '",')
+    ('      "libraryFilename": "' + $libName + '",')
+    ('      "resourcePath": "' + $resourcePath + '",')
+    ('      "sha256Hex": "' + $sha256 + '",')
+    ('      "sizeBytes": ' + $libSize)
+    '    }'
+    '  ]'
+    '}'
+)
+$fragment = ($fragmentLines -join "`n") + "`n"
+Set-Content -Path $manifestPath -Value $fragment -Encoding UTF8 -NoNewline
 Write-Host "[BUILD-NATIVE-RA] Wrote manifest fragment: $manifestPath"
 
 exit 0

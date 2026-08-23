@@ -500,8 +500,15 @@ RA_FACADE_EXPORT int32_t ra_facade_destroy(void* handle) {
     ra_facade_t* facade = (ra_facade_t*)handle;
     if (facade->client != NULL) {
         /* Tear down any in-flight async handle by unloading first; this
-         * prevents the event handler from firing on a freed handle. */
-        rc_client_unload_game(facade->client);
+         * prevents the event handler from firing on a freed handle.
+         * Skip the unload if no game is currently loaded — calling
+         * rc_client_unload_game on a bare client crashes inside
+         * rcheevos (issue #273 CI: SIGABRT in rc_client_unload_game
+         * +0x7a when the smoke runner destroys a client that only
+         * ran evaluate_frame without a prior prepare_game). */
+        if (rc_client_get_load_game_state(facade->client) != RC_CLIENT_LOAD_GAME_STATE_NONE) {
+            rc_client_unload_game(facade->client);
+        }
         event_queue_clear(&facade->events);
         http_queue_clear(&facade->http);
         if (facade->achievement_list != NULL) {
