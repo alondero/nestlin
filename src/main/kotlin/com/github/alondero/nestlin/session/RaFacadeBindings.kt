@@ -270,10 +270,40 @@ internal interface RaFacadeBindings : Library {
             }
             val success = preflight as RaManifest.LoadResult.Success
 
+            // Extract the bundled library to a temp file and load by
+            // absolute path. JNA's standard classpath-search rules look
+            // for `linux-x86-64/librcheevos_facade.so` etc., not for
+            // our nested `native-ra/linux/...` resource path — so we
+            // can't rely on `Native.load("name", ...)` alone. Extracting
+            // to a temp file is hermetic (no `java.library.path`
+            // mutation) and the cleanup is registered with the JVM
+            // shutdown hook.
+            val extracted = try {
+                extractBundledLibrary(success.entry)
+            } catch (e: Throwable) {
+                return logFailureAndReturnNull(
+                    RaManifest.LoadResult.Failure(
+                        reason = RaManifest.LoadResult.Reason.NATIVE_LOAD_FAILED,
+                        message = "Failed to extract ${success.entry.libraryFilename} " +
+                            "from JAR resource ${success.entry.resourcePath} on " +
+                            "${success.entry.platformId}: ${e.javaClass.simpleName}: ${e.message}",
+                    )
+                )
+            }
+            if (extracted == null) {
+                return logFailureAndReturnNull(
+                    RaManifest.LoadResult.Failure(
+                        reason = RaManifest.LoadResult.Reason.LIBRARY_MISSING,
+                        message = "Bundled library missing for ${success.entry.platformId} " +
+                            "(expected at ${success.entry.resourcePath}).",
+                    )
+                )
+            }
+
             // JNA load — may throw UnsatisfiedLinkError, ExceptionInInitializerError,
             // or other Throwable. All are normalised to null + structured log.
             val lib: RaFacadeBindings = try {
-                Native.load("rcheevos_facade", RaFacadeBindings::class.java)
+                Native.load(extracted.absolutePath, RaFacadeBindings::class.java)
                     ?: return logFailureAndReturnNull(
                         RaManifest.LoadResult.Failure(
                             reason = RaManifest.LoadResult.Reason.NATIVE_LOAD_FAILED,
@@ -337,6 +367,43 @@ internal interface RaFacadeBindings : Library {
             }
 
             return lib
+        }
+
+        /**
+         * Extract the bundled library bytes from the JAR's classpath
+         * to a per-process temp file and return its absolute path. JNA
+         * doesn't search the `native-ra/<host>/` resource subdirectory
+         * by name, so we have to load by absolute path.
+         *
+         * The temp file is named after the platform's library
+         * filename so a debug `ls -la /tmp` is informative, and is
+         * registered for deletion on JVM shutdown so the OS reclaims
+         * it. We never write any user-controlled data to the file —
+         * just the bytes the manifest's SHA-256 already pinned — so
+         * a writable temp dir is the only filesystem permission we
+         * require.
+         *
+         * Returns null when the resource is absent (caller logs a
+         * [RaManifest.LoadResult.Reason.LIBRARY_MISSING] diagnostic).
+         * Throws on any other failure (caller logs a
+         * [RaManifest.LoadResult.Reason.NATIVE_LOAD_FAILED] diagnostic).
+         */
+        private fun extractBundledLibrary(entry: RaManifest.Entry): java.io.File? {
+            val resourceStream = RaFacadeBindings::class.java.classLoader
+                .getResourceAsStream(entry.resourcePath) ?: return null
+            val bytes = resourceStream.use { it.readAllBytes() }
+            val suffix = when {
+                entry.libraryFilename.endsWith(".dll") -> ".dll"
+                entry.libraryFilename.endsWith(".dylib") -> ".dylib"
+                entry.libraryFilename.endsWith(".so") -> ".so"
+                else -> ""
+            }
+            val tempDir = java.nio.file.Files.createTempDirectory("nestlin-ra-").toFile()
+            tempDir.deleteOnExit()
+            val tempFile = java.io.File(tempDir, entry.libraryFilename.removeSuffix(suffix) + suffix)
+            tempFile.deleteOnExit()
+            tempFile.writeBytes(bytes)
+            return tempFile
         }
 
         /**
