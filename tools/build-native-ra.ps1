@@ -178,6 +178,11 @@ $resourcePath = "native-ra/$resourceSubdir/$libName"
 $sha256 = [string](Get-FileHash -Path $libPath -Algorithm SHA256).Hash
 $sha256 = $sha256.ToLowerInvariant()
 $libSize = (Get-Item -Path $libPath).Length
+# Diagnostic: emit the computed values so a CI log can verify the
+# script produced what we expect. Stripped if $sha256 is suspiciously
+# short (likely a chained here-string interpolation bug).
+Write-Host "[BUILD-NATIVE-RA] libPath=$libPath"
+Write-Host "[BUILD-NATIVE-RA] sha256 length=$($sha256.Length) preview=$($sha256.Substring(0, [Math]::Min(12, $sha256.Length)))"
 $manifestPath = Join-Path $OutputDir 'MANIFEST.fragment.json'
 # Build the JSON fragment via plain string concatenation. PowerShell
 # 5.1's here-string parser can choke on bodies that mix quoted JSON,
