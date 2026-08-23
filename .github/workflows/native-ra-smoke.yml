@@ -1,0 +1,67 @@
+# Native RA smoke (issue #273 AC: each release platform runs a native
+# smoke test). Runs on Windows + Linux + macOS so every platform the
+# JAR ships on gets its native smoke result before the release.
+#
+# The workflow deliberately never contacts retroachievements.org — the
+# smoke is fully hermetic (manifest + checksum + JNA contract only).
+# It also never reads or uses personal credentials.
+
+name: native-ra-smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'native/**'
+      - 'tools/build-native-ra.*'
+      - 'build.gradle.kts'
+      - 'src/main/kotlin/com/github/alondero/nestlin/session/RaFacadeBindings.kt'
+      - 'src/main/kotlin/com/github/alondero/nestlin/session/RaManifest.kt'
+      - 'src/main/kotlin/com/github/alondero/nestlin/cli/NativeRaSmoke.kt'
+  pull_request:
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile native + write manifest
+        # :buildNative probes for gcc/clang on PATH and exits 2
+        # (graceful skip) if no compiler is available — that triggers
+        # a JNA-side NoOp fallback, NOT a build failure. The
+        # :writeNativeRaManifest step then writes MANIFEST.json
+        # only when at least one platform was built.
+        run: ./gradlew buildNative writeNativeRaManifest --no-daemon
+
+      - name: Build fat JAR
+        run: ./gradlew uberJar --no-daemon
+
+      - name: Run native smoke runner
+        # The smoke runner exits 0 on full pass, 1 on a step failure,
+        # and 3 when the native library is missing. We only fail the
+        # matrix step on exit code 1 (a real regression); exit 3 is
+        # informational — the runner's stdout already reports which
+        # step fell back to NoOp.
+        run: |
+          if [ -f build/libs/nestlin-all.jar ]; then
+            java -jar build/libs/nestlin-all.jar nra-smoke
+          else
+            echo "No fat JAR at build/libs/nestlin-all.jar — skipping."
+            exit 0
+          fi
+        shell: bash

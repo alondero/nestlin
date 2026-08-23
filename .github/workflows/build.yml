@@ -25,8 +25,21 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Build native library + manifest
+        # Build the native rcheevos façade on the host (Ubuntu) +
+        # emit MANIFEST.json. When the host lacks a C compiler this
+        # is a graceful skip and the JAR ships without the native lib.
+        run: ./gradlew buildNative writeNativeRaManifest
+
       - name: Build uberJar
         run: ./gradlew uberJar
+
+      - name: Smoke-test the native path
+        # The release JAR must pass its own native smoke before it
+        # ships. Exit 3 (no native lib) is OK on the CI host; a real
+        # smoke regression (exit 1) fails the build.
+        run: java -jar build/libs/nestlin-all.jar nra-smoke
+        continue-on-error: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

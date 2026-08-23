@@ -66,6 +66,18 @@ fun main(args: Array<String>) {
     if (args.isNotEmpty() && args[0] == "bootcheck") {
         kotlin.system.exitProcess(com.github.alondero.nestlin.cli.BootCheckCli.main(args.drop(1)))
     }
+    // Headless `nra-smoke` subcommand (issue #273): exercise the native RA façade
+    // contract on a CI runner that has no display. Without this dispatch the
+    // JAR's Main-Class would launch JavaFX, which throws
+    // `UnsupportedOperationException: Unable to open DISPLAY` on headless hosts.
+    if (args.isNotEmpty() && args[0] == "nra-smoke") {
+        kotlin.system.exitProcess(com.github.alondero.nestlin.cli.NativeRaSmokeCli.main(args.drop(1)))
+    }
+    // Headless `ra-bench` subcommand (issue #273): measure p95 per-frame RA
+    // evaluation latency + audio health. Same display-less requirement.
+    if (args.isNotEmpty() && args[0] == "ra-bench") {
+        kotlin.system.exitProcess(com.github.alondero.nestlin.cli.RaBenchCli.main(args.drop(1)))
+    }
     Application.launch(NestlinApplication::class.java, *args)
 }
 

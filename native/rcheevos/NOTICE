@@ -24,10 +24,20 @@ Local modifications:
   - Removed src/rc_client_types.natvis and
     src/rcheevos/rc_runtime_types.natvis (Visual Studio debugger visualizers;
     we do not build under the Visual Studio debugger).
+  - PATCHED: src/rc_client.c (rc_client_unload_game). Added an early
+    return when both `client->game == NULL` and `client->state.load == NULL`.
+    Upstream's bare-client SIGABRT in the scheduled_callbacks walk
+    happens because the mutex + scheduled-callbacks list assume a
+    prepare_game round-trip has populated them; Nestlin's flow always
+    calls rc_client_unload_game from rc_client_destroy, including on
+    clients where prepare_game never succeeded (production shutdown
+    path: `NativeRetroAchievementsService.shutdown` →
+    `ra_facade_destroy` → `rc_client_destroy_internal` →
+    `rc_client_unload_game`).
 
-The trimmed sources compile unchanged under CMake + GCC / Clang / MSVC.
+The trimmed + patched sources compile unchanged under CMake + GCC / Clang / MSVC.
 To refresh from upstream: drop a fresh rcheevos v12.4.0 checkout in place and
-re-apply the removals above. To upgrade to a newer rcheevos release, re-vendor
-under a new directory name (e.g. native/rcheevos-v12.5.0/) and update
-native/CMakeLists.txt + the SHA recorded above; do not mutate the upstream
-sources in place.
+re-apply the removals + patch above. To upgrade to a newer rcheevos release,
+re-vendor under a new directory name (e.g. native/rcheevos-v12.5.0/) and
+update native/CMakeLists.txt + the SHA recorded above; do not mutate the
+upstream sources in place.

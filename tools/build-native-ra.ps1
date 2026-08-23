@@ -140,4 +140,78 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $libPath)) {
 
 $libSize = (Get-Item $libPath).Length
 Write-Host "[BUILD-NATIVE-RA] Built: $libPath ($libSize bytes)" -ForegroundColor Green
+
+# Emit a per-platform manifest fragment (issue #273 AC: runtime validates
+# checksum + pinned rcheevos version). The Gradle :buildNative task picks
+# up this file alongside the .dll / .so / .dylib and merges the per-platform
+# fragments into a single MANIFEST.json that ships in the runnable JAR.
+#
+# Fields:
+#   platformId      - the canonical id RaManifest.currentPlatformId() emits
+#   libraryFilename - the file JNA resolves at Native.load time
+#   resourcePath    - the JAR-relative slash path
+#   sha256Hex       - lowercase 64-char hex digest of the library bytes
+#   sizeBytes       - library size in bytes (cheap pre-check vs. corruption)
+#
+# Note: PowerShell 5.1 (the default on GitHub Actions windows-latest) does
+# NOT support `if` as an expression — only as a statement. The earlier
+# `$resourcePath = "native-ra/" + (if (...) { "windows" } ...)` form errors
+# out with "The term 'if' is not recognized", leaves $resourcePath at
+# its previous value (a stripped-extension string), and the runtime then
+# fails with LIBRARY_MISSING. Use a switch instead.
+if ($isWindows) {
+    $platformId = 'windows-x86_64'
+    $resourceSubdir = 'windows'
+} elseif ($isMac) {
+    $platformId = 'macos-universal'
+    $resourceSubdir = 'macos'
+} else {
+    $platformId = 'linux-x86_64'
+    $resourceSubdir = 'linux'
+}
+$resourcePath = "native-ra/$resourceSubdir/$libName"
+# Get-FileHash .Hash returns a [string]. On PowerShell 5.1 the
+# runtime can sometimes wrap that string in a way that [string]
+# cast produces an empty string — use the .Hash property directly
+# and call .ToLower() on it. (Earlier [string] cast produced
+# length=0 — the runtime was calling .ToString() on something
+# non-stringy that returned ''.)
+$sha256 = (Get-FileHash -Path $libPath -Algorithm SHA256).Hash
+if ($null -eq $sha256 -or $sha256 -isnot [string] -or $sha256.Length -ne 64) {
+    Write-Host "[BUILD-NATIVE-RA] WARNING: sha256 hash is not a 64-char string. Type=$($sha256.GetType().FullName) Value='$sha256'"
+    # Fallback: compute via .NET directly.
+    $sha256 = [System.BitConverter]::ToString(
+        [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+            [System.IO.File]::ReadAllBytes($libPath)
+        )
+    ).Replace('-', '')
+}
+$sha256 = $sha256.ToLower()
+$libSize = (Get-Item -Path $libPath).Length
+# Diagnostic: emit the computed values so a CI log can verify the
+# script produced what we expect.
+Write-Host "[BUILD-NATIVE-RA] libPath=$libPath"
+Write-Host "[BUILD-NATIVE-RA] sha256 length=$($sha256.Length) preview=$($sha256.Substring(0, [Math]::Min(12, $sha256.Length)))"
+$manifestPath = Join-Path $OutputDir 'MANIFEST.fragment.json'
+# Build the JSON fragment via plain string concatenation. PowerShell
+# 5.1's here-string parser can choke on bodies that mix quoted JSON,
+# curly braces, and trailing commas — emit each field on its own line
+# instead and `Join-Path`-style the result. Use [System.IO.File]
+# directly (bypassing Set-Content's BOM behaviour on some hosts) so
+# the SHA-256 round-trips byte-for-byte.
+$fragment = '{' + [Environment]::NewLine +
+    '  "platforms": [' + [Environment]::NewLine +
+    '    {' + [Environment]::NewLine +
+    '      "platformId": "' + $platformId + '",' + [Environment]::NewLine +
+    '      "libraryFilename": "' + $libName + '",' + [Environment]::NewLine +
+    '      "resourcePath": "' + $resourcePath + '",' + [Environment]::NewLine +
+    '      "sha256Hex": "' + $sha256 + '",' + [Environment]::NewLine +
+    '      "sizeBytes": ' + $libSize + [Environment]::NewLine +
+    '    }' + [Environment]::NewLine +
+    '  ]' + [Environment]::NewLine +
+    '}' + [Environment]::NewLine
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($manifestPath, $fragment, $utf8NoBom)
+Write-Host "[BUILD-NATIVE-RA] Wrote manifest fragment: $manifestPath"
+
 exit 0

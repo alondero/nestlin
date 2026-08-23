@@ -3143,6 +3143,28 @@ void rc_client_unload_game(rc_client_t* client)
   if (!client)
     return;
 
+  /* Nestlin local change (issue #273): bail early on a bare client.
+   *
+   * The downstream `rc_mutex_lock(&client->state.mutex)` walks
+   * `client->state.scheduled_callbacks` unconditionally; on a client
+   * whose only state is the freshly-zeroed `rc_client_create` defaults,
+   * the linked list head may not be in the state the walk assumes,
+   * SIGABRTing the JVM. Nestlin's flow guarantees `unload_game` is
+   * always called as part of `destroy`, even when no `prepare_game` has
+   * ever succeeded — see `ra_facade.c:ra_facade_destroy` →
+   * `rc_client_destroy_internal` → `rc_client_unload_game`. The
+   * production shutdown path (`NativeRetroAchievementsService.shutdown`)
+   * also calls `ra_facade_destroy` on unprepared clients when the user
+   * quits without enabling RA, so a bare-client safe guard is a
+   * release-blocking fix, not just a smoke-runner workaround.
+   *
+   * The contract we keep: if no game was ever loaded
+   * (`client->game == NULL` and `client->state.load == NULL`), there
+   * is nothing to unload. `rc_client_destroy` will still tear down
+   * the mutex + state via its own cleanup path. */
+  if (client->game == NULL && client->state.load == NULL)
+    return;
+
 #ifdef RC_CLIENT_SUPPORTS_EXTERNAL
   if (client->state.external_client && client->state.external_client->unload_game) {
     client->state.external_client->unload_game();

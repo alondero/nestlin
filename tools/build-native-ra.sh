@@ -85,12 +85,14 @@ RCH_INCLUDE_DIR="$RCH_DIR/include"
 case "$(uname -s)" in
     Darwin*)                HOST="macos" ;;
     Linux*)                 HOST="linux" ;;
+    MINGW*|MSYS*|CYGWIN*)   HOST="windows" ;;
     *)                      HOST="unknown" ;;
 esac
 
 case "$HOST" in
     macos)   LIB_NAME="librcheevos_facade.dylib" LINK_EXT="-fPIC -dynamiclib" LINK_LIBS="" ;;
     linux)   LIB_NAME="librcheevos_facade.so"    LINK_EXT="-fPIC"             LINK_LIBS="-lpthread -ldl" ;;
+    windows) LIB_NAME="rcheevos_facade.dll"      LINK_EXT=""                   LINK_LIBS="-lws2_32" ;;
     *) echo "Unsupported host: $HOST" >&2; exit 1 ;;
 esac
 
@@ -150,4 +152,48 @@ fi
 
 LIB_SIZE=$(stat -c %s "$LIB_PATH" 2>/dev/null || stat -f %z "$LIB_PATH" 2>/dev/null || echo "?")
 echo "[BUILD-NATIVE-RA] Built: $LIB_PATH ($LIB_SIZE bytes)"
+
+# Emit a per-platform manifest fragment (issue #273 AC: runtime validates
+# checksum + pinned rcheevos version). The Gradle :buildNative task picks
+# up this file alongside the .so / .dylib and merges the per-platform
+# fragments into a single MANIFEST.json that ships in the runnable JAR.
+case "$HOST" in
+    macos)   PLATFORM_ID="macos-universal";   RESOURCE_DIR="macos" ;;
+    linux)   PLATFORM_ID="linux-x86_64";       RESOURCE_DIR="linux" ;;
+    windows) PLATFORM_ID="windows-x86_64";     RESOURCE_DIR="windows" ;;
+    *)       echo "Unsupported host: $HOST" >&2; exit 1 ;;
+esac
+# SHA-256: macOS ships `shasum -a 256`, not GNU `sha256sum`. Try GNU
+# first, fall back to the BSD/macOS utility. On any platform without
+# either, log an empty hash and let the runtime's CHECKSUM_MISMATCH
+# failure surface the problem — never silently produce an empty digest.
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA256=$(sha256sum "$LIB_PATH" 2>/dev/null | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    # shasum -a 256 prints "<hash>  <file>" — same shape as sha256sum.
+    SHA256=$(shasum -a 256 "$LIB_PATH" 2>/dev/null | awk '{print $1}')
+elif command -v openssl >/dev/null 2>&1; then
+    # openssl dgst -sha256 -hex prints "SHA256(stdin)= <hash>".
+    SHA256=$(openssl dgst -sha256 -hex "$LIB_PATH" 2>/dev/null | \
+        awk '{print $NF}')
+else
+    echo "[BUILD-NATIVE-RA] WARNING: no SHA-256 tool on PATH (tried sha256sum, shasum, openssl); emitting empty digest." >&2
+    SHA256=""
+fi
+MANIFEST_PATH="$OUT_DIR/MANIFEST.fragment.json"
+cat > "$MANIFEST_PATH" <<EOF
+{
+  "platforms": [
+    {
+      "platformId": "$PLATFORM_ID",
+      "libraryFilename": "$LIB_NAME",
+      "resourcePath": "native-ra/$RESOURCE_DIR/$LIB_NAME",
+      "sha256Hex": "$SHA256",
+      "sizeBytes": $LIB_SIZE
+    }
+  ]
+}
+EOF
+echo "[BUILD-NATIVE-RA] Wrote manifest fragment: $MANIFEST_PATH"
+
 exit 0

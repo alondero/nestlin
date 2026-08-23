@@ -500,7 +500,11 @@ RA_FACADE_EXPORT int32_t ra_facade_destroy(void* handle) {
     ra_facade_t* facade = (ra_facade_t*)handle;
     if (facade->client != NULL) {
         /* Tear down any in-flight async handle by unloading first; this
-         * prevents the event handler from firing on a freed handle. */
+         * prevents the event handler from firing on a freed handle.
+         * The vendored rcheevos patches rc_client_unload_game to be
+         * safe on bare clients (game == NULL && state.load == NULL),
+         * so this call no longer SIGABRTs when called on a client that
+         * never had prepare_game succeed (issue #273). */
         rc_client_unload_game(facade->client);
         event_queue_clear(&facade->events);
         http_queue_clear(&facade->http);

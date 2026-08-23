@@ -1,5 +1,7 @@
 package com.github.alondero.nestlin.session
 
+import com.github.alondero.nestlin.util.Redactor
+
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.util.concurrent.CompletableFuture
@@ -109,14 +111,19 @@ class RaImageCache(
                     if (bytes == null || bytes.isEmpty()) {
                         future.complete(null)
                     } else if (bytes.size > maxBytes) {
-                        System.err.println("[RA] Image $url exceeds ${maxBytes}B cap (${bytes.size}B) — dropping")
+                        // Route the URL through Redactor.redactUrl — RA image URLs
+                        // today don't carry credentials, but the URL pattern is
+                        // user-extensible; defence-in-depth.
+                        System.err.println("[RA] Image ${Redactor.redactUrl(url)} " +
+                            "exceeds ${maxBytes}B cap (${bytes.size}B) — dropping")
                         future.complete(null)
                     } else {
                         try {
                             val img = ImageIO.read(ByteArrayInputStream(bytes))
                             future.complete(img)
                         } catch (e: Exception) {
-                            System.err.println("[RA] Image decode failed for $url: ${e.javaClass.simpleName}")
+                            System.err.println("[RA] Image decode failed for " +
+                                "${Redactor.redactUrl(url)}: ${e.javaClass.simpleName}")
                             future.complete(null)
                         }
                     }
