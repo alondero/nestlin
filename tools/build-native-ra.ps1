@@ -170,17 +170,26 @@ if ($isWindows) {
     $resourceSubdir = 'linux'
 }
 $resourcePath = "native-ra/$resourceSubdir/$libName"
-# Get-FileHash returns an object with .Hash as a [string]. On PowerShell
-# 5.1 the runtime can sometimes return a wrapped object that serializes
-# to JSON as {"Value": "...", "Length": 64} instead of the bare string
-# when interpolated into a here-string — explicitly cast through [string]
-# to force the bare-string form.
-$sha256 = [string](Get-FileHash -Path $libPath -Algorithm SHA256).Hash
-$sha256 = $sha256.ToLowerInvariant()
+# Get-FileHash .Hash returns a [string]. On PowerShell 5.1 the
+# runtime can sometimes wrap that string in a way that [string]
+# cast produces an empty string — use the .Hash property directly
+# and call .ToLower() on it. (Earlier [string] cast produced
+# length=0 — the runtime was calling .ToString() on something
+# non-stringy that returned ''.)
+$sha256 = (Get-FileHash -Path $libPath -Algorithm SHA256).Hash
+if ($null -eq $sha256 -or $sha256 -isnot [string] -or $sha256.Length -ne 64) {
+    Write-Host "[BUILD-NATIVE-RA] WARNING: sha256 hash is not a 64-char string. Type=$($sha256.GetType().FullName) Value='$sha256'"
+    # Fallback: compute via .NET directly.
+    $sha256 = [System.BitConverter]::ToString(
+        [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+            [System.IO.File]::ReadAllBytes($libPath)
+        )
+    ).Replace('-', '')
+}
+$sha256 = $sha256.ToLower()
 $libSize = (Get-Item -Path $libPath).Length
 # Diagnostic: emit the computed values so a CI log can verify the
-# script produced what we expect. Stripped if $sha256 is suspiciously
-# short (likely a chained here-string interpolation bug).
+# script produced what we expect.
 Write-Host "[BUILD-NATIVE-RA] libPath=$libPath"
 Write-Host "[BUILD-NATIVE-RA] sha256 length=$($sha256.Length) preview=$($sha256.Substring(0, [Math]::Min(12, $sha256.Length)))"
 $manifestPath = Join-Path $OutputDir 'MANIFEST.fragment.json'
