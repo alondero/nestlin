@@ -414,21 +414,22 @@ fun mergeFragments(fragments: List<java.io.File>): String {
     // (Map, List) — passing `Any` (Kotlin's erased parameter) hits
     // `NoSuchMethodException`. Use the Map overload directly.
     // Groovy's JsonOutput.prettyPrint has multiple overloads (Map,
-    // List, String) and Kotlin only sees the String one. The
-    // simplest portable workaround is to use the JsonOutput method
-    // via reflection that takes the raw java.util.Map class — and
-    // convert our Kotlin Map via a Groovy helper.
+    // List, String) and Kotlin only sees the String one — which
+    // means a Kotlin Map<Any, Any?> gets rejected with
+    // "argument type mismatch" at runtime.
     //
-    // Even simpler: build a JSON string directly using JsonOutput's
-    // toJson(Object) overload — accepts anything.
-    val toJsonMethod = groovy.json.JsonOutput::class.java.declaredMethods
-        .first { it.name == "toJson" && it.parameterCount == 1 }
+    // Workaround: serialize via toJson(Object) (which Kotlin sees
+    // correctly) then re-prettyPrint the String. Two round-trips
+    // through the same library, but the only portable path given
+    // Kotlin's broken view of Groovy overloads.
+    val toJsonMethod = groovy.json.JsonOutput::class.java.methods
+        .first { it.name == "toJson" }
+    val prettyPrintMethod = groovy.json.JsonOutput::class.java.methods
+        .first { it.name == "prettyPrint" && it.parameterTypes.size == 1 }
     @Suppress("UNCHECKED_CAST")
-    val jsonString = toJsonMethod.invoke(null, merged as Any) as String
-    // Pretty-print via a re-parse + prettyPrint cycle. Ugly but
-    // works around every Kotlin ↔ Groovy overload resolution bug.
-    val pretty = groovy.json.JsonOutput.prettyPrint(jsonString)
-    return pretty.toString()
+    val jsonString = toJsonMethod.invoke(null, merged as Any).toString()
+    val pretty = prettyPrintMethod.invoke(null, jsonString).toString()
+    return pretty
 }
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
