@@ -145,7 +145,7 @@ class NestlinApplication : FrameListener, Application() {
         // exposed to the application.
         nestlin.raProgressCapture = SaveState.ProgressCapture { sessionCoordinator.captureProgress() }
         nestlin.raProgressRestore = SaveState.ProgressRestore { progress -> sessionCoordinator.restoreProgress(progress) }
-        GameSessionCoordinator(
+        val coord = GameSessionCoordinator(
             nestlin = nestlin,
             service = raService,
             hooks = GameSessionHooks(
@@ -202,7 +202,25 @@ class NestlinApplication : FrameListener, Application() {
                 onServiceCallEnd = { /* see onServiceCallStart. */ },
             ),
             achievementsController = achievementsControllerLazy,
+            achievementEventBus = achievementEventBus,
         )
+        // Issue #288: subscribe the achievement event bus so unlock /
+        // challenge / measured-progress events from the runtime trigger
+        // a refresh of the achievements window. The listener hops to
+        // the JavaFX Application Thread because [drainEvents] fires
+        // synchronously on the emulation thread (the façade's
+        // `evaluate_frame` path). The controller's generation guard
+        // catches stale events — a late unlock for game A cannot
+        // publish a view-model under game B's generation because
+        // [RaAchievementsController.refresh] reads the controller's
+        // currentGeneration at publish time.
+        achievementEventBusToken = achievementEventBus.addListener { _ ->
+            Platform.runLater {
+                achievementsControllerLazy.refresh()
+                updateRaAchievementsMenuForViewModel()
+            }
+        }
+        coord
     }
     // Hold-Tab fast-forward: disables throttling while held, restores it on release.
     private val fastForward = FastForwardController(nestlin.config)
@@ -559,6 +577,24 @@ class NestlinApplication : FrameListener, Application() {
     private var raAchievementsController: com.github.alondero.nestlin.session.RaAchievementsController? = null
     private var raAchievementsItem: javafx.scene.control.MenuItem? = null
     private var raAchievementsWindow: RaAchievementsWindow? = null
+
+    // Issue #288: achievement event bus. The native façade publishes
+    // unlock / challenge / measured-progress events here; the listener
+    // below calls achievementsControllerLazy.refresh() so the
+    // achievements window re-renders within one frame of the runtime
+    // state change. Generation guards live in the controller — a late
+    // event for the previous game cannot refresh the current game's
+    // window because [RaAchievementsController.refresh] discards
+    // publishes whose generation doesn't match the controller's
+    // currentGeneration.
+    //
+    // The bus is owned by the Application (not the coordinator) so the
+    // listener subscription can be cleaned up on shutdown. The
+    // coordinator's init wires [NativeRetroAchievementsService.achievementEventBus]
+    // to this same instance, so the listener fires for every event
+    // the façade emits.
+    private val achievementEventBus = com.github.alondero.nestlin.session.RetroAchievementsEventBus()
+    private var achievementEventBusToken: com.github.alondero.nestlin.session.RetroAchievementsEventBus.ListenerToken? = null
 
     // --- Movie record/playback state (issue #123) ---
     //
@@ -2368,6 +2404,17 @@ class NestlinApplication : FrameListener, Application() {
         raSignInManagerRef?.shutdown()
         raProfileWindow?.dispose()
         raProfileWindow = null
+
+        // Issue #288: detach the achievement event bus listener so the
+        // bus doesn't hold a reference to achievementsControllerLazy
+        // (and therefore to the FX scene graph) past stop(). The bus
+        // field on the native service is already nulled by
+        // sessionCoordinator.shutdown() above — this drop is for the
+        // listener-side reference. Idempotent.
+        achievementEventBusToken?.let { token ->
+            achievementEventBus.removeListener(token)
+        }
+        achievementEventBusToken = null
 
         // Clean up audio
         audioLine?.stop()
