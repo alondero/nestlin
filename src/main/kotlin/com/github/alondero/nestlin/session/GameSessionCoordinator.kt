@@ -203,6 +203,29 @@ class GameSessionCoordinator(
      */
     val achievementsController: RaAchievementsController? = null,
     /**
+     * Application-supplied callback invoked on every native
+     * `ACHIEVEMENT_TRIGGERED` / `ACHIEVEMENT_CHALLENGE_*` /
+     * `ACHIEVEMENT_PROGRESS_*` event the façade drains
+     * (issue #288). The coordinator wires it onto
+     * [NativeRetroAchievementsService.achievementEventListener] in
+     * [init] (mirrors [installServiceNotificationListener] for the
+     * unlock/system banner path).
+     *
+     * Null by default — CLI / test callers that don't surface the
+     * achievements window pass nothing and the drain path's
+     * `?.let { dispatchAchievementEvent(it, ...) }` becomes a no-op.
+     *
+     * PR #290 review replaced the original `achievementEventBus`
+     * bus-class coupling with this single-listener pattern that
+     * mirrors `notificationListener`. Reason: a sealed
+     * `RaAchievementEvent` + `RetroAchievementsEventBus` +
+     * `ListenerToken` surface was over-engineered for the single
+     * subscriber (the achievements window's refresh path) — every
+     * variant carried the same `achievementId: Int` payload the
+     * listener discarded.
+     */
+    val onAchievementEvent: ((RaAchievementEvent) -> Unit)? = null,
+    /**
      * Hasher used to compute the canonical NES hash for [RomContent]
      * instances loaded from disk. Production uses [NativeRomHasher]; tests
      * and CLI paths without the native library fall back to
@@ -235,6 +258,13 @@ class GameSessionCoordinator(
         // service exposes the field — but exposing it as a method would
         // pollute the public interface.
         installServiceNotificationListener()
+        // Issue #288: wire the application-supplied
+        // [onAchievementEvent] callback onto the native service's
+        // [NativeRetroAchievementsService.achievementEventListener].
+        // Same package-private cast pattern as
+        // [installServiceNotificationListener] — the listener field
+        // is internal to the native service.
+        installServiceAchievementEventListener()
     }
 
     // Issue #270: monotonic frame index for [evaluateFrame]. Reset on
@@ -267,6 +297,22 @@ class GameSessionCoordinator(
     private fun installServiceNotificationListener() {
         val native = service as? NativeRetroAchievementsService ?: return
         native.notificationListener = { n -> publishNotification(n) }
+    }
+
+    /**
+     * Wire the application-supplied [onAchievementEvent] callback onto
+     * [NativeRetroAchievementsService.achievementEventListener]
+     * (issue #288). The cast is safe — the listener field is
+     * package-private and only the native service has it.
+     *
+     * No-op when the service is the no-op (nothing emits events) or
+     * when [onAchievementEvent] is null (a CLI / test caller that
+     * doesn't care about the achievements window).
+     */
+    private fun installServiceAchievementEventListener() {
+        val native = service as? NativeRetroAchievementsService ?: return
+        val listener = onAchievementEvent ?: return
+        native.achievementEventListener = listener
     }
 
     /**
