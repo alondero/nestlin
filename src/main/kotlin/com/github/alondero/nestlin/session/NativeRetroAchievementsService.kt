@@ -91,22 +91,28 @@ internal class NativeRetroAchievementsService private constructor(
 
     /**
      * Sink for native achievement events re-emitted as JVM-side
-     * [RaAchievementEvent]s (issue #288). Set by the application after
-     * the coordinator is constructed; cleared on [shutdown]. The
-     * drain path publishes synchronously after copying every native
-     * string out, so listeners (the achievements-window refresh path)
-     * receive a fully-owned event with the achievement ID the runtime
-     * emitted. Generation guards live one layer up — the listener
-     * typically calls [RaAchievementsController.refresh], which
-     * discards stale publishes whose generation doesn't match the
-     * controller's currentGeneration.
+     * [RaAchievementEvent]s (issue #288). Set by the coordinator's
+     * wiring on construction; cleared on [shutdown]. The drain path
+     * fires this synchronously with a freshly-constructed event so
+     * listeners (the loaded-game achievements window's refresh path)
+     * receive a fully-owned payload with the achievement ID the
+     * runtime emitted. Generation guards live one layer up — the
+     * listener typically calls [RaAchievementsController.refresh],
+     * which discards stale publishes whose generation doesn't match
+     * the controller's currentGeneration.
      *
      * Null by default — production code that doesn't care about
      * window refresh (CLI drivers, headless bench tools) never wires
-     * this and the drain path's `?.publish(...)` becomes a no-op.
+     * this and the drain path's `?.let { ... }` becomes a no-op.
+     *
+     * Mirrors the [notificationListener] pattern exactly: a single
+     * nullable callback on the service. PR #290 review (Issue #288)
+     * confirmed this is cleaner than the original
+     * `RetroAchievementsEventBus` + sealed-event + ListenerToken
+     * pattern, which was over-engineered for a single subscriber.
      */
     @Volatile
-    internal var achievementEventBus: RetroAchievementsEventBus? = null
+    internal var achievementEventListener: ((RaAchievementEvent) -> Unit)? = null
 
     /**
      * Inject the p95 latency probe (issue #270 "benchmark tracks p95 latency
@@ -433,11 +439,11 @@ internal class NativeRetroAchievementsService private constructor(
         // would see a freed pointer; clearing here makes the post-shutdown
         // window observable.
         notificationListener = null
-        // Issue #288: drop the achievement event bus reference too.
-        // After shutdown the façade can't publish events (the handle
-        // is gone), but a listener that fires for some other reason
-        // would still be working with a stale service instance.
-        achievementEventBus = null
+        // Issue #288: drop the achievement event listener reference
+        // too. After shutdown the façade can't publish events (the
+        // handle is gone), but a listener that fires for some other
+        // reason would still be working with a stale service instance.
+        achievementEventListener = null
         latencyTracker = null
         try {
             bindings.ra_facade_destroy(handle)
@@ -552,34 +558,27 @@ internal class NativeRetroAchievementsService private constructor(
                 pendingSync = true
                 dispatchNotification(n)
                 // Issue #288: surface the unlock to the achievements
-                // window's refresh path. The bus's listeners typically
-                // call [RaAchievementsController.refresh]; the
-                // controller's generation guard discards stale
-                // refreshes whose generation doesn't match the
-                // controller's currentGeneration.
-                achievementEventBus?.publish(
-                    RaAchievementEvent.AchievementTriggered(achievementId = ev.achievementId)
-                )
+                // window's refresh path. The listener typically calls
+                // [RaAchievementsController.refresh]; the controller's
+                // generation guard discards stale refreshes whose
+                // generation doesn't match the controller's
+                // currentGeneration. PR #290 review pointed out the
+                // helper is invoked from every ACHIEVEMENT_* arm
+                // (DRY) and the throw-isolation log includes the
+                // full message + stack trace (debuggable).
+                dispatchAchievementEvent(achievementEventListener, ev.achievementId)
             }
             RaEventType.ACHIEVEMENT_CHALLENGE_SHOW -> {
-                achievementEventBus?.publish(
-                    RaAchievementEvent.AchievementChallengeShow(achievementId = ev.achievementId)
-                )
+                dispatchAchievementEvent(achievementEventListener, ev.achievementId)
             }
             RaEventType.ACHIEVEMENT_CHALLENGE_HIDE -> {
-                achievementEventBus?.publish(
-                    RaAchievementEvent.AchievementChallengeHide(achievementId = ev.achievementId)
-                )
+                dispatchAchievementEvent(achievementEventListener, ev.achievementId)
             }
             RaEventType.ACHIEVEMENT_PROGRESS_SHOW -> {
-                achievementEventBus?.publish(
-                    RaAchievementEvent.AchievementProgressShow(achievementId = ev.achievementId)
-                )
+                dispatchAchievementEvent(achievementEventListener, ev.achievementId)
             }
             RaEventType.ACHIEVEMENT_PROGRESS_HIDE -> {
-                achievementEventBus?.publish(
-                    RaAchievementEvent.AchievementProgressHide(achievementId = ev.achievementId)
-                )
+                dispatchAchievementEvent(achievementEventListener, ev.achievementId)
             }
             RaEventType.ACHIEVEMENT_PROGRESS_UPDATE -> {
                 // A measured-progress update changes the
@@ -589,9 +588,7 @@ internal class NativeRetroAchievementsService private constructor(
                 // window's snapshot rebuilds from the façade on
                 // every refresh — a refresh on this event gives the
                 // user immediate feedback on progress tracker bumps.
-                achievementEventBus?.publish(
-                    RaAchievementEvent.AchievementProgressUpdate(achievementId = ev.achievementId)
-                )
+                dispatchAchievementEvent(achievementEventListener, ev.achievementId)
             }
             RaEventType.GAME_COMPLETED -> {
                 System.err.println("[RA] Game completed (no mastery notification)")
@@ -687,6 +684,22 @@ internal class NativeRetroAchievementsService private constructor(
         }
     }
 
+    /**
+     * Forward an [RaAchievementEvent] to the registered listener
+     * (issue #288). The listener is the loaded-game achievements
+     * window's refresh path; this helper exists so every
+     * `ACHIEVEMENT_*` arm in [handleEvent] is a one-liner.
+     *
+     * PR #290 review: the catch now logs the full exception message
+     * AND a stack trace so a UI-side bug in production is debuggable
+     * from a single stderr line. The message + trace are the actionable
+     * bits — the simpleName-only log was un-debuggable.
+     *
+     * Top-level (not a class method) so unit tests can exercise the
+     * dispatch semantics without needing a live
+     * [NativeRetroAchievementsService] instance (which requires the
+     * JNA façade library).
+     */
     private fun bytesToString(bytes: ByteArray): String {
         val end = bytes.indexOf(0)
         val trimmed = if (end >= 0) bytes.copyOf(end) else bytes
@@ -818,3 +831,28 @@ internal fun peekReader(memory: Memory): RaReadMemoryFn =
         }
         n
     }
+
+/**
+ * Forward an [RaAchievementEvent] to [listener] (issue #288). No-op when
+ * the listener is null. Exceptions thrown by the listener are caught
+ * and logged (message + stack trace) so a UI-side bug cannot
+ * propagate into the emulation thread's per-frame hot path.
+ *
+ * Pulled out as a top-level function (not a [NativeRetroAchievementsService]
+ * method) so unit tests can exercise the dispatch semantics without
+ * standing up a live service instance — which requires the JNA façade
+ * library. The service's [NativeRetroAchievementsService.handleEvent]
+ * calls this from every `ACHIEVEMENT_*` arm.
+ */
+internal fun dispatchAchievementEvent(
+    listener: ((RaAchievementEvent) -> Unit)?,
+    achievementId: Int,
+) {
+    if (listener == null) return
+    try {
+        listener(RaAchievementEvent(achievementId))
+    } catch (e: Exception) {
+        System.err.println("[RA] Achievement event listener threw: ${e.javaClass.simpleName}: ${e.message}")
+        e.printStackTrace()
+    }
+}

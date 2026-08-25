@@ -202,24 +202,31 @@ class NestlinApplication : FrameListener, Application() {
                 onServiceCallEnd = { /* see onServiceCallStart. */ },
             ),
             achievementsController = achievementsControllerLazy,
-            achievementEventBus = achievementEventBus,
+            // Issue #288: surface unlock / challenge / progress
+            // events from the runtime to the achievements window's
+            // refresh path. The listener hops to the JavaFX
+            // Application Thread because [drainEvents] fires
+            // synchronously on the emulation thread (the façade's
+            // `evaluate_frame` path). The controller's generation
+            // guard catches stale events — a late unlock for game A
+            // cannot publish a view-model under game B's generation
+            // because [RaAchievementsController.refresh] reads the
+            // controller's currentGeneration at publish time.
+            //
+            // PR #290 review: short-circuit on
+            // [achievementsWindowShowing] — otherwise progress events
+            // (dozens per second in games with measured counters)
+            // would post Platform.runLater tasks onto the FX thread
+            // even when the user has never opened the window.
+            onAchievementEvent = { _ ->
+                if (achievementsWindowShowing) {
+                    Platform.runLater {
+                        achievementsControllerLazy.refresh()
+                        updateRaAchievementsMenuForViewModel()
+                    }
+                }
+            },
         )
-        // Issue #288: subscribe the achievement event bus so unlock /
-        // challenge / measured-progress events from the runtime trigger
-        // a refresh of the achievements window. The listener hops to
-        // the JavaFX Application Thread because [drainEvents] fires
-        // synchronously on the emulation thread (the façade's
-        // `evaluate_frame` path). The controller's generation guard
-        // catches stale events — a late unlock for game A cannot
-        // publish a view-model under game B's generation because
-        // [RaAchievementsController.refresh] reads the controller's
-        // currentGeneration at publish time.
-        achievementEventBusToken = achievementEventBus.addListener { _ ->
-            Platform.runLater {
-                achievementsControllerLazy.refresh()
-                updateRaAchievementsMenuForViewModel()
-            }
-        }
         coord
     }
     // Hold-Tab fast-forward: disables throttling while held, restores it on release.
@@ -231,15 +238,24 @@ class NestlinApplication : FrameListener, Application() {
      * lambdas capture live references so the controller always sees
      * the current sign-in / ROM state, not a snapshot from when it was
      * constructed.
+     *
+     * PR #290 review: the controller MUST share the coordinator's
+     * service instance (`sessionCoordinator.service`) — not call
+     * [RetroAchievementsServiceFactory.create] again. The factory
+     * returns a fresh native handle on every call; the previous
+     * implementation constructed a SECOND native service and fed it
+     * to the controller, which then queried an idle handle for
+     * every `achievementListSnapshot()` call (the coordinator's
+     * service is the one that receives `prepareGame`). The result
+     * was a perpetually-unrecognized window plus a leaked native C
+     * handle on shutdown. The lazy accessor here runs AFTER the
+     * `sessionCoordinator` field is initialized (every code path
+     * reaches it through a `loadRom` hook first), so reading the
+     * coordinator's service field is safe.
      */
     private val achievementsControllerLazy: com.github.alondero.nestlin.session.RaAchievementsController by lazy {
-        val service = try {
-            com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.create()
-        } catch (t: Throwable) {
-            NoOpRetroAchievementsService
-        }
         com.github.alondero.nestlin.session.RaAchievementsController(
-            service = service,
+            service = sessionCoordinator.service,
             signInState = { raSignInManagerRef?.state ?: com.github.alondero.nestlin.session.RaSignInState.SignedOut },
             loadedRomInfo = {
                 val rom = nestlin.loadedRom ?: return@RaAchievementsController null
@@ -578,23 +594,28 @@ class NestlinApplication : FrameListener, Application() {
     private var raAchievementsItem: javafx.scene.control.MenuItem? = null
     private var raAchievementsWindow: RaAchievementsWindow? = null
 
-    // Issue #288: achievement event bus. The native façade publishes
-    // unlock / challenge / measured-progress events here; the listener
-    // below calls achievementsControllerLazy.refresh() so the
-    // achievements window re-renders within one frame of the runtime
-    // state change. Generation guards live in the controller — a late
-    // event for the previous game cannot refresh the current game's
-    // window because [RaAchievementsController.refresh] discards
-    // publishes whose generation doesn't match the controller's
-    // currentGeneration.
+    // Issue #288: window-visibility gate for the achievement event
+    // listener. The native façade emits `ACHIEVEMENT_PROGRESS_UPDATE`
+    // events potentially dozens of times per second in games with
+    // measured counters; without this gate, every event would
+    // hop to the JavaFX thread and call
+    // [RaAchievementsController.refresh] which runs JNA calls +
+    // allocates memory buffers + builds a fresh snapshot — even
+    // when the user has never opened the achievements window.
     //
-    // The bus is owned by the Application (not the coordinator) so the
-    // listener subscription can be cleaned up on shutdown. The
-    // coordinator's init wires [NativeRetroAchievementsService.achievementEventBus]
-    // to this same instance, so the listener fires for every event
-    // the façade emits.
-    private val achievementEventBus = com.github.alondero.nestlin.session.RetroAchievementsEventBus()
-    private var achievementEventBusToken: com.github.alondero.nestlin.session.RetroAchievementsEventBus.ListenerToken? = null
+    // PR #290 review: set on `handleRaViewAchievements` (when the
+    // window opens) and cleared on the window's `showingProperty`
+    // listener (when it closes). Read on the emulation thread from
+    // the achievement event listener body (see `sessionCoordinator`
+    // below); @Volatile for the cross-thread visibility.
+    //
+    // The coordinator wires a single listener field on the native
+    // service ([NativeRetroAchievementsService.achievementEventListener])
+    // for the lifetime of the coordinator — there's no per-window
+    // attach/detach needed because the listener body short-circuits
+    // to no-op when the window isn't visible.
+    @Volatile
+    private var achievementsWindowShowing: Boolean = false
 
     // --- Movie record/playback state (issue #123) ---
     //
@@ -1657,12 +1678,22 @@ class NestlinApplication : FrameListener, Application() {
             signInState = { raSignInManagerRef?.state ?: com.github.alondero.nestlin.session.RaSignInState.SignedOut },
         )
         window.stage.showingProperty().addListener { _, _, showing ->
+            // Issue #288: the achievement event listener short-circuits
+            // when this flag is false, so progress events that fire
+            // dozens of times per second don't queue Platform.runLater
+            // tasks onto the JavaFX thread while the user has the
+            // window closed. Cleared on stop() too (defensive).
+            achievementsWindowShowing = showing
             if (!showing) {
                 window.dispose()
                 if (raAchievementsWindow === window) raAchievementsWindow = null
             }
         }
         raAchievementsWindow = window
+        // Set the flag BEFORE window.show() so the initial
+        // showingProperty transition (showing = true) doesn't race a
+        // listener body that reads false.
+        achievementsWindowShowing = true
         window.show()
     }
 
@@ -2405,16 +2436,11 @@ class NestlinApplication : FrameListener, Application() {
         raProfileWindow?.dispose()
         raProfileWindow = null
 
-        // Issue #288: detach the achievement event bus listener so the
-        // bus doesn't hold a reference to achievementsControllerLazy
-        // (and therefore to the FX scene graph) past stop(). The bus
-        // field on the native service is already nulled by
-        // sessionCoordinator.shutdown() above — this drop is for the
-        // listener-side reference. Idempotent.
-        achievementEventBusToken?.let { token ->
-            achievementEventBus.removeListener(token)
-        }
-        achievementEventBusToken = null
+        // Issue #288: clear the achievements-window visibility gate.
+        // The achievement event listener field on the native service
+        // is already nulled by sessionCoordinator.shutdown() above;
+        // this drop is the application-side visibility flag.
+        achievementsWindowShowing = false
 
         // Clean up audio
         audioLine?.stop()
