@@ -90,6 +90,25 @@ internal class NativeRetroAchievementsService private constructor(
     internal var notificationListener: ((RaNotification) -> Unit)? = null
 
     /**
+     * Sink for native achievement events re-emitted as JVM-side
+     * [RaAchievementEvent]s (issue #288). Set by the application after
+     * the coordinator is constructed; cleared on [shutdown]. The
+     * drain path publishes synchronously after copying every native
+     * string out, so listeners (the achievements-window refresh path)
+     * receive a fully-owned event with the achievement ID the runtime
+     * emitted. Generation guards live one layer up — the listener
+     * typically calls [RaAchievementsController.refresh], which
+     * discards stale publishes whose generation doesn't match the
+     * controller's currentGeneration.
+     *
+     * Null by default — production code that doesn't care about
+     * window refresh (CLI drivers, headless bench tools) never wires
+     * this and the drain path's `?.publish(...)` becomes a no-op.
+     */
+    @Volatile
+    internal var achievementEventBus: RetroAchievementsEventBus? = null
+
+    /**
      * Inject the p95 latency probe (issue #270 "benchmark tracks p95 latency
      * at 1ms budget" AC). Null by default — production doesn't want a
      * per-frame allocation. Tests inject an [RaLatencyTracker] to assert
@@ -414,6 +433,11 @@ internal class NativeRetroAchievementsService private constructor(
         // would see a freed pointer; clearing here makes the post-shutdown
         // window observable.
         notificationListener = null
+        // Issue #288: drop the achievement event bus reference too.
+        // After shutdown the façade can't publish events (the handle
+        // is gone), but a listener that fires for some other reason
+        // would still be working with a stale service instance.
+        achievementEventBus = null
         latencyTracker = null
         try {
             bindings.ra_facade_destroy(handle)
@@ -527,6 +551,47 @@ internal class NativeRetroAchievementsService private constructor(
                 )
                 pendingSync = true
                 dispatchNotification(n)
+                // Issue #288: surface the unlock to the achievements
+                // window's refresh path. The bus's listeners typically
+                // call [RaAchievementsController.refresh]; the
+                // controller's generation guard discards stale
+                // refreshes whose generation doesn't match the
+                // controller's currentGeneration.
+                achievementEventBus?.publish(
+                    RaAchievementEvent.AchievementTriggered(achievementId = ev.achievementId)
+                )
+            }
+            RaEventType.ACHIEVEMENT_CHALLENGE_SHOW -> {
+                achievementEventBus?.publish(
+                    RaAchievementEvent.AchievementChallengeShow(achievementId = ev.achievementId)
+                )
+            }
+            RaEventType.ACHIEVEMENT_CHALLENGE_HIDE -> {
+                achievementEventBus?.publish(
+                    RaAchievementEvent.AchievementChallengeHide(achievementId = ev.achievementId)
+                )
+            }
+            RaEventType.ACHIEVEMENT_PROGRESS_SHOW -> {
+                achievementEventBus?.publish(
+                    RaAchievementEvent.AchievementProgressShow(achievementId = ev.achievementId)
+                )
+            }
+            RaEventType.ACHIEVEMENT_PROGRESS_HIDE -> {
+                achievementEventBus?.publish(
+                    RaAchievementEvent.AchievementProgressHide(achievementId = ev.achievementId)
+                )
+            }
+            RaEventType.ACHIEVEMENT_PROGRESS_UPDATE -> {
+                // A measured-progress update changes the
+                // achievement's measuredProgress + measuredPercent
+                // fields; the bucket assignment may shift between
+                // ACTIVE_CHALLENGE and ALMOST_THERE. The achievements
+                // window's snapshot rebuilds from the façade on
+                // every refresh — a refresh on this event gives the
+                // user immediate feedback on progress tracker bumps.
+                achievementEventBus?.publish(
+                    RaAchievementEvent.AchievementProgressUpdate(achievementId = ev.achievementId)
+                )
             }
             RaEventType.GAME_COMPLETED -> {
                 System.err.println("[RA] Game completed (no mastery notification)")
@@ -580,11 +645,10 @@ internal class NativeRetroAchievementsService private constructor(
                     displayUntilMillis = 0L,
                 ))
             }
-            // Other event types (challenge indicators, progress trackers,
-            // tracker updates, scoreboards, reset) are transient UI hints
-            // that wire to affordances in #268 / #272. We deliberately
-            // don't surface them here — the notifications controller is
-            // for user-visible banners, not every state transition.
+            // Other event types (leaderboard tracker, scoreboard,
+            // reset) are transient UI hints that don't affect the
+            // achievements window's snapshot — we deliberately don't
+            // surface them here.
         }
     }
 

@@ -203,6 +203,20 @@ class GameSessionCoordinator(
      */
     val achievementsController: RaAchievementsController? = null,
     /**
+     * Achievement event bus (issue #288). When non-null and the
+     * service is the native implementation, the coordinator wires
+     * [NativeRetroAchievementsService.achievementEventBus] to this
+     * bus so the façade's unlock + challenge + progress events reach
+     * the application's achievements-window refresh listener.
+     *
+     * Null by default — CLI / test callers that don't surface the
+     * achievements window never wire a bus. The application owns the
+     * bus (so the listener subscription can be cleaned up on
+     * shutdown); the coordinator's only job is to install the
+     * reference onto the native service after construction.
+     */
+    val achievementEventBus: RetroAchievementsEventBus? = null,
+    /**
      * Hasher used to compute the canonical NES hash for [RomContent]
      * instances loaded from disk. Production uses [NativeRomHasher]; tests
      * and CLI paths without the native library fall back to
@@ -235,6 +249,11 @@ class GameSessionCoordinator(
         // service exposes the field — but exposing it as a method would
         // pollute the public interface.
         installServiceNotificationListener()
+        // Issue #288: wire the native service's achievement event bus
+        // to the application-owned bus. Same package-private cast
+        // pattern as [installServiceNotificationListener] — the bus
+        // field is internal to the native service.
+        installServiceAchievementEventBus()
     }
 
     // Issue #270: monotonic frame index for [evaluateFrame]. Reset on
@@ -267,6 +286,21 @@ class GameSessionCoordinator(
     private fun installServiceNotificationListener() {
         val native = service as? NativeRetroAchievementsService ?: return
         native.notificationListener = { n -> publishNotification(n) }
+    }
+
+    /**
+     * Wire [NativeRetroAchievementsService.achievementEventBus] to the
+     * application-supplied bus (issue #288). The cast is safe — the
+     * field is package-private and only the native service has it.
+     *
+     * No-op when the service is the no-op (nothing emits events) or
+     * when [achievementEventBus] is null (a CLI / test caller that
+     * doesn't care about the achievements window).
+     */
+    private fun installServiceAchievementEventBus() {
+        val native = service as? NativeRetroAchievementsService ?: return
+        val bus = achievementEventBus ?: return
+        native.achievementEventBus = bus
     }
 
     /**
