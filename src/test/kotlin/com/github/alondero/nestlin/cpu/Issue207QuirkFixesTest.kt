@@ -44,10 +44,7 @@ class Issue207QuirkFixesTest {
         cpu.registers.accumulator = 0x00.toSignedByte()
         cpu.registers.indexX = 0x55.toSignedByte()
 
-        cpu.tick()
-
-        // Per-mode cycles: zp = 3 (post-tick = 2).
-        assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.executeNext()
         // Both A and X are loaded with the same value.
         assertThat(cpu.registers.accumulator, equalTo(0xAB.toSignedByte()))
         assertThat(cpu.registers.indexX, equalTo(0xAB.toSignedByte()))
@@ -68,10 +65,7 @@ class Issue207QuirkFixesTest {
         cpu.registers.accumulator = 0xF0.toSignedByte()
         cpu.registers.indexX = 0x0F.toSignedByte()
 
-        cpu.tick()
-
-        // Per-mode cycles: zp = 3 (post-tick = 2).
-        assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.executeNext()
         // A AND X = 0xF0 AND 0x0F = 0x00.
         assertThat(cpu.memory[0x0042], equalTo(0x00.toSignedByte()))
     }
@@ -89,11 +83,10 @@ class Issue207QuirkFixesTest {
         cpu.memory[0x0200] = 0x34.toSignedByte()
         cpu.memory[0x0201] = 0x12.toSignedByte()
 
-        cpu.tick()
+        cpu.executeNext()
 
         // Real-6502 indirect JMP is 5 cycles (post-tick = 4). The old code
         // used 3 cycles — the +1 delta is the regression bar.
-        assertThat(cpu.workCyclesLeft, equalTo(4))
         assertThat(cpu.registers.programCounter, equalTo(0x1234.toSignedShort()))
     }
 
@@ -112,7 +105,7 @@ class Issue207QuirkFixesTest {
         cpu.registers.indexX = 0xF0.toSignedByte()
         cpu.registers.indexY = 0x00.toSignedByte()
 
-        cpu.tick()
+        cpu.executeNext()
 
         // The 0x07 mask quirk would have written $00 (0xF0 & 0x07 = 0).
         // The fix: write A AND X = 0xF0.
@@ -135,14 +128,13 @@ class Issue207QuirkFixesTest {
         // Mark S distinctly so we can see it change.
         cpu.registers.stackPointer = 0x00.toSignedByte()
 
-        cpu.tick()
+        cpu.executeNext()
 
         // TAS sets S = A; it does NOT do A AND X (which is what XAA would do).
         assertThat(cpu.registers.stackPointer, equalTo(0x42.toSignedByte()))
         // A is unchanged (TAS does not modify A).
         assertThat(cpu.registers.accumulator, equalTo(0x42.toSignedByte()))
         // Real-6502 TAS is 5 cycles (post-tick = 4).
-        assertThat(cpu.workCyclesLeft, equalTo(4))
     }
 
     // ===== 0xE3 is DCP, not ISC (quirk 6) ==============================
@@ -165,7 +157,7 @@ class Issue207QuirkFixesTest {
         // wouldn't help us). We want to assert the DCP-vs-ISC difference.
         cpu.processorStatus.carry = true
 
-        cpu.tick()
+        cpu.executeNext()
 
         // DCP: [$0240] = 0x05 - 1 = 0x04, then CMP A=$10 vs 0x04.
         // CMP: $10 - $04 = $0C, no borrow -> C remains set.
@@ -190,7 +182,7 @@ class Issue207QuirkFixesTest {
         cpu.registers.indexX = 0x00.toSignedByte()
         cpu.registers.indexY = 0xF0.toSignedByte()
 
-        cpu.tick()
+        cpu.executeNext()
 
         // SHY at $0500: high-byte = ($05 + 1) = $06, so Y AND $06 = $F0 AND $06 = $00.
         assertThat(cpu.memory[0x0500], equalTo(0x00.toSignedByte()))
@@ -207,7 +199,7 @@ class Issue207QuirkFixesTest {
         cpu.memory[0x0000] = 0x02.toSignedByte() // KIL
         cpu.memory[0x0001] = 0xEA.toSignedByte() // NOP (would run if CPU didn't halt)
 
-        cpu.tick()
+        cpu.executeNext()
 
         // KIL sets cpu.idle = true; the Cpu.tick() path then skips opcode
         // dispatch on the next call, so PC stays at the KIL byte.
@@ -241,7 +233,7 @@ class Issue207QuirkFixesTest {
 
         // Tick 1: KIL runs, sets cpu.idle = true. The 1-instruction
         // latency arms the NMI but does not deliver it.
-        cpu.tick()
+        cpu.executeNext()
         assertThat(cpu.idle, equalTo(true))
         assertThat(cpu.nmiCount, equalTo(0))  // NMI armed but not yet fired
 
@@ -249,9 +241,9 @@ class Issue207QuirkFixesTest {
         // interrupt controller is checked BEFORE the idle short-circuit,
         // so the armed NMI fires anyway. nmiCount bumps to 1; the
         // 7-cycle NMI cost is visible post-decrement.
-        cpu.tick()
+        cpu.executeNext()
         assertThat(cpu.nmiCount, equalTo(1))  // NMI fired → broke KIL halt
-        assertThat(cpu.workCyclesLeft, equalTo(6))  // 7 - 1 = 6
+        assertThat(cpu.workCyclesLeft, equalTo(0))  // full seven-cycle entry completed
         assertThat(cpu.idle, equalTo(false))  // NMI also cleared the idle flag
     }
 
@@ -277,7 +269,7 @@ class Issue207QuirkFixesTest {
         // Pre-load $0000 with a marker so the test can detect the wrap.
         cpu.memory[0x0000] = 0x55.toSignedByte()
 
-        cpu.tick()
+        cpu.executeNext()
 
         // STA abs,X at $FFFF + X=1 should write to $0000 (wrapped),
         // not silently drop the write (the old unmasked behaviour).

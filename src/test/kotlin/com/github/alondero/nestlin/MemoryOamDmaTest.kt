@@ -21,9 +21,9 @@ import org.junit.jupiter.api.Test
  * desynced Nestlin from Mesen2 in as few as 5 frames. Micro Machines
  * (mapper 71) was the canary.
  *
- * The fix: after the byte copy, set `cpu.workCyclesLeft = 513` so the CPU
- * spends the next 513 ticks decrementing workCyclesLeft instead of
- * fetching new instructions — exactly as real hardware does.
+ * The fix: keep the transfer itself resumable and let the CPU spend the next
+ * 513/514 aligned ticks alternating source reads and OAM writes instead of
+ * fetching new instructions.
  *
  * DMA still uses the ordinary OAM write path: Y/tile/X bytes are copied exactly,
  * while unwired attribute bits 2-4 read back as zero, matching the 2C02.
@@ -54,12 +54,15 @@ class MemoryOamDmaTest {
         memory[0x4014] = 0x01.toSignedByte()
 
         // The CPU should now be halted for 513 cycles. Without the fix this
-        // would be 0, because the synchronous byte copy wouldn't update it.
+        // would be 0 because no resumable DMA state would be active.
         assertThat(
             "OAM DMA must halt the CPU for 513 cycles; got ${cpu.workCyclesLeft}",
             cpu.workCyclesLeft,
             equalTo(513)
         )
+
+        // DMA is resumable: bytes arrive over the following 513 CPU cycles.
+        repeat(513) { cpu.tick() }
 
         // OAM receives every byte; attribute bytes additionally clear the 2C02's
         // unwired bits 2-4.
@@ -84,7 +87,7 @@ class MemoryOamDmaTest {
         memory[0x4014] = 0x02.toSignedByte()
         assertThat(cpu.workCyclesLeft, equalTo(513))
 
-        // Simulate 513 ticks of CPU "halt" (decrement each tick).
+        // Simulate the first DMA's 513 transfer ticks.
         repeat(513) { cpu.tick() }
         // After 513 ticks, the CPU is ready for a new instruction.
         assertThat(cpu.workCyclesLeft, equalTo(0))
@@ -96,6 +99,8 @@ class MemoryOamDmaTest {
         memory[0x4014] = 0x03.toSignedByte()
         // A fresh DMA must re-halt the CPU. If the first DMA's halt "stuck"
         // (e.g. because someone wired a one-shot), this would be 0.
-        assertThat(cpu.workCyclesLeft, equalTo(513))
+        // The first transfer consumed an odd number of cycles, so the second
+        // starts on the opposite parity and needs the hardware alignment cycle.
+        assertThat(cpu.workCyclesLeft, equalTo(514))
     }
 }

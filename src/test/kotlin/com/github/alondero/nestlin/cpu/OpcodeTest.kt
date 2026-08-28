@@ -28,7 +28,7 @@ class OpcodeCMPTest {
             //  Set up the comparator byte to be lower than the accumulator
             memory[0x0001] = -25
             registers.accumulator = 57
-            tick()
+            executeNext()
 
             with(processorStatus) {
                 assertThat(negative, equalTo(false))
@@ -44,7 +44,7 @@ class OpcodeCMPTest {
             //  Set up the comparator byte to be higher than the accumulator
             memory[0x0001] = 0
             registers.accumulator = 0x80.toSignedByte()
-            tick()
+            executeNext()
 
             with(processorStatus) {
                 assertThat(negative, equalTo(true))
@@ -73,7 +73,7 @@ class OpcodePLATest() {
         with(cpu) {
             memory[0x0101] = 0xED.toSignedByte()
             registers.stackPointer = 0x00.toSignedByte()
-            tick()
+            executeNext()
 
             with(registers) {
                 assertThat(accumulator, equalTo(0xED.toSignedByte()))
@@ -95,8 +95,8 @@ class OpcodeJSRTest() {
         with(cpu) {
             reset()
             //  Set up for a JSR to be the next instruction
-            registers.programCounter = 0xCE37.toSignedShort()
-            memory[0xCE37] = 0x20.toSignedByte()
+            registers.programCounter = 0x0237.toSignedShort()
+            memory[0x0237] = 0x20.toSignedByte()
             registers.stackPointer = 0x80.toSignedByte()
         }
     }
@@ -104,10 +104,10 @@ class OpcodeJSRTest() {
     @Test
     fun setsCorrectValuesInMemoryOnJSR() {
         with (cpu) {
-            tick()
+            executeNext()
 
-            // 0xCE39
-            assertThat(memory[0x180], equalTo(0xCE.toSignedByte()))
+            // 0x0239
+            assertThat(memory[0x180], equalTo(0x02.toSignedByte()))
             assertThat(memory[0x17F], equalTo(0x39.toSignedByte()))
         }
     }

@@ -37,12 +37,12 @@ import java.nio.file.Path
 class SaveStateMigrationTest {
 
     @Test
-    fun `SaveState VERSION is 7 to record the optional RA progress trailer`() {
+    fun `SaveState VERSION is 9 for primitive in-flight CPU latches`() {
         // Sanity check — fails fast if someone bumps or forgets the version
         // migration. The kdoc on SaveState and the load() version branch both
         // hinge on this constant. v7 (issue #271) appends an optional
         // length-prefixed RA runtime-progress block to every save.
-        assertThat(SaveState.VERSION, equalTo(7))
+        assertThat(SaveState.VERSION, equalTo(9))
     }
 
     @Test

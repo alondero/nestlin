@@ -11,7 +11,7 @@ import java.io.OutputStream
  * Save state file format ("NSTL"):
  *
  *   magic       4 bytes  "NSTL" (0x4E 0x53 0x54 0x4C)
- *   version     int      currently 7; bump on breaking format change.
+ *   version     int      currently 9; bump on breaking format change.
  *                        Version 2 added a per-mapper version byte inside the
  *                        mapper block (see below) so individual mappers can
  *                        evolve their own field order without invalidating
@@ -44,6 +44,12 @@ import java.io.OutputStream
  *                        unchanged, with the runtime reset against the restored
  *                        memory (per the issue's "abandoned future timeline"
  *                        rule).
+ *                        Version 8 extended the CPU block with cycle and
+ *                        resumable execution state (issue #298).
+ *                        Version 9 keeps that envelope but replaces the
+ *                        instruction journal with fixed primitive CPU latches;
+ *                        v8 in-flight instruction payloads are rejected rather
+ *                        than being interpreted as a different state machine.
  *   romCrc      long     CRC32 of the loaded ROM at save time
  *   romMapper   int      mapper id (validated on load)
  *   cpu         block    written by Cpu.saveState
@@ -81,7 +87,7 @@ import java.io.OutputStream
  */
 object SaveState {
     private const val MAGIC = 0x4E53544C  // "NSTL"
-    const val VERSION = 7
+    const val VERSION = 9
 
     /** Highest version this code can read. */
     private const val MIN_SUPPORTED_VERSION = 4
@@ -221,7 +227,7 @@ object SaveState {
             )
         }
 
-        nestlin.cpu.loadState(dis)
+        nestlin.cpu.loadState(dis, version)
         nestlin.cpu.interruptController.loadState(dis)
         nestlin.memory.loadRamState(dis)
         nestlin.ppu.loadState(dis)
