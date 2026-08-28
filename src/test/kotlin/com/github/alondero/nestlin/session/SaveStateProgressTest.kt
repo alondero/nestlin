@@ -179,7 +179,7 @@ class SaveStateProgressTest {
 
     /** Pin the lower bound of the supported version window (a v3 save
      *  is rejected with a clear "unsupported version" message). The
-     *  upper bound is pinned by the v7-version-check in the existing
+     *  upper bound is pinned by the current-version check in the existing
      *  SaveStateTest. */
     private fun assertOldVersionRejected(nes: Nestlin) {
         val currentBytes = snapshot(nes)
@@ -376,7 +376,7 @@ class SaveStateProgressTest {
         }
         val bodyEnd = currentBytes.size - 4  // no trailer body to skip
         require(bodyEnd >= 8) {
-            "v7 file is too small to have both a header and a body of " +
+            "save file is too small to have both a header and a body of " +
                 "${bodyEnd - 8} bytes (size=${currentBytes.size})"
         }
         // v8 added eleven bytes to an idle CPU block: cycle-count int,

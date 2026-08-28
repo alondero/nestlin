@@ -6,6 +6,7 @@ import com.github.alondero.nestlin.Memory.CpuBusOperation.READ
 import com.github.alondero.nestlin.Memory.CpuBusOperation.WRITE
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toUnsignedInt
+import com.github.alondero.nestlin.gamepak.Mapper
 import com.github.alondero.nestlin.testutil.FakeInterruptController
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
@@ -92,6 +93,31 @@ class CpuBusTraceTest {
                 )
             )
         )
+    }
+
+    @Test
+    fun `mapper observes an RMW old-value write followed by the new value`() {
+        val fixture = fixture(0x0E, 0x00, 0x80) // ASL $8000
+        val mapper = TraceMapper(0x81)
+        fixture.memory.mapper = mapper
+        fixture.trace.clear()
+
+        fixture.tick(6)
+
+        assertThat(
+            fixture.trace.map { it.operation to it.address },
+            equalTo(
+                listOf(
+                    READ to 0x0200,
+                    READ to 0x0201,
+                    READ to 0x0202,
+                    READ to 0x8000,
+                    WRITE to 0x8000,
+                    WRITE to 0x8000,
+                )
+            )
+        )
+        assertThat(mapper.writes, equalTo(listOf(0x81.toSignedByte(), 0x02.toSignedByte())))
     }
 
     @Test
@@ -398,6 +424,22 @@ class CpuBusTraceTest {
 
     private fun access(operation: Memory.CpuBusOperation, address: Int, value: Int) =
         CpuBusAccess(operation, address, value.toSignedByte())
+
+    private class TraceMapper(initialValue: Int) : Mapper {
+        private var value = initialValue.toSignedByte()
+        val writes = mutableListOf<Byte>()
+
+        override fun cpuRead(address: Int): Byte = value
+
+        override fun cpuWrite(address: Int, value: Byte) {
+            writes += value
+            this.value = value
+        }
+
+        override fun ppuRead(address: Int): Byte = 0
+        override fun ppuWrite(address: Int, value: Byte) = Unit
+        override fun currentMirroring(): Mapper.MirroringMode = Mapper.MirroringMode.HORIZONTAL
+    }
 
     private data class Fixture(
         val cpu: Cpu,
