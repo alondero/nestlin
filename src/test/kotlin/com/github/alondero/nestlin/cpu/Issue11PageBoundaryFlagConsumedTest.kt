@@ -38,7 +38,10 @@ class Issue11PageBoundaryFlagConsumedTest {
 
     // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
     // the IRQ-check path reads it on every tick.
-    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply { reset() }
+    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply {
+            reset()
+            finishExecution()
+        }
 
     /**
      * The bug-exposing test.

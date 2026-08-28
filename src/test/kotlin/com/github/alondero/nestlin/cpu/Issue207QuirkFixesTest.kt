@@ -29,7 +29,10 @@ import org.junit.jupiter.api.Test
  */
 class Issue207QuirkFixesTest {
 
-    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply { reset() }
+    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply {
+            reset()
+            finishExecution()
+        }
 
     // ===== LAX per-mode cycle counts (quirk 1) ==========================
 
@@ -224,7 +227,10 @@ class Issue207QuirkFixesTest {
         // proves the NMI was dispatched, which is the only thing this
         // quirk-fix test cares about.
         val fakeController = FakeInterruptController()
-        val cpu = Cpu(Memory.createWithApu().first, fakeController).apply { reset() }
+        val cpu = Cpu(Memory.createWithApu().first, fakeController).apply {
+            reset()
+            finishExecution()
+        }
         cpu.registers.programCounter = 0x0000.toSignedShort()
         cpu.memory[0x0000] = 0x02.toSignedByte() // KIL
 

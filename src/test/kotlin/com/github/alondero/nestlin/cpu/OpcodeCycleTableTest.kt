@@ -601,7 +601,10 @@ class OpcodeCycleTableTest {
         @Suppress("UNUSED_PARAMETER") mnemonic: String,
         row: OpcodeRow,
     ) {
-        val cpu = Cpu(Memory.createWithApu().first).apply { reset() }
+        val cpu = Cpu(Memory.createWithApu().first).apply {
+            reset()
+            finishExecution()
+        }
         cpu.registers.programCounter = PC.toSignedShort()
         cpu.memory[PC] = opcodeByte.toSignedByte()
         row.operandBytes.forEachIndexed { i, value -> cpu.memory[PC + 1 + i] = value }

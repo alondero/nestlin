@@ -6,7 +6,7 @@ internal fun Cpu.executeNext() {
     while (executionInFlight) tick()
 }
 
-/** Finish work whose first cycle has already run. */
+/** Finish work whose first cycle has already run (instruction, interrupt, or reset sequence). */
 internal fun Cpu.finishExecution() {
     while (executionInFlight) tick()
 }

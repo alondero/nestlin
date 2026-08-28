@@ -23,6 +23,9 @@ class CpuTest {
         val cpu = Cpu(Memory.createWithApu().first).apply {
             this.currentGame = GamePak(TestRoms.nestestBytes())
             this.reset()
+            // The reset sequence must complete (and apply the test-ROM
+            // automation override) before the PC is observable.
+            this.finishExecution()
         }
 
         assertThat(cpu.registers.programCounter, equalTo(0xC000.toSignedShort()))
@@ -45,6 +48,7 @@ class CpuTest {
         // memory.clear() which would wipe it.
         val cpu = Cpu(Memory.createWithApu().first).apply {
             reset()
+            finishExecution()
             this.memory[0] = 0xCB.toSignedByte()
         }
         val dumpFile = tempDir.resolve("undocumented_opcodes.txt").toFile()

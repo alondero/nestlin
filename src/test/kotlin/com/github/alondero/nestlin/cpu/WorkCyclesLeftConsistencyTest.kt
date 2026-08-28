@@ -25,7 +25,10 @@ class WorkCyclesLeftConsistencyTest {
 
     // Factory (issue #22): wire Memory + Apu so cpu.memory.apu is non-null when
     // the IRQ-check path reads it on every tick.
-    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply { reset() }
+    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply {
+        reset()
+        finishExecution()
+    }
 
     @Test
     fun nopImpliedSetsTwoCycles() {
@@ -128,7 +131,10 @@ class WorkCyclesLeftConsistencyTest {
         // Fake honours the same 1-instruction-latency contract as the
         // production controller, so the timing assertions below are unchanged.
         val fakeController = FakeInterruptController()
-        val cpu = Cpu(Memory.createWithApu().first, fakeController).apply { reset() }
+        val cpu = Cpu(Memory.createWithApu().first, fakeController).apply {
+            reset()
+            finishExecution()
+        }
         // NMI vector -> $0000 (a NOP, so we don't read garbage).
         cpu.memory[0xFFFA] = 0x00.toSignedByte()
         cpu.memory[0xFFFB] = 0x00.toSignedByte()

@@ -11,7 +11,7 @@ import java.io.OutputStream
  * Save state file format ("NSTL"):
  *
  *   magic       4 bytes  "NSTL" (0x4E 0x53 0x54 0x4C)
- *   version     int      currently 9; bump on breaking format change.
+ *   version     int      currently 10; bump on breaking format change.
  *                        Version 2 added a per-mapper version byte inside the
  *                        mapper block (see below) so individual mappers can
  *                        evolve their own field order without invalidating
@@ -50,6 +50,12 @@ import java.io.OutputStream
  *                        instruction journal with fixed primitive CPU latches;
  *                        v8 in-flight instruction payloads are rejected rather
  *                        than being interpreted as a different state machine.
+ *                        Version 10 appends the CPU's in-flight power/soft
+ *                        reset sequencer payload (a boolean plus a 5-byte
+ *                        latch block when a reset sequence is mid-flight) to
+ *                        the end of the CPU block, so v9 states remain an
+ *                        exact prefix and load unchanged with no sequence in
+ *                        flight.
  *   romCrc      long     CRC32 of the loaded ROM at save time
  *   romMapper   int      mapper id (validated on load)
  *   cpu         block    written by Cpu.saveState
@@ -87,7 +93,7 @@ import java.io.OutputStream
  */
 object SaveState {
     private const val MAGIC = 0x4E53544C  // "NSTL"
-    const val VERSION = 9
+    const val VERSION = 10
 
     /** Highest version this code can read. */
     private const val MIN_SUPPORTED_VERSION = 4

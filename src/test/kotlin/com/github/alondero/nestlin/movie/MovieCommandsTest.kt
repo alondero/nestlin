@@ -2,7 +2,7 @@ package com.github.alondero.nestlin.movie
 
 import com.github.alondero.nestlin.Controller.Button
 import com.github.alondero.nestlin.Nestlin
-import com.github.alondero.nestlin.testutil.TestRoms
+import com.github.alondero.nestlin.testutil.spinLoopRom
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.containsSubstring
 import com.natpryce.hamkrest.equalTo
@@ -27,7 +27,7 @@ class MovieCommandsTest {
     private fun freshNestlin(): Nestlin =
         Nestlin().apply {
             config.speedThrottlingEnabled = false
-            loadBytes(TestRoms.nestestBytes())
+            loadBytes(spinLoopRom(), "spin-reset")
         }.also { it.powerReset() }
 
     // ------------------------------------------------------------------------------------------- //

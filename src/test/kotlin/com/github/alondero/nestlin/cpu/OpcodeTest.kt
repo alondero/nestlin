@@ -16,6 +16,7 @@ class OpcodeCMPTest {
     init {
         with(cpu) {
             reset()
+            finishExecution()
             //  Set up for a CMP to be the next instruction
             registers.programCounter = 0x0000.toSignedShort()
             memory[0x0000] = 0xC9.toSignedByte()
@@ -62,6 +63,7 @@ class OpcodePLATest() {
     init {
         with(cpu) {
             reset()
+            finishExecution()
             //  Set up for a CMP to be the next instruction
             registers.programCounter = 0x0000.toSignedShort()
             memory[0x0000] = 0x68.toSignedByte()
@@ -94,6 +96,7 @@ class OpcodeJSRTest() {
     init {
         with(cpu) {
             reset()
+            finishExecution()
             //  Set up for a JSR to be the next instruction
             registers.programCounter = 0x0237.toSignedShort()
             memory[0x0237] = 0x20.toSignedByte()

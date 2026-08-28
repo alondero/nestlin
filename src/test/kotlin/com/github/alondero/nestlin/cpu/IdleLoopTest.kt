@@ -33,6 +33,7 @@ class IdleLoopTest {
         // the IRQ-check path reads it on every tick.
         val cpu = Cpu(Memory.createWithApu().first).apply {
             reset()
+            finishExecution()
             registers.programCounter = 0x0000.toSignedShort()
             // BEQ -2  (branches to its own opcode when the zero flag is set)
             memory[0x0000] = 0xF0.toSignedByte()
@@ -58,6 +59,7 @@ class IdleLoopTest {
     fun jumpToSelfSetsIdle() {
         val cpu = Cpu(Memory.createWithApu().first).apply {
             reset()
+            finishExecution()
             registers.programCounter = 0x0200.toSignedShort()
             // JMP $0200  (jumps to its own opcode — an unconditional spin loop)
             memory[0x0200] = 0x4C.toSignedByte()
@@ -80,6 +82,7 @@ class IdleLoopTest {
         val cpu = Cpu(Memory.createWithApu().first, fakeController).apply {
             currentGame = GamePak(spinLoopRom())
             reset()
+            finishExecution()
         }
 
         // Reset vector points at the JMP-to-self spin loop at $C000.

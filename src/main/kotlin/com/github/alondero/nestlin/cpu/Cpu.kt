@@ -67,6 +67,8 @@ class Cpu(
     private var activeInstruction = false
     private val interruptState = MicrocodedInterrupt(this)
     private var activeInterrupt = false
+    private val resetState = MicrocodedReset(this)
+    private var activeReset = false
     // OAM DMA latches are primitive fields so starting a transfer does not
     // allocate a transfer object on the emulation thread.
     private var oamDmaActive = false
@@ -116,18 +118,19 @@ class Cpu(
     internal fun incrementIrqCount() { _irqCount++ }
 
     /**
-     * Cumulative CPU cycles elapsed since the last [reset] / [softReset].
+     * Cumulative CPU cycles elapsed since the last completed [reset] /
+     * [softReset] sequence (zeroed when the reset vector fetch finishes).
      * Incremented at the end of every [tick]. The trace [Logger] multiplies
      * this by 3 to produce nestest.log's PPU-cycle column; the raw CPU count
-     * is exposed here for any consumer that wants CPU-cycle timing. Version-9
-     * save states persist it because its parity controls the alignment cycle
-     * of a future OAM DMA. See issue #17 and #298.
+     * is exposed here for any consumer that wants CPU-cycle timing.
+     * Version-10 save states persist it because its parity controls the
+     * alignment cycle of a future OAM DMA. See issue #17 and #298.
      */
     val cycleCount: Int
         get() = _cycleCount
 
     internal val executionInFlight: Boolean
-        get() = activeInstruction || activeInterrupt ||
+        get() = activeInstruction || activeInterrupt || activeReset ||
             oamDmaActive || genericStallCycles > 0
 
     fun getCurrentPc(): Short = registers.programCounter
@@ -139,36 +142,61 @@ class Cpu(
     private val undocumentedLogBuffer = mutableListOf<String>()
     private val UNDOCUMENTED_LOG_FILE = "undocumented_opcodes.txt"
 
+    /** The 6502 RESET sequence is seven bus cycles (see [MicrocodedReset]). */
+    private val resetSequenceCycles = 7
+
+    /**
+     * Power-cycle reset. Wipes CPU RAM (and resets the PPU addressable memory)
+     * via [Memory.clear] — a power-on event, not bus traffic — zeroes the CPU
+     * registers to their power-up state, and then begins the seven-cycle RESET
+     * bus sequence ([MicrocodedReset]) that ends at the reset vector.
+     *
+     * The PC is NOT redirected synchronously: the first post-reset instruction
+     * fetch happens on the eighth tick. See [softReset] for the RESET-button
+     * semantics.
+     */
     fun reset() {
         memory.clear()
-        resetCpuState()
+        beginResetSequence(powerOn = true)
     }
 
     /**
-     * Soft reset — equivalent to pressing the NES RESET button (issue #125). The CPU
-     * is redirected to its RESET vector and registers are zeroed, but **internal RAM
-     * ($0000-$07FF) and PPU registers are preserved** — the RESET line on real hardware
-     * does NOT power-cycle the work RAM or the PPU's latched state.
+     * Soft reset — equivalent to pressing the NES RESET button (issue #125). The
+     * CPU runs the same seven-cycle RESET bus sequence as [reset], but **internal
+     * RAM ($0000-$07FF), PPU registers, A/X/Y and the status flags (except I) are
+     * preserved** — the RESET line on real hardware does NOT power-cycle the work
+     * RAM or the PPU's latched state, and it does not clear the 6502's data
+     * registers either. Only the sequence's vector fetch forces the interrupt
+     * disable flag and redirects the PC.
      *
-     * Contrast with [reset] (the power-cycle / "hard reset" path), which calls
+     * The stack pointer is not restored either: the sequence decrements it by
+     * three, exactly as an interrupt entry would.
+     *
+     * Contrast with [reset] (the power-cycle path), which additionally calls
      * [com.github.alondero.nestlin.Memory.clear] to wipe RAM and reset the PPU.
      */
     fun softReset() {
-        resetCpuState()
+        beginResetSequence(powerOn = false)
     }
 
     /**
-     * Reset the CPU's own state (registers, processor status, cycle counters, PC from
-     * the RESET vector). Shared by [reset] (full power-cycle, which clears RAM first)
-     * and [softReset] (RESET button, which preserves RAM).
+     * Abort any in-flight execution and start the seven-cycle RESET bus
+     * sequence. The instantaneous, pre-sequence side effects differ by path:
+     *
+     *  - Power-on ([reset]): status/registers go to their power-up state (with
+     *    S=$00 — the sequence's three stack decrements land it at the documented
+     *    $FD) and any loaded cartridge is re-installed so the mapper comes up
+     *    fresh.
+     *  - RESET button ([softReset]): registers, flags and SP are left alone;
+     *    the sequence itself sets I and decrements S.
+     *
+     * Both paths re-install the current cartridge's mapper (Nestlin's established
+     * reset semantics) and zero the diagnostic interrupt counters. The cycle
+     * counter is zeroed when the sequence *completes*, so `cycleCount` keeps its
+     * "cycles since the reset vector fetch" meaning (nestest.log alignment).
      */
-    private fun resetCpuState() {
-        _processorStatus.reset()
-        _registers.reset()
+    private fun beginResetSequence(powerOn: Boolean) {
         _workCyclesLeft = 0
-        _nmiCount = 0
-        _irqCount = 0
-        _cycleCount = 0
         activeInstruction = false
         activeInterrupt = false
         oamDmaActive = false
@@ -178,11 +206,20 @@ class Cpu(
         oamDmaReading = true
         oamDmaBuffer = 0
         genericStallCycles = 0
-        currentGame?.let {
-            memory.readCartridge(it)
-            _registers.initialise(memory)
-            if (it.isTestRom()) _registers.activateAutomationMode()
+        _idle = false
+        _nmiCount = 0
+        _irqCount = 0
+        if (powerOn) {
+            _processorStatus.reset()
+            _registers.reset()
+            // 6502 power-up S=$00; the reset sequence's three decrements land
+            // it at $FD (see MicrocodedReset).
+            _registers.stackPointer = 0
         }
+        currentGame?.let { memory.readCartridge(it) }
+        resetState.begin()
+        activeReset = true
+        _workCyclesLeft = resetSequenceCycles
     }
 
     fun enableLogging() {
@@ -217,7 +254,22 @@ class Cpu(
         // per CPU cycle, before instruction/interrupt processing for this cycle.
         memory.mapper?.tickCpuCycle()
 
+        var resetSequenceCompletedThisTick = false
         try {
+            if (activeReset) {
+                resetState.step()
+                if (_workCyclesLeft > 0) _workCyclesLeft--
+                if (resetState.isComplete) {
+                    activeReset = false
+                    _workCyclesLeft = 0
+                    resetSequenceCompletedThisTick = true
+                    // Test-ROM harness: nestest et al. are driven from a fixed
+                    // address rather than the reset vector.
+                    if (currentGame?.isTestRom() == true) _registers.activateAutomationMode()
+                }
+                return
+            }
+
             if (oamDmaActive) {
                 when {
                     oamDmaDummyCycles > 0 -> {
@@ -364,6 +416,15 @@ class Cpu(
             // mid-frame and the trace would diverge from nestest.log.
             // Issue #17 / GoldenLogTest cycle comparison.
             _cycleCount++
+            if (resetSequenceCompletedThisTick) {
+                // The golden-log convention (nestest.log) counts cycles from
+                // the completed reset sequence, so the first post-reset
+                // instruction is logged at cycle 0. Zeroing after the finally
+                // increment (rather than in the sequence branch) keeps the
+                // "exactly one increment per tick" contract intact while
+                // making the sequence's own cycles invisible to the counter.
+                _cycleCount = 0
+            }
         }
     }
 
@@ -412,9 +473,10 @@ class Cpu(
     /**
      * Save state — issue #190 removes the `_nmiArmed` field from the CPU
      * block (it now lives in [interruptController] as the controller's
-     * own state). The save-state format is bumped to VERSION 9 in
-     * [SaveState]; the new "interrupt controller" sub-block lives
-     * between the CPU and RAM blocks and holds the controller's `nmiArmed`.
+     * own state). The save-state format is bumped to VERSION 10 in
+     * [SaveState]; VERSION 10 appends the in-flight power/soft reset
+     * sequencer payload to the end of the CPU block (VERSION 9 states
+     * never have one, so their layout is an exact prefix).
      *
      * The trailing 4-byte reserved int slot is the pre-existing reservation
      * for the removed `Interrupt` enum (issue #24) — unrelated to nmiArmed.
@@ -452,6 +514,10 @@ class Cpu(
             out.writeBoolean(oamDmaReading)
             out.writeByte(oamDmaBuffer.toInt())
         }
+        // VERSION 10: the in-flight power/soft reset bus sequence (written last
+        // so the pre-10 CPU block layout is an exact prefix).
+        out.writeBoolean(activeReset)
+        if (activeReset) resetState.save(out)
     }
 
     fun loadState(input: DataInput, version: Int = SaveState.VERSION) {
@@ -483,6 +549,12 @@ class Cpu(
                 oamDmaReading = input.readBoolean()
                 oamDmaBuffer = input.readByte()
             }
+            if (version >= 10) {
+                activeReset = input.readBoolean()
+                if (activeReset) resetState.load(input)
+            } else {
+                activeReset = false
+            }
         } else if (version == 8) {
             // Version 8 used the old replay engine's variable-length read
             // journal. Idle v8 states have no instruction payload and remain
@@ -509,12 +581,14 @@ class Cpu(
                 oamDmaReading = input.readBoolean()
                 oamDmaBuffer = input.readByte()
             }
+            activeReset = false
         } else {
             _cycleCount = 0
             activeInstruction = false
             activeInterrupt = false
             genericStallCycles = _workCyclesLeft.coerceAtLeast(0)
             oamDmaActive = false
+            activeReset = false
         }
     }
 
@@ -540,10 +614,6 @@ class Registers(
         accumulator = 0
         indexX = 0
         indexY = 0
-    }
-
-    fun initialise(memory: Memory) {
-        programCounter = memory.resetVector()
     }
 
     fun activateAutomationMode() {
