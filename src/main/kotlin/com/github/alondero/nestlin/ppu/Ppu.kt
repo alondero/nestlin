@@ -165,38 +165,12 @@ class Ppu(var memory: Memory) {
 
     private var frameCount = 0
 
-    // Odd-frame cycle skip (issue #226). When the just-ended frame was odd AND rendering
-    // is currently enabled, endFrame() sets this so the next tick advances the cycle
-    // counter but does no dot work. Net effect: NTSC alternates 89342/89341 dots, PAL
-    // alternates 106392/106391. Not persisted in save state — a load mid-frame resets
-    // it to false, which is a sub-pixel drift that's well below the per-cycle test noise.
-    private var skipNextDot: Boolean = false
-
     private var lastNametableByte: Byte = 0
 
     // Frame completion tracking for throttling
     private var frameCompletedThisTick = false
 
     fun tick() {
-        // 341st boundary tick — only runs endLine(); no dot is processed here, so it does
-        // NOT count in ticksElapsed. This is the dot that the real hardware absorbs as the
-        // post-pre-render idle; an odd-frame skip reuses the same machinery to absorb one
-        // extra dot per odd frame (see endFrame()).
-        if (cycle == 341) {
-            endLine()
-            return
-        }
-
-        // Odd-frame cycle skip (issue #226): when an odd frame ends with rendering enabled,
-        // endFrame() arms this flag so the very next dot is swallowed. The cycle counter
-        // advances so the rest of the scanline keeps the same phase, but no work happens —
-        // the dot is consumed, not deferred.
-        if (skipNextDot) {
-            skipNextDot = false
-            cycle++
-            return
-        }
-
         ticksElapsed++
 //       println("Rendering ($cycle, $scanline)")
 
@@ -280,7 +254,25 @@ class Ppu(var memory: Memory) {
         //  Every cycle a bit is fetched from the 4 backgroundNametables shift registers in order to create a pixel on screen
 
 
-        cycle++
+        // One scheduler call is one PPU clock. Normal scanlines wrap as part of dot 340,
+        // rather than spending a 342nd call on a boundary with no dot work. On rendered
+        // odd NTSC frames the 2C02 omits the final pre-render dot: dot 339 completes the
+        // frame directly. PAL's 2C07 never performs this shortening. Keep the overwhelmingly
+        // common dot-increment path ahead of the region/parity checks; this code runs once
+        // for every PPU clock.
+        if (cycle < 339) {
+            cycle++
+        } else if (
+            cycle == 340 ||
+            (scanline == region.preRenderScanline &&
+                renderingEnabled &&
+                region == Region.NTSC &&
+                (frameCount and 1) == 1)
+        ) {
+            endLine()
+        } else {
+            cycle++
+        }
     }
 
     private fun rendering() = with (memory.ppuAddressedMemory.mask) { showBackground() || showSprites() }
@@ -384,13 +376,6 @@ class Ppu(var memory: Memory) {
         scanline = 0
         vBlank = false
 
-        // Odd-frame cycle skip (issue #226). Frame just ended: frameCount now reflects the
-        // NEXT frame number (frameCount was 0 for the first frame, now 1; 1 for the second,
-        // now 2; etc.). The skip fires when the NEXT frame is odd AND PPUMASK says either
-        // background or sprites are showing. The skip is consumed by the next tick().
-        if (rendering() && (frameCount and 1) == 1) {
-            skipNextDot = true
-        }
     }
 
     /**

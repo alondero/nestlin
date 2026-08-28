@@ -109,7 +109,7 @@ class RunLoopTest {
         val region = Region.NTSC
         val rc = RegionConfig(region)
         val nanosPerTick = rc.targetFrameTimeNanos / region.cpuCyclesPerFrame
-        // NTSC: ~60.0988 Hz * ~29830 cycles/frame ≈ 558 ns/cycle
+        // NTSC: ~60.0988 Hz * ~29781 cycles/frame ≈ 558 ns/cycle
         assertTrue(nanosPerTick in 500L..600L,
             "Expected ~558 ns/tick for NTSC, got $nanosPerTick")
         // PAL: ~50.007 Hz * ~33248 cycles/frame ≈ 601 ns/cycle

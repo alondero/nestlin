@@ -17,6 +17,7 @@ class RegionTimingTest {
         assertEquals(262, Region.NTSC.totalScanlines)
         assertEquals(261, Region.NTSC.preRenderScanline)
         assertEquals(30, Region.NTSC.ppuDotsPerCpuTimes10)  // 3.0
+        assertEquals(29_781L, Region.NTSC.cpuCyclesPerFrame)
 
         assertEquals(312, Region.PAL.totalScanlines)
         assertEquals(311, Region.PAL.preRenderScanline)
@@ -41,6 +42,22 @@ class RegionTimingTest {
         }
         repeat(5) { nestlin.stepCpuCycle() }
         assertEquals(16L, nestlin.ppu.ticksElapsed)  // 3+3+3+3+4 = 16 over 5 cycles
+    }
+
+    @Test
+    fun `rendered NTSC frame intervals follow the scheduler phase and total 59561 CPU cycles`() {
+        val intervals = cpuCycleIntervalsForRenderedFrames(Region.NTSC, 2)
+
+        assertEquals(listOf(29_781L, 29_780L), intervals)
+        assertEquals(59_561L, intervals.sum())
+    }
+
+    @Test
+    fun `rendered PAL frame intervals follow the scheduler phase and total 66495 CPU cycles`() {
+        val intervals = cpuCycleIntervalsForRenderedFrames(Region.PAL, 2)
+
+        assertEquals(listOf(33_248L, 33_247L), intervals)
+        assertEquals(66_495L, intervals.sum())
     }
 
     @Test
@@ -82,5 +99,24 @@ class RegionTimingTest {
         val start = ppu.ticksElapsed
         while (!frameSeen) ppu.tick()
         return ppu.ticksElapsed - start
+    }
+
+    private fun cpuCycleIntervalsForRenderedFrames(region: Region, targetFrames: Int): List<Long> {
+        val nestlin = Nestlin().apply {
+            config.regionOverride = region
+            applyRegion()
+            memory.ppuAddressedMemory.mask.register = 0x18
+        }
+        val completionCycles = mutableListOf<Long>()
+        var cpuCycles = 0L
+        nestlin.ppu.addFrameCompletionListener { completionCycles += cpuCycles }
+
+        while (completionCycles.size < targetFrames) {
+            cpuCycles++
+            nestlin.stepCpuCycle()
+        }
+        return completionCycles.mapIndexed { index, boundary ->
+            boundary - completionCycles.getOrElse(index - 1) { 0L }
+        }
     }
 }
