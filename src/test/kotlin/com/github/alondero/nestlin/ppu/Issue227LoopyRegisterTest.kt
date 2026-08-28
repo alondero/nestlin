@@ -218,7 +218,11 @@ class Issue227LoopyRegisterTest {
         memory.ppuAddressedMemory.mask.register = 0b0001_1000.toByte()
 
         var guard = 4 * 89342
-        while (!memory.ppuAddressedMemory.status.sprite0Hit() && guard-- > 0) ppu.tick()
+        while (!memory.ppuAddressedMemory.status.sprite0Hit() && guard > 0) {
+            ppu.tick()
+            guard--
+        }
+        check(guard > 0) { "sprite-0 hit was not observed before the timeout" }
 
         assertThat("sprite-0 hit must fire when sprite 0 is in secondary OAM",
             memory.ppuAddressedMemory.status.sprite0Hit(), equalTo(true))

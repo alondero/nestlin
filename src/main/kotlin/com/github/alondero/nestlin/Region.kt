@@ -33,7 +33,11 @@ enum class Region(
      * 10 credits, so PAL naturally alternates 3 and 4 dots without float drift.
      */
     val ppuDotsPerCpuTimes10: Int,
-    /** Whole CPU cycles per frame, used only to derive nanoseconds-per-tick for throttling. */
+    /**
+     * Whole CPU cycles per frame, used only to derive nanoseconds-per-tick for throttling.
+     * The PPU/CPU ratios produce fractional frame lengths, so this is the ceiling of the
+     * nominal frame duration; the NTSC scheduler alternates 29,781 and 29,780 cycles.
+     */
     val cpuCyclesPerFrame: Long,
     /** APU frame-counter step boundaries (CPU cycles) in 4-step mode. */
     val apuFourStepSequence: IntArray,
@@ -54,7 +58,7 @@ enum class Region(
         cpuFrequencyHz = 1_789_773.0,
         refreshRateHz = 60.0988,
         ppuDotsPerCpuTimes10 = 30,
-        cpuCyclesPerFrame = 29830L,
+        cpuCyclesPerFrame = 29781L,
         apuFourStepSequence = intArrayOf(7457, 14913, 22371, 29829),
         apuFiveStepSequence = intArrayOf(7457, 14913, 22371, 29829, 37281),
         apuFourStepMaxCycles = 29830,

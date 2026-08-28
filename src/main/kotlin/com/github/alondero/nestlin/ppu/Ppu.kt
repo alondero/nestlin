@@ -257,14 +257,18 @@ class Ppu(var memory: Memory) {
         // One scheduler call is one PPU clock. Normal scanlines wrap as part of dot 340,
         // rather than spending a 342nd call on a boundary with no dot work. On rendered
         // odd NTSC frames the 2C02 omits the final pre-render dot: dot 339 completes the
-        // frame directly. PAL's 2C07 never performs this shortening.
-        val skipFinalPreRenderDot =
-            region == Region.NTSC &&
+        // frame directly. PAL's 2C07 never performs this shortening. Keep the overwhelmingly
+        // common dot-increment path ahead of the region/parity checks; this code runs once
+        // for every PPU clock.
+        if (cycle < 339) {
+            cycle++
+        } else if (
+            cycle == 340 ||
+            (scanline == region.preRenderScanline &&
                 renderingEnabled &&
-                scanline == region.preRenderScanline &&
-                cycle == 339 &&
-                (frameCount and 1) == 1
-        if (cycle == 340 || skipFinalPreRenderDot) {
+                region == Region.NTSC &&
+                (frameCount and 1) == 1)
+        ) {
             endLine()
         } else {
             cycle++

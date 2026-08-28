@@ -17,6 +17,7 @@ class RegionTimingTest {
         assertEquals(262, Region.NTSC.totalScanlines)
         assertEquals(261, Region.NTSC.preRenderScanline)
         assertEquals(30, Region.NTSC.ppuDotsPerCpuTimes10)  // 3.0
+        assertEquals(29_781L, Region.NTSC.cpuCyclesPerFrame)
 
         assertEquals(312, Region.PAL.totalScanlines)
         assertEquals(311, Region.PAL.preRenderScanline)
