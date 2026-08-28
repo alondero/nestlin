@@ -212,9 +212,6 @@ class Cpu(
         if (powerOn) {
             _processorStatus.reset()
             _registers.reset()
-            // 6502 power-up S=$00; the reset sequence's three decrements land
-            // it at $FD (see MicrocodedReset).
-            _registers.stackPointer = 0
         }
         currentGame?.let { memory.readCartridge(it) }
         resetState.begin()
@@ -257,7 +254,15 @@ class Cpu(
         var resetSequenceCompletedThisTick = false
         try {
             if (activeReset) {
-                resetState.step()
+                // A save restored with `phase == 7` reaches the completion
+                // branch without re-running step(); a fresh or mid-sequence
+                // save advances normally. Either way, the completion branch
+                // below drives the PC/SP/I-flag writeback via completeNow().
+                if (resetState.isComplete) {
+                    resetState.completeNow()
+                } else {
+                    resetState.step()
+                }
                 if (_workCyclesLeft > 0) _workCyclesLeft--
                 if (resetState.isComplete) {
                     activeReset = false
@@ -610,7 +615,11 @@ class Registers(
         var programCounter: Short = 0
 ) {
     fun reset() {
-        stackPointer = -3 // Skips decrementing three times from init
+        // Power-on state per the 6502 spec (also per nesdev "CPU power up state"):
+        // A = X = Y = 0, S = $00. The tick-by-tick RESET bus sequence
+        // (MicrocodedReset) takes care of the S = $00 -> $FD decrement during
+        // its three stack-read cycles, so we don't fake $FD here anymore.
+        stackPointer = 0
         accumulator = 0
         indexX = 0
         indexY = 0

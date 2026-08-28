@@ -281,20 +281,26 @@ class Nestlin {
     }
 
     /**
-     * Soft reset: equivalent to pressing the NES RESET button. The CPU is redirected to
-     * its RESET vector and registers are zeroed, but **internal RAM ($0000-$07FF) and
-     * PPU registers are preserved** — the RESET line on real hardware does NOT
-     * power-cycle the work RAM or the PPU's latched state.
+     * Soft reset: equivalent to pressing the NES RESET button. The CPU is
+     * redirected to its RESET vector through the seven-cycle tick-by-tick
+     * RESET bus sequence ([com.github.alondero.nestlin.cpu.MicrocodedReset]),
+     * but **internal RAM ($0000-$07FF), PPU registers, A/X/Y and the status
+     * flags (except I) are preserved** — the RESET line on real hardware
+     * does NOT power-cycle the work RAM or the PPU's latched state, and it
+     * does not clear the 6502's data registers either. Only the sequence's
+     * vector fetch forces the interrupt disable flag and decrements S by
+     * three (so S also changes on a soft reset).
      *
-     * Used by the FM2 movie replayer when a row's `commands` field has bit 0 set
-     * (issue #125). The companion [powerReset] is what gets called for bit 1 (the
-     * power-cycle case), and it goes through [Cpu.reset] which DOES clear RAM via
-     * [com.github.alondero.nestlin.Memory.clear].
+     * Used by the FM2 movie replayer when a row's `commands` field has bit 0
+     * set (issue #125). The companion [powerReset] is what gets called for
+     * bit 1 (the power-cycle case), and it goes through [Cpu.reset] which
+     * DOES clear RAM via [com.github.alondero.nestlin.Memory.clear].
      *
-     * Implementation note: we deliberately do NOT touch the rewind buffer. A soft reset
-     * is a transition within the same session (the user can still rewind across it
-     * to inspect what was happening before the RESET button was pressed), unlike a
-     * power-cycle which [powerReset] treats as a brand-new boot timeline.
+     * Implementation note: we deliberately do NOT touch the rewind buffer. A
+     * soft reset is a transition within the same session (the user can
+     * still rewind across it to inspect what was happening before the RESET
+     * button was pressed), unlike a power-cycle which [powerReset] treats as
+     * a brand-new boot timeline.
      */
     fun softReset() {
         cpu.softReset()

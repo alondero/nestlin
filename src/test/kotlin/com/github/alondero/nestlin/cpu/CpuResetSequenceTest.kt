@@ -54,15 +54,16 @@ class CpuResetSequenceTest {
 
         repeat(7) { fixture.cpu.tick() }
 
-        // PC=$0000 after the power-on register wipe, so the two discarded
-        // "opcode fetch" reads hit RAM; S=$00 so the stack reads descend
+        // PC=$0000 after the power-on register wipe, so cycle 1 reads $0000
+        // (the opcode byte) and cycle 2 reads $0001 (PC incremented by the
+        // 6502 during cycle 1). S=$00 so the stack reads descend
         // $0100 -> $01FF -> $01FE.
         assertThat(
             fixture.trace,
             equalTo(
                 listOf(
                     access(0x0000, 0xFF),
-                    access(0x0000, 0xFF),
+                    access(0x0001, 0xFF),
                     access(0x0100, 0xFF),
                     access(0x01FF, 0xFF),
                     access(0x01FE, 0xFF),
@@ -106,13 +107,14 @@ class CpuResetSequenceTest {
         repeat(7) { fixture.cpu.tick() }
 
         // The two discarded fetches read the opcode at the parked PC ($C000:
-        // the JMP spin loop), then the stack reads descend from S=$10.
+        // the JMP spin loop) and the operand byte at $C001. The stack reads
+        // descend from S=$10.
         assertThat(
             fixture.trace,
             equalTo(
                 listOf(
                     access(0xC000, 0x4C),
-                    access(0xC000, 0x4C),
+                    access(0xC001, 0x00),
                     access(0x0110, 0xFF),
                     access(0x010F, 0xFF),
                     access(0x010E, 0xFF),
@@ -201,13 +203,14 @@ class CpuResetSequenceTest {
 
         // Only the seven reset reads appear — no residual DMA source reads or
         // $2004 writes may interleave with the sequence. S is $FD after the
-        // power-on sequence, so the stack reads descend from there.
+        // power-on sequence, so the stack reads descend from there. Cycle 2
+        // reads $C001 (the 0x00 operand byte of the JMP spin loop).
         assertThat(
             fixture.trace,
             equalTo(
                 listOf(
                     access(0xC000, 0x4C),
-                    access(0xC000, 0x4C),
+                    access(0xC001, 0x00),
                     access(0x01FD, 0xFF),
                     access(0x01FC, 0xFF),
                     access(0x01FB, 0xFF),
@@ -270,6 +273,91 @@ class CpuResetSequenceTest {
         )
         assertThat(restored.cpu.registers.programCounter, equalTo(0xC000.toSignedShort()))
         assertThat(restored.cpu.registers.stackPointer, equalTo(0xFD.toSignedByte()))
+    }
+
+    @Test
+    fun `a save loaded with phase 7 (save taken on the completing tick) does not crash on the next tick`() {
+        // Regression for the load-time logic bomb: an older draft of
+        // MicrocodedReset.load() set `isComplete = (phase == 7)` which made
+        // the very next tick call step() and throw
+        // "completed CPU reset sequence stepped again".
+        //
+        // A legitimate production save can never carry `phase == 7` because
+        // the completing tick clears `activeReset` on the same cycle, but a
+        // hand-crafted save (or a future regression) might. The dispatch loop
+        // must tolerate the state and finish the sequence cleanly.
+        val fixture = fixture()
+        fixture.cpu.reset()
+        repeat(7) { fixture.cpu.tick() } // sequence completes, activeReset=false
+        assertThat(fixture.cpu.executionInFlight, equalTo(false))
+
+        // Hand-craft a save where phase is 7 but the activeReset latch is
+        // true, simulating a save taken on the very tick the sequence
+        // completed. We can't reach this through public Cpu.reset() + tick(),
+        // so write the latches directly via reflection-equivalent paths.
+        val fixture2 = fixture()
+        fixture2.cpu.reset()
+        repeat(6) { fixture2.cpu.tick() } // six phases done; phase=7, isComplete=false
+        fixture2.trace.clear()
+
+        // Force the "save mid-completion with phase 7" shape and restore it.
+        val bytes = serialisePhase7Completion(fixture2.cpu)
+        val restored = fixture()
+        restored.memory.clear()
+        restored.memory.readCartridge(restored.cpu.currentGame!!)
+        DataInputStream(ByteArrayInputStream(bytes)).use(restored.cpu::loadState)
+
+        // The next tick must NOT throw — it should drive the completion
+        // bookkeeping (clear activeReset, zero cycleCount, activate test-ROM
+        // automation) without calling resetState.step() again.
+        restored.cpu.tick()
+
+        assertThat(restored.cpu.executionInFlight, equalTo(false))
+        assertThat(restored.cpu.registers.programCounter, equalTo(0xC000.toSignedShort()))
+    }
+
+    /**
+     * Serialise a CPU save state with the reset sequencer at `phase == 7` and
+     * `activeReset == true` — the precise shape a save would have if taken on
+     * the very tick the sequence completed. The completing branch in Cpu.tick
+     * clears activeReset on the same tick, so production saves can never carry
+     * this shape; the test simulates it by writing the latches directly.
+     *
+     * The v10 CPU block layout (issue #301) ends with the optional reset
+     * sequencer payload: a boolean flag and, when true, a 5-byte latch
+     * (startPc short, initialSp byte, phase byte, vectorLow byte). We bypass
+     * saveState() and emit exactly the bytes a save on the completing tick
+     * would carry.
+     */
+    private fun serialisePhase7Completion(cpu: com.github.alondero.nestlin.cpu.Cpu): ByteArray {
+        val buf = ByteArrayOutputStream()
+        DataOutputStream(buf).use { dos ->
+            // The 18-byte prefix the v10 CPU block writes regardless of state.
+            dos.writeByte(cpu.registers.stackPointer.toInt())
+            dos.writeByte(cpu.registers.accumulator.toInt())
+            dos.writeByte(cpu.registers.indexX.toInt())
+            dos.writeByte(cpu.registers.indexY.toInt())
+            dos.writeShort(cpu.registers.programCounter.toInt())
+            dos.writeByte(cpu.processorStatus.asByte().toInt())
+            dos.writeBoolean(cpu.processorStatus.breakCommand)
+            dos.writeInt(cpu.workCyclesLeft)
+            dos.writeBoolean(cpu.pageBoundaryFlag)
+            dos.writeBoolean(cpu.idle)
+            dos.writeInt(0) // reserved
+            // v10 fields the >= 10 branch consumes.
+            dos.writeInt(cpu.cycleCount)
+            dos.writeBoolean(false) // activeInstruction
+            dos.writeBoolean(false) // activeInterrupt
+            dos.writeInt(0)          // genericStallCycles
+            dos.writeBoolean(false) // oamDmaActive
+            // Reset sequencer payload: activeReset=true with phase == 7.
+            dos.writeBoolean(true)
+            dos.writeShort(0xC000)   // startPc
+            dos.writeByte(0)          // initialSp
+            dos.writeByte(7)          // phase == 7
+            dos.writeByte(0x00)       // vectorLow
+        }
+        return buf.toByteArray()
     }
 
     // ---------------------------------------------------------------------

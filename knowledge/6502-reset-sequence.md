@@ -9,7 +9,8 @@ the vector fixed at `$FFFC/$FFFD`:
 ```
   #  address    R/W description
   1  PC         R   fetch opcode (discarded; PC is meaningless at reset)
-  2  PC         R   read next instruction byte (discarded)
+  2  $PC+1      R   read next instruction byte (discarded; PC incremented
+                       by the 6502 during cycle 1)
   3  $0100+S    R   read from stack (discarded)
   4  $0100+S-1  R   read from stack (discarded)
   5  $0100+S-2  R   read from stack (discarded)
