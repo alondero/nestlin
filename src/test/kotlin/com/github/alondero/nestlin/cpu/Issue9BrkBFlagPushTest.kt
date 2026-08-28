@@ -38,7 +38,10 @@ import org.junit.jupiter.api.Test
  */
 class Issue9BrkBFlagPushTest {
 
-    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply { reset() }
+    private fun freshCpu() = Cpu(Memory.createWithApu().first).apply {
+            reset()
+            finishExecution()
+        }
 
     // ===== asByte() — direct unit test on the serializer =================
 
@@ -136,6 +139,7 @@ class Issue9BrkBFlagPushTest {
         val fakeController = FakeInterruptController()
         val cpu = Cpu(Memory.createWithApu().first, fakeController).apply {
             reset()
+            finishExecution()
             registers.programCounter = 0x0000.toSignedShort()
             // IRQ has no 1-instruction latency in the fake — it's dispatched
             // on the same tick it's armed, as long as I is clear. The NOPs

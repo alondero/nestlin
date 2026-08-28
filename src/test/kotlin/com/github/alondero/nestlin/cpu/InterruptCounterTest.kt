@@ -33,6 +33,7 @@ class InterruptCounterTest {
         val cpu = Cpu(Memory.createWithApu().first, fakeController).apply {
             currentGame = GamePak(spinLoopRom())
             reset()
+            finishExecution()
         }
         assertThat(cpu.nmiCount, equalTo(0))
         assertThat(cpu.irqCount, equalTo(0))
@@ -65,6 +66,7 @@ class InterruptCounterTest {
         val fakeController = FakeInterruptController()
         val cpu = Cpu(Memory.createWithApu().first, fakeController).apply {
             reset()
+            finishExecution()
             registers.programCounter = 0x0000.toSignedShort()
             // A run of NOPs so there is always an in-flight instruction (no idle park),
             // which means the NMI is armed first and dispatches one instruction later.

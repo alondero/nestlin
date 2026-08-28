@@ -198,3 +198,26 @@ fun testRom(block: TestRomBuilder.() -> Unit): ByteArray = TestRomBuilder().appl
 
 /** Builds a [GamePak] directly. See [TestRomBuilder]. */
 fun testGamePak(block: TestRomBuilder.() -> Unit): GamePak = TestRomBuilder().apply(block).buildGamePak()
+
+/**
+ * A minimal 16 KB NROM image whose only meaningful code is a JMP-to-self spin
+ * loop at `$C000`. The reset vector points at the loop, so a freshly-reset CPU
+ * executes the loop and parks — writing nothing to RAM — and tests can
+ * observe only the side effects of whatever reset or DMA path they are
+ * exercising.
+ *
+ * Used by `CpuResetSequenceTest`, `IdleLoopTest`, and `MovieCommandsTest`,
+ * each of which needs a deterministic ROM that survives a reset without
+ * mutating RAM. The shared helper exists because the alternative was three
+ * near-identical private `spinLoopRom()` definitions drifting apart
+ * (reviewed in the PR-#301 code review).
+ */
+fun spinLoopRom(): ByteArray = testRom {
+    prgKb = 16
+    chrKb = 0
+    prg[0x0000] = 0x4C.toByte() // JMP $C000
+    prg[0x0001] = 0x00.toByte()
+    prg[0x0002] = 0xC0.toByte()
+    prg[0x3FFC] = 0x00.toByte() // reset vector low -> $C000
+    prg[0x3FFD] = 0xC0.toByte() // reset vector high
+}

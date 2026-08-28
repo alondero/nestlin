@@ -381,11 +381,17 @@ class SaveStateProgressTest {
         }
         // v8 added eleven bytes to an idle CPU block: cycle-count int,
         // active-instruction flag, active-interrupt flag, generic-stall int,
-        // and OAM-DMA flag. These
-        // snapshots are taken immediately after reset, so all flags are false.
+        // and OAM-DMA flag. v10 appended the in-flight reset sequencer: a
+        // boolean plus a five-byte payload while a reset sequence is
+        // mid-flight. These
+        // snapshots are taken immediately after reset, so all flags are false
+        // except the reset sequence, which is always in flight.
         val cpuV8ExtensionStart = 20 + 18
         val cpuV8ExtensionBytes = if (targetVersion < 8) 11 else 0
-        val outSize = bodyEnd - cpuV8ExtensionBytes
+        val resetFlagOffset = cpuV8ExtensionStart + 11
+        val resetActive = currentBytes[resetFlagOffset] != 0.toByte()
+        val cpuResetBlockBytes = if (targetVersion < 10) 1 + (if (resetActive) 5 else 0) else 0
+        val outSize = bodyEnd - cpuV8ExtensionBytes - cpuResetBlockBytes
         val out = ByteArray(outSize)
         // Copy magic verbatim.
         System.arraycopy(currentBytes, 0, out, 0, 4)
@@ -397,7 +403,7 @@ class SaveStateProgressTest {
         out[7] = (targetVersion and 0xFF).toByte()
         // Copy the body, omitting the CPU extension for a pre-v8 target.
         System.arraycopy(currentBytes, 8, out, 8, cpuV8ExtensionStart - 8)
-        val sourceAfterCpuExtension = cpuV8ExtensionStart + cpuV8ExtensionBytes
+        val sourceAfterCpuExtension = cpuV8ExtensionStart + cpuV8ExtensionBytes + cpuResetBlockBytes
         System.arraycopy(
             currentBytes,
             sourceAfterCpuExtension,
