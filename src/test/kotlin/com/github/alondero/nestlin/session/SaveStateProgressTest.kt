@@ -352,11 +352,10 @@ class SaveStateProgressTest {
      * back-compat exercises.
      *
      * Layout: [magic(4)][version(4)][body][trailerLength(4)][trailerBody(N)].
-     * The output is the v7 file with the last `4 + N` bytes dropped, the
-     * [portsBlockBytes] bytes of the per-port device-type block stripped
-     * from the body (only relevant for v4, where that block did not yet
-     * exist), and the version field at offset 4..7 replaced with
-     * [targetVersion].
+     * The output is the v8 file with the last `4 + N` bytes dropped and the
+     * version field at offset 4..7 replaced with [targetVersion]. The helper
+     * is used only for v5/v6 migration; the v4 test exercises the version
+     * rejection boundary without synthesizing a position-dependent layout.
      *
      * The helper expects a zero-length trailer in [v7Bytes] — the
      * back-compat tests all use the default `capture` lambda which
@@ -368,7 +367,6 @@ class SaveStateProgressTest {
     private fun stripTrailerAndRewriteVersion(
         v7Bytes: ByteArray,
         targetVersion: Int,
-        portsBlockBytes: Int = 0,
     ): ByteArray {
         val trailerBodyLen = readBigEndianLengthAtEnd(v7Bytes, 4)
         require(trailerBodyLen == 0) {
@@ -377,11 +375,17 @@ class SaveStateProgressTest {
                 "default (null) captureProgress and this helper will work."
         }
         val bodyEnd = v7Bytes.size - 4  // no trailer body to skip
-        require(bodyEnd >= 8 + portsBlockBytes) {
+        require(bodyEnd >= 8) {
             "v7 file is too small to have both a header and a body of " +
-                "${bodyEnd - 8 - portsBlockBytes} bytes (size=${v7Bytes.size}, portsBlockBytes=$portsBlockBytes)"
+                "${bodyEnd - 8} bytes (size=${v7Bytes.size})"
         }
-        val outSize = bodyEnd - portsBlockBytes
+        // v8 added eleven bytes to an idle CPU block: cycle-count int,
+        // active-instruction flag, active-interrupt flag, generic-stall int,
+        // and OAM-DMA flag. These
+        // snapshots are taken immediately after reset, so all flags are false.
+        val cpuV8ExtensionStart = 20 + 18
+        val cpuV8ExtensionBytes = if (targetVersion < 8) 11 else 0
+        val outSize = bodyEnd - cpuV8ExtensionBytes
         val out = ByteArray(outSize)
         // Copy magic verbatim.
         System.arraycopy(v7Bytes, 0, out, 0, 4)
@@ -391,11 +395,16 @@ class SaveStateProgressTest {
         out[5] = ((targetVersion ushr 16) and 0xFF).toByte()
         out[6] = ((targetVersion ushr 8) and 0xFF).toByte()
         out[7] = (targetVersion and 0xFF).toByte()
-        // Copy the body up to (and including) the ports-block-end, then
-        // skip [portsBlockBytes] (the ports block) and copy the remainder.
-        val prePortsEnd = 8 + (bodyEnd - 8 - portsBlockBytes)  // last pre-ports body byte + 1
-        System.arraycopy(v7Bytes, 8, out, 8, prePortsEnd - 8)
-        System.arraycopy(v7Bytes, prePortsEnd + portsBlockBytes, out, prePortsEnd, outSize - prePortsEnd)
+        // Copy the body, omitting the v8 CPU extension for an older target.
+        System.arraycopy(v7Bytes, 8, out, 8, cpuV8ExtensionStart - 8)
+        val sourceAfterCpuExtension = cpuV8ExtensionStart + cpuV8ExtensionBytes
+        System.arraycopy(
+            v7Bytes,
+            sourceAfterCpuExtension,
+            out,
+            cpuV8ExtensionStart,
+            outSize - cpuV8ExtensionStart,
+        )
         return out
     }
 

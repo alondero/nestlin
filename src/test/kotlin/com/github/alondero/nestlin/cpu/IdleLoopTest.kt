@@ -65,7 +65,7 @@ class IdleLoopTest {
             memory[0x0202] = 0x02.toSignedByte()
         }
 
-        cpu.tick()
+        cpu.executeNext()
 
         assertThat(cpu.idle, equalTo(true))
         assertThat(cpu.registers.programCounter, equalTo(0x0200.toSignedShort()))
@@ -92,7 +92,7 @@ class IdleLoopTest {
         // to finish), so this single tick both arms AND dispatches.
         fakeController.armNmi()
 
-        cpu.tick()
+        cpu.executeNext()
 
         // The interrupt must wake the CPU: idle cleared and PC redirected to the
         // NMI vector ($C010 in this ROM).

@@ -12,6 +12,50 @@ import java.io.DataInput
 import java.io.DataOutput
 
 class Memory : DmaPort {
+    enum class CpuBusOperation { READ, WRITE }
+
+    data class CpuBusAccess(
+        val operation: CpuBusOperation,
+        val address: Int,
+        val value: Byte,
+    )
+
+    /**
+     * Optional cycle-trace seam for CPU-bus tests and diagnostics. The callback is
+     * invoked after each real, side-effecting CPU read or write. Side-effect-free
+     * [peek] calls deliberately do not appear here.
+     */
+    var cpuBusObserver: ((CpuBusAccess) -> Unit)? = null
+
+    private data class CpuReplay(
+        val reads: MutableMap<Int, ArrayDeque<Byte>>,
+        val writes: MutableList<Pair<Int, Byte>> = mutableListOf(),
+    )
+
+    private var cpuReplay: CpuReplay? = null
+
+    /**
+     * Re-run an opcode's register/flag semantics against values already read by
+     * the cycle engine. Replay accesses never touch devices, the data-bus latch,
+     * or the observer; writes are returned to the engine so it can place the one
+     * real write on the correct hardware cycle.
+     */
+    internal fun <T> replayCpuSemantics(
+        reads: Map<Int, List<Byte>>,
+        block: () -> T,
+    ): Pair<T, List<Pair<Int, Byte>>> {
+        check(cpuReplay == null) { "Nested CPU semantic replay" }
+        val replay = CpuReplay(
+            reads.mapValuesTo(mutableMapOf()) { (_, values) -> ArrayDeque(values) }
+        )
+        cpuReplay = replay
+        return try {
+            block() to replay.writes.toList()
+        } finally {
+            cpuReplay = null
+        }
+    }
+
     private val internalRam = ByteArray(0x800)
     val ppuAddressedMemory = PpuAddressedMemory()
 
@@ -145,14 +189,14 @@ class Memory : DmaPort {
 
     /**
      * Set by the CPU during its construction so Memory's `$4014` (OAM DMA)
-     * handler can request a 513-cycle CPU stall. Replaces the previous
+     * handler can start a resumable transfer. Replaces the previous
      * `var cpu: Cpu?` back-reference (issue #190) — the interface narrows
      * the coupling to a single capability ("you may stall this CPU") so
      * Memory no longer imports or knows about `Cpu`'s internal
      * `workCyclesLeft` field.
      *
      * Why a back-reference at all: the 6502 data-bus is shared, so the CPU
-     * is suspended for the duration of an OAM DMA. Without this halt every
+     * is suspended for the duration of an OAM DMA. Without this transfer every
      * DMA would let the CPU "skip ahead" by 513 cycles — a per-frame drift
      * that desyncs games from Mesen2 in as few as ~5 frames of
      * OAM-DMA-heavy sprite work. Micro Machines (mapper 71) was the canary
@@ -254,6 +298,10 @@ class Memory : DmaPort {
     }
 
     operator fun set(address: Int, value: Byte) {
+        cpuReplay?.let {
+            it.writes += (address and 0xFFFF) to value
+            return
+        }
         when (address) {
             in 0x0000..0x1FFF -> internalRam[address%0x800] = value
             in 0x2000..0x3FFF -> ppuAddressedMemory[address%8] = value
@@ -267,39 +315,10 @@ class Memory : DmaPort {
                 port2.writeStrobe(strobeBit)
             }
             0x4014 -> {
-                val base = value.toUnsignedInt() shl 8
-                // NESdev: writing $4014 sets OAMADDR ($2003) to 0 at the start of
-                // the DMA — every DMA always writes $base+0 to OAM[0], $base+1 to
-                // OAM[1], etc. Without this reset, a non-zero oamAddress (e.g. from
-                // the game doing manual $2004 writes to mask sprite 0 just before
-                // triggering the DMA) shifts every DMA byte by that offset, so
-                // $0200[0] lands in OAM[oamAddress] instead of OAM[0] and sprite 0
-                // keeps the manually-written mask bytes instead of the real data.
-                // This was the silent cause of the Akira (mapper 33) title→gameplay
-                // freeze (issue #141): the game hides sprite 0 with 4 manual $2004
-                // writes (Y=$FF, tile=0, attr=0, X=0) then runs the DMA, expecting
-                // the real sprite-0 tile=$81 from the data table to land in OAM[0].
-                // On Nestlin the DMA shifted by 4, leaving OAM[0] = $FF $00 $00 $00,
-                // the game polled PPUSTATUS bit 6 forever, and sprite-0 hit never
-                // fired because the real sprite was at OAM[1] instead of OAM[0].
-                ppuAddressedMemory.oamAddress = 0
-                for (i in 0 until 256) {
-                    val data = this[base + i]
-                    ppuAddressedMemory.writeOamData(data)
-                }
-                // OAM DMA halts the CPU for 513 cycles (NESdev: each of the 256
-                // byte transfers is 2 PPU cycles, +1 for the align-on-write setup
-                // cycle). Without this halt, every DMA "skips" 513 CPU cycles —
-                // enough to desync the game from a cycle-accurate reference like
-                // Mesen2 within a handful of frames of OAM-heavy sprite updates.
-                // Surface diagnosed against Micro Machines (mapper 71) on
-                // 2026-06-02: the 2-frame CPU-PC drift at frame 270 was the
-                // downstream symptom.
-                //
-                // Issue #190: the back-reference was narrowed from `cpu: Cpu?`
-                // to `stallSource: StallSource?`. Same behaviour, narrower
-                // coupling — Memory no longer reaches into `workCyclesLeft`.
-                stallSource?.stallFor(513)
+                // A register write starts a resumable DMA. Cpu.tick owns the
+                // alternating source-read/OAM-write cycles and their alignment
+                // stall so the CPU never skips the in-flight bus step.
+                stallSource?.startOamDma(value.toUnsignedInt())
             }
             in 0x4000..0x401F -> apu.handleRegisterWrite(address - 0x4000, value)
             in 0x4020..0xFFFF -> {
@@ -313,9 +332,19 @@ class Memory : DmaPort {
         // default Mapper implementation of `dataBus` is 0, so mappers
         // that don't override `cpuRead` get the old 0-on-open-bus behaviour.
         dataBus = value
+        cpuBusObserver?.invoke(CpuBusAccess(CpuBusOperation.WRITE, address and 0xFFFF, value))
     }
 
     override operator fun get(address: Int): Byte {
+        cpuReplay?.let { replay ->
+            val normalized = address and 0xFFFF
+            val values = replay.reads[normalized]
+                ?: error("CPU semantic replay did not capture a read from $${"%04X".format(normalized)}")
+            check(values.isNotEmpty()) {
+                "CPU semantic replay exhausted reads from $${"%04X".format(normalized)}"
+            }
+            return values.removeFirst()
+        }
         val result: Byte = when (address) {
             in 0x0000..0x1FFF -> internalRam[address % 0x800]
             in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
@@ -337,6 +366,7 @@ class Memory : DmaPort {
         }
         // Track the result on the data bus for the next access.
         dataBus = result
+        cpuBusObserver?.invoke(CpuBusAccess(CpuBusOperation.READ, address and 0xFFFF, result))
         return result
     }
 

@@ -37,6 +37,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 2-cycle instruction, post-tick decrement leaves 1.
         assertThat(cpu.workCyclesLeft, equalTo(1))
+        cpu.finishExecution()
     }
 
     @Test
@@ -57,6 +58,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 7-cycle instruction, post-tick decrement leaves 6.
         assertThat(cpu.workCyclesLeft, equalTo(6))
+        cpu.finishExecution()
     }
 
     @Test
@@ -70,6 +72,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 2-cycle instruction.
         assertThat(cpu.workCyclesLeft, equalTo(1))
+        cpu.finishExecution()
     }
 
     @Test
@@ -84,6 +87,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 6-cycle instruction, post-tick decrement leaves 5.
         assertThat(cpu.workCyclesLeft, equalTo(5))
+        cpu.finishExecution()
     }
 
     @Test
@@ -101,6 +105,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 6-cycle instruction, post-tick decrement leaves 5.
         assertThat(cpu.workCyclesLeft, equalTo(5))
+        cpu.finishExecution()
     }
 
     @Test
@@ -113,6 +118,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 2-cycle instruction.
         assertThat(cpu.workCyclesLeft, equalTo(1))
+        cpu.finishExecution()
     }
 
     @Test
@@ -143,6 +149,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 7-cycle NMI service, post-tick decrement leaves 6.
         assertThat(cpu.workCyclesLeft, equalTo(6))
+        cpu.finishExecution()
     }
 
     @Test
@@ -159,6 +166,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 2-cycle branch (not taken), post-tick decrement leaves 1.
         assertThat(cpu.workCyclesLeft, equalTo(1))
+        cpu.finishExecution()
         // PC advanced past the 2-byte instruction (relative offset NOT applied).
         assertThat(cpu.registers.programCounter, equalTo(0x0002.toSignedShort()))
     }
@@ -176,6 +184,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 3-cycle branch (taken, no page cross), post-tick decrement leaves 2.
         assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.finishExecution()
         // PC followed the relative offset.
         assertThat(cpu.registers.programCounter, equalTo(0x0010.toSignedShort()))
     }
@@ -196,6 +205,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 4-cycle branch (taken, page-crossed), post-tick decrement leaves 3.
         assertThat(cpu.workCyclesLeft, equalTo(3))
+        cpu.finishExecution()
         // PC followed the relative offset across the page.
         assertThat(cpu.registers.programCounter, equalTo(0x1100.toSignedShort()))
         // pageBoundaryFlag is set so saveState can persist the cross.
@@ -228,6 +238,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 3-cycle instruction, post-tick decrement leaves 2.
         assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.finishExecution()
     }
 
     @Test
@@ -244,6 +255,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 4-cycle instruction, post-tick decrement leaves 3.
         assertThat(cpu.workCyclesLeft, equalTo(3))
+        cpu.finishExecution()
     }
 
     @Test
@@ -259,6 +271,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 3-cycle instruction, post-tick decrement leaves 2.
         assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.finishExecution()
     }
 
     @Test
@@ -273,6 +286,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 3-cycle instruction, post-tick decrement leaves 2.
         assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.finishExecution()
         // The load actually happened (proves the parametrised path ran).
         assertThat(cpu.registers.accumulator, equalTo(0x55.toSignedByte()))
     }
@@ -290,6 +304,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 4-cycle instruction, post-tick decrement leaves 3.
         assertThat(cpu.workCyclesLeft, equalTo(3))
+        cpu.finishExecution()
     }
 
     @Test
@@ -310,6 +325,7 @@ class WorkCyclesLeftConsistencyTest {
         // (Old hardcoded value was 2 -> would have been 1; the +4 delta is the
         //  regression bar for the `load` helper.)
         assertThat(cpu.workCyclesLeft, equalTo(5))
+        cpu.finishExecution()
         assertThat(cpu.registers.accumulator, equalTo(0x77.toSignedByte()))
     }
 
@@ -325,6 +341,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 3-cycle instruction, post-tick decrement leaves 2.
         assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.finishExecution()
         // The store actually happened.
         assertThat(cpu.memory[0x0042], equalTo(0xAB.toSignedByte()))
     }
@@ -346,6 +363,7 @@ class WorkCyclesLeftConsistencyTest {
         // 6-cycle instruction, post-tick decrement leaves 5.
         // (Old hardcoded value was 4 -> would have been 3; +2 delta.)
         assertThat(cpu.workCyclesLeft, equalTo(5))
+        cpu.finishExecution()
         // STA wrote to $0204 ($0200 + Y=4).
         assertThat(cpu.memory[0x0204], equalTo(0xCD.toSignedByte()))
     }
@@ -363,6 +381,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 3-cycle instruction, post-tick decrement leaves 2.
         assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.finishExecution()
         // A AND 0x0F = 0x0F.
         assertThat(cpu.registers.accumulator, equalTo(0x0F.toSignedByte()))
     }
@@ -379,6 +398,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 2-cycle instruction, post-tick decrement leaves 1.
         assertThat(cpu.workCyclesLeft, equalTo(1))
+        cpu.finishExecution()
         assertThat(cpu.registers.accumulator, equalTo(0xF0.toSignedByte()))
     }
 
@@ -395,6 +415,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 3-cycle instruction, post-tick decrement leaves 2.
         assertThat(cpu.workCyclesLeft, equalTo(2))
+        cpu.finishExecution()
         // Equal -> zero flag set, carry set.
         assertThat(cpu.processorStatus.zero, equalTo(true))
         assertThat(cpu.processorStatus.carry, equalTo(true))
@@ -412,6 +433,7 @@ class WorkCyclesLeftConsistencyTest {
 
         // 2-cycle instruction, post-tick decrement leaves 1.
         assertThat(cpu.workCyclesLeft, equalTo(1))
+        cpu.finishExecution()
     }
 
     @Test
@@ -427,6 +449,7 @@ class WorkCyclesLeftConsistencyTest {
         // 5-cycle instruction, post-tick decrement leaves 4.
         // (Old hardcoded value was 2 -> would have been 1; +3 delta.)
         assertThat(cpu.workCyclesLeft, equalTo(4))
+        cpu.finishExecution()
         // 0x40 << 1 = 0x80, carry cleared (bit 7 of original was 0).
         assertThat(cpu.memory[0x0042], equalTo(0x80.toSignedByte()))
         assertThat(cpu.processorStatus.carry, equalTo(false))
@@ -446,6 +469,7 @@ class WorkCyclesLeftConsistencyTest {
         // 6-cycle instruction, post-tick decrement leaves 5.
         // (Old hardcoded value was 2 -> would have been 1; +4 delta.)
         assertThat(cpu.workCyclesLeft, equalTo(5))
+        cpu.finishExecution()
         // 0x01 >> 1 = 0x00, carry set (bit 0 of original was 1).
         assertThat(cpu.memory[0x0200], equalTo(0x00.toSignedByte()))
         assertThat(cpu.processorStatus.carry, equalTo(true))
@@ -466,6 +490,7 @@ class WorkCyclesLeftConsistencyTest {
         // 6-cycle instruction, post-tick decrement leaves 5.
         // (Old hardcoded value was 2 -> would have been 1; +4 delta.)
         assertThat(cpu.workCyclesLeft, equalTo(5))
+        cpu.finishExecution()
         // (0x80 << 1) | 1 = 0x101, low byte 0x01, carry = 1 (bit 7 of original).
         assertThat(cpu.memory[0x0042], equalTo(0x01.toSignedByte()))
         assertThat(cpu.processorStatus.carry, equalTo(true))
@@ -487,6 +512,7 @@ class WorkCyclesLeftConsistencyTest {
         // 7-cycle instruction, post-tick decrement leaves 6.
         // (Old hardcoded value was 2 -> would have been 1; +5 delta.)
         assertThat(cpu.workCyclesLeft, equalTo(6))
+        cpu.finishExecution()
         // (0x01 >> 1) | 0x80 = 0x80, carry = 1 (bit 0 of original).
         assertThat(cpu.memory[0x0204], equalTo(0x80.toSignedByte()))
         assertThat(cpu.processorStatus.carry, equalTo(true))
@@ -506,6 +532,7 @@ class WorkCyclesLeftConsistencyTest {
         // (Old hardcoded value was 6 -> would have been 5; -1 delta is also a
         //  regression signal that the parametrised path is wired.)
         assertThat(cpu.workCyclesLeft, equalTo(4))
+        cpu.finishExecution()
         assertThat(cpu.memory[0x0042], equalTo(0x10.toSignedByte()))
     }
 
@@ -526,6 +553,7 @@ class WorkCyclesLeftConsistencyTest {
         //  is the regression bar proving DEC $abs,X is no longer under-
         //  counted by the parametrised path.)
         assertThat(cpu.workCyclesLeft, equalTo(6))
+        cpu.finishExecution()
         assertThat(cpu.memory[0x0204], equalTo(0x0F.toSignedByte()))
     }
 
@@ -544,6 +572,7 @@ class WorkCyclesLeftConsistencyTest {
         // 4-cycle instruction, post-tick decrement leaves 3.
         // (Old hardcoded value was 3 -> would have been 2; +1 delta.)
         assertThat(cpu.workCyclesLeft, equalTo(3))
+        cpu.finishExecution()
         // A=0 AND M=0xC0 = 0 -> zero set, V and N mirror M's bits 6 and 7.
         assertThat(cpu.processorStatus.zero, equalTo(true))
         assertThat(cpu.processorStatus.overflow, equalTo(true))

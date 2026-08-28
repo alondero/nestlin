@@ -45,7 +45,7 @@ class InterruptCounterTest {
         // both arms and dispatches.
         fakeController.armNmi()
 
-        cpu.tick() // dispatches (idle park skips the 1-instruction latency)
+        cpu.executeNext() // dispatches all seven entry cycles
 
         assertThat(cpu.nmiCount, equalTo(1))
         assertThat(cpu.irqCount, equalTo(0))

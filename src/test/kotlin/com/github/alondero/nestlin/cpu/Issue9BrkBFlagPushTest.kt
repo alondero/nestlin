@@ -96,7 +96,7 @@ class Issue9BrkBFlagPushTest {
             negative = false
         }
 
-        cpu.tick()
+        cpu.executeNext()
 
         // The pushed status byte is at $01FB (3 bytes pushed: PCh, PCl, P).
         val pushedStatus = cpu.memory[0x01FB].toUnsignedInt()
@@ -121,7 +121,7 @@ class Issue9BrkBFlagPushTest {
         cpu.memory[0xFFFF] = 0x00.toSignedByte()
         cpu.registers.stackPointer = 0xFD.toSignedByte()
 
-        cpu.tick()
+        cpu.executeNext()
 
         assertThat(cpu.processorStatus.breakCommand, equalTo(false))
     }
@@ -152,7 +152,7 @@ class Issue9BrkBFlagPushTest {
 
         // IRQ has no 1-instruction latency in the fake; armed == dispatched.
         fakeController.armIrq()
-        cpu.tick()
+        cpu.executeNext()
 
         val pushedStatus = cpu.memory[0x01FB].toUnsignedInt()
         // IRQ pushes status with bit 4 (B) clear — that's the discriminator.

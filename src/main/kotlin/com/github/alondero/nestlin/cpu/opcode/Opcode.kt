@@ -26,11 +26,11 @@ import com.github.alondero.nestlin.toUnsignedInt
  *
  * **Cycle-count threading.** [cycles] is the real-6502 base cycle count for
  * the opcode's addressing mode. For [Branch] this is the NOT-TAKEN count
- * (taken is computed inside `evaluate` per the 6502 spec — 3 cycles, +1
- * on page cross). For all other opcodes it is the exact count. The Cpu's
- * `tick()` decrements [Cpu.workCyclesLeft] after the opcode runs, so a
- * 2-cycle instruction leaves `workCyclesLeft == 1` after one tick — see
- * [OpcodeCycleTableTest] for the regression bar.
+ * (taken is computed by the cycle engine per the 6502 spec — 3 cycles, +1
+ * on page cross). For all other opcodes it is the exact count. [Cpu.tick]
+ * schedules those cycles through a resumable micro-operation; [evaluate]
+ * remains the register/flag semantic callback and is replayed only after the
+ * corresponding bus reads have occurred.
  *
  * **Preserved quirks (issue #207).** Several opcodes still carry
  * intentional deviations from real 6502 behaviour; the ones that survived
@@ -41,10 +41,10 @@ import com.github.alondero.nestlin.toUnsignedInt
  */
 sealed class Opcode(val cycles: Int) {
     /**
-     * Run this opcode against [cpu]. Reads operands from
-     * `cpu.registers.programCounter` / `cpu.memory[...]`, mutates registers,
-     * flags, and PC, and sets `cpu.workCyclesLeft` to the real-6502 cycle
-     * count (which the Cpu scheduler then decrements per tick).
+     * Run this opcode's register/flag semantics against [cpu]. The CPU's
+     * cycle engine normally invokes this callback under a side-effect-free
+     * memory replay after it has emitted the real bus accesses; direct callers
+     * may still use it as the historical semantic operation.
      */
     abstract fun evaluate(cpu: Cpu)
 

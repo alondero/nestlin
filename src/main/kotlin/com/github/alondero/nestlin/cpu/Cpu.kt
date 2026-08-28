@@ -2,6 +2,7 @@ package com.github.alondero.nestlin.cpu
 
 import com.github.alondero.nestlin.*
 import com.github.alondero.nestlin.cpu.opcode.OpcodesRefactor
+import com.github.alondero.nestlin.cpu.opcode.Kil
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.log.Logger
 import java.io.DataInput
@@ -23,9 +24,8 @@ class Cpu(
 ) : StallSource
 {
     init {
-        // Wire this CPU as the stall source so Memory's $4014 (OAM DMA) handler
-        // can request a 513-cycle halt through the StallSource interface — no
-        // longer reaches into `Cpu.workCyclesLeft` via a back-reference.
+        // Wire this CPU as the stall source so Memory's $4014 handler can start
+        // a resumable DMA transfer through the StallSource interface.
         memory.stallSource = this
     }
 
@@ -61,6 +61,17 @@ class Cpu(
     private var _idle = false
     private var logger: Logger? = null
     private val opcodes = OpcodesRefactor
+    private var activeInstruction: MicrocodedInstruction? = null
+    private var activeInterrupt: MicrocodedInterrupt? = null
+    private data class OamDmaState(
+        val page: Int,
+        var dummyCycles: Int,
+        var index: Int = 0,
+        var reading: Boolean = true,
+        var buffer: Byte = 0,
+    )
+    private var oamDma: OamDmaState? = null
+    private var genericStallCycles = 0
 
     // --- Controlled-access properties (issue #23) --------------------------------
     // Backing fields are private; these properties are the entire public surface for
@@ -104,12 +115,16 @@ class Cpu(
      * Cumulative CPU cycles elapsed since the last [reset] / [softReset].
      * Incremented at the end of every [tick]. The trace [Logger] multiplies
      * this by 3 to produce nestest.log's PPU-cycle column; the raw CPU count
-     * is exposed here for any consumer that wants CPU-cycle timing. Not part
-     * of save-state serialisation — it's emulation telemetry, not architected
-     * state. See issue #17.
+     * is exposed here for any consumer that wants CPU-cycle timing. Version-8
+     * save states persist it because its parity controls the alignment cycle
+     * of a future OAM DMA. See issue #17 and #298.
      */
     val cycleCount: Int
         get() = _cycleCount
+
+    internal val executionInFlight: Boolean
+        get() = activeInstruction != null || activeInterrupt != null ||
+            oamDma != null || genericStallCycles > 0
 
     fun getCurrentPc(): Short = registers.programCounter
     // TODO: Development-only feature - Remove undocumented opcode logging once emulator stability is proven
@@ -150,6 +165,10 @@ class Cpu(
         _nmiCount = 0
         _irqCount = 0
         _cycleCount = 0
+        activeInstruction = null
+        activeInterrupt = null
+        oamDma = null
+        genericStallCycles = 0
         currentGame?.let {
             memory.readCartridge(it)
             _registers.initialise(memory)
@@ -190,6 +209,59 @@ class Cpu(
         memory.mapper?.tickCpuCycle()
 
         try {
+            oamDma?.let { dma ->
+                when {
+                    dma.dummyCycles > 0 -> {
+                        memory[registers.programCounter.toUnsignedInt()]
+                        dma.dummyCycles--
+                    }
+                    dma.reading -> {
+                        dma.buffer = memory[(dma.page shl 8) or dma.index]
+                        dma.reading = false
+                    }
+                    else -> {
+                        memory[0x2004] = dma.buffer
+                        dma.reading = true
+                        dma.index++
+                    }
+                }
+                if (_workCyclesLeft > 0) _workCyclesLeft--
+                if (dma.index == 256) {
+                    oamDma = null
+                    _workCyclesLeft = 0
+                }
+                return
+            }
+
+            if (genericStallCycles > 0) {
+                // RDY holds the current read cycle; the same micro-step resumes
+                // after the stall rather than being discarded or repeated.
+                memory[registers.programCounter.toUnsignedInt()]
+                genericStallCycles--
+                _workCyclesLeft = genericStallCycles
+                return
+            }
+
+            activeInterrupt?.let { interrupt ->
+                interrupt.step()
+                if (_workCyclesLeft > 0) _workCyclesLeft--
+                if (interrupt.isComplete) {
+                    activeInterrupt = null
+                    _workCyclesLeft = 0
+                }
+                return
+            }
+
+            activeInstruction?.let { instruction ->
+                instruction.step()
+                if (_workCyclesLeft > 0) _workCyclesLeft--
+                if (instruction.isComplete) {
+                    activeInstruction = null
+                    if (oamDma == null && genericStallCycles == 0) _workCyclesLeft = 0
+                }
+                return
+            }
+
             if (readyForNextInstruction()) {
                 // Ask the controller what (if anything) to dispatch RIGHT NOW.
                 // The controller owns the 1-instruction NMI latency and the NMI>IRQ
@@ -199,17 +271,18 @@ class Cpu(
                 when (interruptController.pendingInterrupt(idle, processorStatus.interruptDisable)) {
                     InterruptKind.NMI -> {
                         interruptController.acknowledge(InterruptKind.NMI)
-                        dispatchInterrupt(InterruptKind.NMI, memory[0xFFFA, 0xFFFB])
-                        // An interrupt redirects the PC, breaking any spin loop.
+                        activeInterrupt = MicrocodedInterrupt.start(this, InterruptKind.NMI)
                         idle = false
-                        workCyclesLeft--
+                        activeInterrupt!!.step()
+                        workCyclesLeft = 6
                         return
                     }
                     InterruptKind.IRQ -> {
                         interruptController.acknowledge(InterruptKind.IRQ)
-                        dispatchInterrupt(InterruptKind.IRQ, memory[0xFFFE, 0xFFFF])
+                        activeInterrupt = MicrocodedInterrupt.start(this, InterruptKind.IRQ)
                         idle = false
-                        workCyclesLeft--
+                        activeInterrupt!!.step()
+                        workCyclesLeft = 6
                         return
                     }
                     null -> {
@@ -251,7 +324,22 @@ class Cpu(
                     // ($zp),Y with page cross). Issue #17 / #172.
                     pageBoundaryFlag = false
                     logger?.cpuTick(initialPC, opcodeVal, this)
-                    it.evaluate(this)
+                    activeInstruction = MicrocodedInstruction.start(
+                        this,
+                        opcodeVal,
+                        it,
+                        initialPC.toUnsignedInt(),
+                    )
+                    workCyclesLeft = when {
+                        it is Kil -> 0
+                        it is com.github.alondero.nestlin.cpu.opcode.Branch && it.condition(this) -> {
+                            val offset = memory.peek((initialPC.toUnsignedInt() + 1) and 0xFFFF).toInt()
+                            val target = (initialPC.toUnsignedInt() + 2 + offset.toByte()) and 0xFFFF
+                            val total = if (((initialPC.toUnsignedInt() + 2) and 0xFF00) != (target and 0xFF00)) 4 else 3
+                            total - 1
+                        }
+                        else -> (it.cycles - 1).coerceAtLeast(0)
+                    }
                 } ?: run {
                     // For test ROMs, throw exception to maintain test compatibility
                     // For regular games, log and treat as 2-cycle NOP
@@ -260,12 +348,12 @@ class Cpu(
                         throw UnhandledOpcodeException(opcodeVal)
                     } else {
                         logUndocumentedOpcode(opcodeVal, initialPC)
-                        workCyclesLeft = 2
+                        genericStallCycles = 1
+                        workCyclesLeft = 1
                     }
                 }
         }
 
-        if (workCyclesLeft > 0) workCyclesLeft--
         } finally {
             // Bump the cumulative CPU cycle counter exactly once per tick.
             // The `try { ... } finally { ... }` ensures the increment runs
@@ -275,43 +363,6 @@ class Cpu(
             // mid-frame and the trace would diverge from nestest.log.
             // Issue #17 / GoldenLogTest cycle comparison.
             _cycleCount++
-        }
-    }
-
-    /**
-     * Push PC + status, set the I-flag, load the vector, and set the 7-cycle
-     * cost. Shared by NMI and IRQ dispatch (issue #190 / ADR-0003) — the only
-     * differences are which vector is loaded and which diagnostic counter is
-     * bumped, both of which are the caller's choice.
-     *
-     * Note: the BRK opcode (`Opcodes.kt` `map[0x00]`) intentionally duplicates
-     * most of this body with two differences — it pushes status WITH the B
-     * flag set (the BRK/IRQ discriminator) and increments PC past BRK's
-     * padding byte before pushing. Deduplicating would require parameterising
-     * both, which adds more complexity than the ~10 lines save. Kept separate
-     * by deliberate choice (code review finding, reuse angle).
-     */
-    private fun dispatchInterrupt(kind: InterruptKind, vector: Short) {
-        // Push PC (high byte first, then low byte)
-        val pc = _registers.programCounter.toUnsignedInt()
-        push((pc shr 8).toSignedByte())
-        push((pc and 0xFF).toSignedByte())
-
-        // Push processor status (with B flag clear for interrupts — that bit
-        // distinguishes BRK from IRQ/NMI on the stack).
-        val statusByte = _processorStatus.asByte().toUnsignedInt()
-        val statusForInterrupt = (statusByte and 0xEF).toSignedByte()
-        push(statusForInterrupt)
-
-        // Set interrupt disable flag — the handler re-enables with RTI.
-        _processorStatus.interruptDisable = true
-
-        _registers.programCounter = vector
-        _workCyclesLeft = 7
-
-        when (kind) {
-            InterruptKind.NMI -> incrementNmiCount()
-            InterruptKind.IRQ -> incrementIrqCount()
         }
     }
 
@@ -334,20 +385,28 @@ class Cpu(
     }
 
     /**
-     * StallSource implementation (issue #190). Called by `Memory` when a
-     * `$4014` (OAM DMA) write needs to halt the CPU for 513 cycles. The
-     * scheduler in [tick] decrements `_workCyclesLeft` every tick while
-     * it's positive, suspending instruction fetch — exactly as a real
-     * CPU is stalled for the duration of an OAM DMA.
+     * StallSource implementation (issue #190). Called by [Memory] for an
+     * explicit, non-DMA stall. OAM DMA uses [startOamDma] so the scheduler
+     * can emit its alternating read/write bus cycles and preserve alignment.
      */
     override fun stallFor(cycles: Int) {
+        genericStallCycles = cycles
         _workCyclesLeft = cycles
+    }
+
+    override fun startOamDma(page: Int) {
+        val dummyCycles = 1 + (_cycleCount and 1)
+        // Nestlin's PPU model (and the existing Akira regression contract)
+        // starts every DMA at OAM[0], regardless of the last $2003 write.
+        memory.ppuAddressedMemory.oamAddress = 0
+        oamDma = OamDmaState(page and 0xFF, dummyCycles)
+        _workCyclesLeft = dummyCycles + 512
     }
 
     /**
      * Save state — issue #190 removes the `_nmiArmed` field from the CPU
      * block (it now lives in [interruptController] as the controller's
-     * own state). The save-state format is bumped to VERSION 4 in
+     * own state). The save-state format is bumped to VERSION 8 in
      * [SaveState]; the new "interrupt controller" sub-block lives
      * between the CPU and RAM blocks and holds the controller's `nmiArmed`.
      *
@@ -371,9 +430,25 @@ class Cpu(
         out.writeBoolean(_idle)
         // Reserved 4-byte int slot — see kdoc above.
         out.writeInt(0)
+        // Cycle parity determines the alignment delay for a future OAM DMA;
+        // preserve the full counter so save/load also keeps logger timing.
+        out.writeInt(_cycleCount)
+        out.writeBoolean(activeInstruction != null)
+        activeInstruction?.save(out)
+        out.writeBoolean(activeInterrupt != null)
+        activeInterrupt?.save(out)
+        out.writeInt(genericStallCycles)
+        out.writeBoolean(oamDma != null)
+        oamDma?.let { dma ->
+            out.writeByte(dma.page)
+            out.writeByte(dma.dummyCycles)
+            out.writeShort(dma.index)
+            out.writeBoolean(dma.reading)
+            out.writeByte(dma.buffer.toInt())
+        }
     }
 
-    fun loadState(input: DataInput) {
+    fun loadState(input: DataInput, version: Int = SaveState.VERSION) {
         _registers.stackPointer = input.readByte()
         _registers.accumulator = input.readByte()
         _registers.indexX = input.readByte()
@@ -387,6 +462,29 @@ class Cpu(
         // nmiArmed moved to interruptController.loadState in VERSION 4.
         // Reserved slot — see saveState.
         input.readInt()
+        if (version >= 8) {
+            _cycleCount = input.readInt()
+            activeInstruction = if (input.readBoolean()) {
+                MicrocodedInstruction.load(this, input) { opcodes[it] }
+            } else null
+            activeInterrupt = if (input.readBoolean()) MicrocodedInterrupt.load(this, input) else null
+            genericStallCycles = input.readInt()
+            oamDma = if (input.readBoolean()) {
+                OamDmaState(
+                    page = input.readUnsignedByte(),
+                    dummyCycles = input.readUnsignedByte(),
+                    index = input.readUnsignedShort(),
+                    reading = input.readBoolean(),
+                    buffer = input.readByte(),
+                )
+            } else null
+        } else {
+            _cycleCount = 0
+            activeInstruction = null
+            activeInterrupt = null
+            genericStallCycles = _workCyclesLeft.coerceAtLeast(0)
+            oamDma = null
+        }
     }
 
     fun push(value: Byte) { memory[0x100 + ((registers.stackPointer--).toUnsignedInt())] = value }
