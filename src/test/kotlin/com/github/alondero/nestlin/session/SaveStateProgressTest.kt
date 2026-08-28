@@ -122,8 +122,8 @@ class SaveStateProgressTest {
         // We use the default (null) capture so the trailer is zero-length
         // and the helper's length computation is trivially correct — the
         // test exercises the version branch, not the trailer branch.
-        val v7Bytes = snapshot(newNestlin())
-        val v6Bytes = stripTrailerAndRewriteVersion(v7Bytes, targetVersion = 6)
+        val currentBytes = snapshot(newNestlin())
+        val v6Bytes = stripTrailerAndRewriteVersion(currentBytes, targetVersion = 6)
 
         val nes = newNestlin()
         var restoreCalls = 0
@@ -144,8 +144,8 @@ class SaveStateProgressTest {
         // the per-subsystem blocks; instead we round-trip the equivalent
         // path by stripping both trailers and patching the version field.
         // This still exercises the v7 load's `else` branch (version < 7).
-        val v7Bytes = snapshot(newNestlin())
-        val v5Bytes = stripTrailerAndRewriteVersion(v7Bytes, targetVersion = 5)
+        val currentBytes = snapshot(newNestlin())
+        val v5Bytes = stripTrailerAndRewriteVersion(currentBytes, targetVersion = 5)
 
         val nes = newNestlin()
         var restoreCalls = 0
@@ -182,8 +182,8 @@ class SaveStateProgressTest {
      *  upper bound is pinned by the v7-version-check in the existing
      *  SaveStateTest. */
     private fun assertOldVersionRejected(nes: Nestlin) {
-        val v7Bytes = snapshot(nes)
-        val tooOldBytes = stripTrailerAndRewriteVersion(v7Bytes, targetVersion = 3)
+        val currentBytes = snapshot(nes)
+        val tooOldBytes = stripTrailerAndRewriteVersion(currentBytes, targetVersion = 3)
         try {
             restore(nes, tooOldBytes) { /* unreachable */ }
             throw AssertionError("expected IncompatibleSaveStateException for v3 file")
@@ -232,8 +232,8 @@ class SaveStateProgressTest {
         // Synthesize a v7 file whose trailer length is one byte above the
         // cap. The loader must NOT allocate, must drain the stream
         // gracefully, must call restore with null.
-        val v7Bytes = snapshot(newNestlin())
-        val corrupted = corruptTrailerLength(v7Bytes, SaveState.MAX_RA_PROGRESS_BYTES + 1)
+        val currentBytes = snapshot(newNestlin())
+        val corrupted = corruptTrailerLength(currentBytes, SaveState.MAX_RA_PROGRESS_BYTES + 1)
 
         val nes = newNestlin()
         var restoreCalls = 0
@@ -248,8 +248,8 @@ class SaveStateProgressTest {
     fun `load rejects negative trailer length without crashing`() {
         // Negative length is a wire-level corruption signal. The loader
         // must not throw, must not allocate, must reset the runtime.
-        val v7Bytes = snapshot(newNestlin())
-        val corrupted = corruptTrailerLength(v7Bytes, -1)
+        val currentBytes = snapshot(newNestlin())
+        val corrupted = corruptTrailerLength(currentBytes, -1)
 
         val nes = newNestlin()
         var restoreCalls = 0
@@ -347,17 +347,17 @@ class SaveStateProgressTest {
     // ---------------------------------------------------------------------
 
     /**
-     * Strip the v7 trailer from [v7Bytes] (a full v7 save) and patch the
+     * Strip the progress trailer from [currentBytes] (a full current-version save) and patch the
      * version field to [targetVersion]. Used to synthesise older saves for
      * back-compat exercises.
      *
      * Layout: [magic(4)][version(4)][body][trailerLength(4)][trailerBody(N)].
-     * The output is the v8 file with the last `4 + N` bytes dropped and the
+     * The output is the older-version file with the last `4 + N` bytes dropped and the
      * version field at offset 4..7 replaced with [targetVersion]. The helper
      * is used only for v5/v6 migration; the v4 test exercises the version
      * rejection boundary without synthesizing a position-dependent layout.
      *
-     * The helper expects a zero-length trailer in [v7Bytes] — the
+     * The helper expects a zero-length trailer in [currentBytes] — the
      * back-compat tests all use the default `capture` lambda which
      * returns null. Synthesizing older versions with non-zero-length
      * trailers would require knowing the trailer body length a priori,
@@ -365,19 +365,19 @@ class SaveStateProgressTest {
      * is what's under test).
      */
     private fun stripTrailerAndRewriteVersion(
-        v7Bytes: ByteArray,
+        currentBytes: ByteArray,
         targetVersion: Int,
     ): ByteArray {
-        val trailerBodyLen = readBigEndianLengthAtEnd(v7Bytes, 4)
+        val trailerBodyLen = readBigEndianLengthAtEnd(currentBytes, 4)
         require(trailerBodyLen == 0) {
             "stripTrailerAndRewriteVersion expects a zero-length trailer; " +
-                "got body length $trailerBodyLen. Build the v7 file with the " +
+            "got body length $trailerBodyLen. Build the current-version file with the " +
                 "default (null) captureProgress and this helper will work."
         }
-        val bodyEnd = v7Bytes.size - 4  // no trailer body to skip
+        val bodyEnd = currentBytes.size - 4  // no trailer body to skip
         require(bodyEnd >= 8) {
             "v7 file is too small to have both a header and a body of " +
-                "${bodyEnd - 8} bytes (size=${v7Bytes.size})"
+                "${bodyEnd - 8} bytes (size=${currentBytes.size})"
         }
         // v8 added eleven bytes to an idle CPU block: cycle-count int,
         // active-instruction flag, active-interrupt flag, generic-stall int,
@@ -388,18 +388,18 @@ class SaveStateProgressTest {
         val outSize = bodyEnd - cpuV8ExtensionBytes
         val out = ByteArray(outSize)
         // Copy magic verbatim.
-        System.arraycopy(v7Bytes, 0, out, 0, 4)
+        System.arraycopy(currentBytes, 0, out, 0, 4)
         // Rewrite the version field with explicit big-endian bytes (avoids
         // any wrapper-class cast gymnastics and is the most direct).
         out[4] = ((targetVersion ushr 24) and 0xFF).toByte()
         out[5] = ((targetVersion ushr 16) and 0xFF).toByte()
         out[6] = ((targetVersion ushr 8) and 0xFF).toByte()
         out[7] = (targetVersion and 0xFF).toByte()
-        // Copy the body, omitting the v8 CPU extension for an older target.
-        System.arraycopy(v7Bytes, 8, out, 8, cpuV8ExtensionStart - 8)
+        // Copy the body, omitting the CPU extension for a pre-v8 target.
+        System.arraycopy(currentBytes, 8, out, 8, cpuV8ExtensionStart - 8)
         val sourceAfterCpuExtension = cpuV8ExtensionStart + cpuV8ExtensionBytes
         System.arraycopy(
-            v7Bytes,
+            currentBytes,
             sourceAfterCpuExtension,
             out,
             cpuV8ExtensionStart,
@@ -409,13 +409,13 @@ class SaveStateProgressTest {
     }
 
     /**
-     * Take a v7 save and replace the trailer length with [newLength].
+     * Take a current-version save and replace the trailer length with [newLength].
      * The original body is kept verbatim; a larger length is fine because
      * the loader's oversize check fires before it touches the body.
      */
-    private fun corruptTrailerLength(v7Bytes: ByteArray, newLength: Int): ByteArray {
-        val out = v7Bytes.copyOf()
-        val lenOffset = v7Bytes.size - 4  // last 4 bytes are the length (length-prefixed trailer)
+    private fun corruptTrailerLength(currentBytes: ByteArray, newLength: Int): ByteArray {
+        val out = currentBytes.copyOf()
+        val lenOffset = currentBytes.size - 4  // last 4 bytes are the length (length-prefixed trailer)
         // Big-endian write
         out[lenOffset] = ((newLength ushr 24) and 0xFF).toByte()
         out[lenOffset + 1] = ((newLength ushr 16) and 0xFF).toByte()

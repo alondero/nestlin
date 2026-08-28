@@ -182,9 +182,11 @@ class WorkCyclesLeftConsistencyTest {
 
         cpu.tick()
 
-        // 3-cycle branch (taken, no page cross), post-tick decrement leaves 2.
-        assertThat(cpu.workCyclesLeft, equalTo(2))
+        // The fetch cycle has completed; the branch resolves on its operand
+        // cycle, so only the base one-cycle estimate is visible here.
+        assertThat(cpu.workCyclesLeft, equalTo(1))
         cpu.finishExecution()
+        assertThat(cpu.cycleCount, equalTo(3))
         // PC followed the relative offset.
         assertThat(cpu.registers.programCounter, equalTo(0x0010.toSignedShort()))
     }
@@ -203,9 +205,11 @@ class WorkCyclesLeftConsistencyTest {
 
         cpu.tick()
 
-        // 4-cycle branch (taken, page-crossed), post-tick decrement leaves 3.
-        assertThat(cpu.workCyclesLeft, equalTo(3))
+        // Page crossing is discovered by the operand micro-step rather than
+        // by a side-effect-free prefetch at decode time.
+        assertThat(cpu.workCyclesLeft, equalTo(1))
         cpu.finishExecution()
+        assertThat(cpu.cycleCount, equalTo(4))
         // PC followed the relative offset across the page.
         assertThat(cpu.registers.programCounter, equalTo(0x1100.toSignedShort()))
         // pageBoundaryFlag is set so saveState can persist the cross.

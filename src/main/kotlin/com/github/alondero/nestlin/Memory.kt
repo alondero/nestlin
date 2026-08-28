@@ -23,38 +23,10 @@ class Memory : DmaPort {
     /**
      * Optional cycle-trace seam for CPU-bus tests and diagnostics. The callback is
      * invoked after each real, side-effecting CPU read or write. Side-effect-free
-     * [peek] calls deliberately do not appear here.
+     * [peek] calls deliberately do not appear here. The production path leaves
+     * this null, so no [CpuBusAccess] object is allocated for normal bus traffic.
      */
     var cpuBusObserver: ((CpuBusAccess) -> Unit)? = null
-
-    private data class CpuReplay(
-        val reads: MutableMap<Int, ArrayDeque<Byte>>,
-        val writes: MutableList<Pair<Int, Byte>> = mutableListOf(),
-    )
-
-    private var cpuReplay: CpuReplay? = null
-
-    /**
-     * Re-run an opcode's register/flag semantics against values already read by
-     * the cycle engine. Replay accesses never touch devices, the data-bus latch,
-     * or the observer; writes are returned to the engine so it can place the one
-     * real write on the correct hardware cycle.
-     */
-    internal fun <T> replayCpuSemantics(
-        reads: Map<Int, List<Byte>>,
-        block: () -> T,
-    ): Pair<T, List<Pair<Int, Byte>>> {
-        check(cpuReplay == null) { "Nested CPU semantic replay" }
-        val replay = CpuReplay(
-            reads.mapValuesTo(mutableMapOf()) { (_, values) -> ArrayDeque(values) }
-        )
-        cpuReplay = replay
-        return try {
-            block() to replay.writes.toList()
-        } finally {
-            cpuReplay = null
-        }
-    }
 
     private val internalRam = ByteArray(0x800)
     val ppuAddressedMemory = PpuAddressedMemory()
@@ -298,10 +270,6 @@ class Memory : DmaPort {
     }
 
     operator fun set(address: Int, value: Byte) {
-        cpuReplay?.let {
-            it.writes += (address and 0xFFFF) to value
-            return
-        }
         when (address) {
             in 0x0000..0x1FFF -> internalRam[address%0x800] = value
             in 0x2000..0x3FFF -> ppuAddressedMemory[address%8] = value
@@ -336,15 +304,6 @@ class Memory : DmaPort {
     }
 
     override operator fun get(address: Int): Byte {
-        cpuReplay?.let { replay ->
-            val normalized = address and 0xFFFF
-            val values = replay.reads[normalized]
-                ?: error("CPU semantic replay did not capture a read from $${"%04X".format(normalized)}")
-            check(values.isNotEmpty()) {
-                "CPU semantic replay exhausted reads from $${"%04X".format(normalized)}"
-            }
-            return values.removeFirst()
-        }
         val result: Byte = when (address) {
             in 0x0000..0x1FFF -> internalRam[address % 0x800]
             in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]

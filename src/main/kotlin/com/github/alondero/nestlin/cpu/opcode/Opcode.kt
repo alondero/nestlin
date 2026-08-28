@@ -29,8 +29,9 @@ import com.github.alondero.nestlin.toUnsignedInt
  * (taken is computed by the cycle engine per the 6502 spec — 3 cycles, +1
  * on page cross). For all other opcodes it is the exact count. [Cpu.tick]
  * schedules those cycles through a resumable micro-operation; [evaluate]
- * remains the register/flag semantic callback and is replayed only after the
- * corresponding bus reads have occurred.
+ * remains the complete instruction-level semantic callback used by direct
+ * callers. The CPU's micro-step implementation applies those semantics at
+ * the hardware cycle where each operand is available.
  *
  * **Preserved quirks (issue #207).** Several opcodes still carry
  * intentional deviations from real 6502 behaviour; the ones that survived
@@ -41,15 +42,37 @@ import com.github.alondero.nestlin.toUnsignedInt
  */
 sealed class Opcode(val cycles: Int) {
     /**
-     * Run this opcode's register/flag semantics against [cpu]. The CPU's
-     * cycle engine normally invokes this callback under a side-effect-free
-     * memory replay after it has emitted the real bus accesses; direct callers
-     * may still use it as the historical semantic operation.
+     * Run this opcode's complete register/flag semantics against [cpu]. The
+     * CPU's cycle engine dispatches the equivalent operation directly from its
+     * micro-step implementation so memory-mapped bus effects occur only on
+     * their real cycle. Direct callers may use this callback for instruction-
+     * level tests.
      */
     abstract fun evaluate(cpu: Cpu)
 
     /** A short mnemonic for diagnostic / logging purposes. */
     abstract val mnemonic: String
+}
+
+/** An opcode whose operand is resolved through a hardware addressing mode. */
+interface AddressedOpcode {
+    val addressing: Addressing
+}
+
+/** Read-side semantics invoked by the CPU when the operand bus cycle completes. */
+interface ReadOpcode : AddressedOpcode {
+    fun applyRead(cpu: Cpu, value: Byte)
+}
+
+/** Store-side semantics invoked by the CPU for the final write bus cycle. */
+interface StoreOpcode : AddressedOpcode {
+    fun storeValue(cpu: Cpu, address: Int): Byte
+}
+
+/** Read-modify-write semantics split around the old-value and new-value writes. */
+interface RmwOpcode : AddressedOpcode {
+    fun transformedValue(cpu: Cpu, original: Byte): Byte
+    fun commitResult(cpu: Cpu, original: Byte, result: Byte)
 }
 
 // ============================================================================

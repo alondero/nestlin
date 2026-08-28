@@ -6,17 +6,24 @@ import com.github.alondero.nestlin.toUnsignedInt
 import java.io.DataInput
 import java.io.DataOutput
 
-/** Resumable seven-cycle IRQ/NMI entry sequence. */
-internal class MicrocodedInterrupt private constructor(
-    private val cpu: Cpu,
-    val kind: InterruptKind,
-    private val startPc: Int,
-    private val initialSp: Int,
-) {
+/** Reusable seven-cycle IRQ/NMI entry sequencer. */
+internal class MicrocodedInterrupt(private val cpu: Cpu) {
+    private var kind = InterruptKind.NMI
+    private var startPc = 0
+    private var initialSp = 0
     private var phase = 0
     private var vectorLow = 0
     var isComplete = false
         private set
+
+    fun begin(kind: InterruptKind) {
+        this.kind = kind
+        startPc = cpu.registers.programCounter.toUnsignedInt()
+        initialSp = cpu.registers.stackPointer.toUnsignedInt()
+        phase = 0
+        vectorLow = 0
+        isComplete = false
+    }
 
     fun step() {
         phase++
@@ -32,7 +39,7 @@ internal class MicrocodedInterrupt private constructor(
             6 -> vectorLow = cpu.memory[vector].toUnsignedInt()
             7 -> {
                 val vectorHigh = cpu.memory[vector + 1].toUnsignedInt()
-                cpu.registers.stackPointer = (initialSp - 3).toSignedByte()
+                cpu.registers.stackPointer = ((initialSp - 3) and 0xFF).toSignedByte()
                 cpu.registers.programCounter = (vectorLow or (vectorHigh shl 8)).toSignedShort()
                 cpu.processorStatus.interruptDisable = true
                 when (kind) {
@@ -52,24 +59,12 @@ internal class MicrocodedInterrupt private constructor(
         out.writeByte(vectorLow)
     }
 
-    companion object {
-        fun start(cpu: Cpu, kind: InterruptKind) = MicrocodedInterrupt(
-            cpu,
-            kind,
-            cpu.registers.programCounter.toUnsignedInt(),
-            cpu.registers.stackPointer.toUnsignedInt(),
-        )
-
-        fun load(cpu: Cpu, input: DataInput): MicrocodedInterrupt {
-            val result = MicrocodedInterrupt(
-                cpu,
-                InterruptKind.entries[input.readUnsignedByte()],
-                input.readUnsignedShort(),
-                input.readUnsignedByte(),
-            )
-            result.phase = input.readUnsignedByte()
-            result.vectorLow = input.readUnsignedByte()
-            return result
-        }
+    fun load(input: DataInput) {
+        kind = InterruptKind.entries[input.readUnsignedByte()]
+        startPc = input.readUnsignedShort()
+        initialSp = input.readUnsignedByte()
+        phase = input.readUnsignedByte()
+        vectorLow = input.readUnsignedByte()
+        isComplete = false
     }
 }

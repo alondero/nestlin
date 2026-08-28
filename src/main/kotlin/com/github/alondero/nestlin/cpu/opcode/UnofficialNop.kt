@@ -15,7 +15,9 @@ import com.github.alondero.nestlin.toSignedByte
  *  - NOP imm (2): 0x80, 0x82, 0x89, 0xC2, 0xE2, 0xEB
  *  - NOP implied (2): 0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA
  */
-class NopZp : Opcode(cycles = 3) {
+class NopZp : Opcode(cycles = 3), ReadOpcode {
+    override val addressing: Addressing = ZeroPage()
+    override fun applyRead(@Suppress("UNUSED_PARAMETER") cpu: Cpu, @Suppress("UNUSED_PARAMETER") value: Byte) = Unit
     override val mnemonic = "NOP zp"
     override fun evaluate(cpu: Cpu) {
         ZeroPage().value(cpu)
@@ -23,7 +25,9 @@ class NopZp : Opcode(cycles = 3) {
     }
 }
 
-class NopAbs : Opcode(cycles = 4) {
+class NopAbs : Opcode(cycles = 4), ReadOpcode {
+    override val addressing: Addressing = Absolute()
+    override fun applyRead(@Suppress("UNUSED_PARAMETER") cpu: Cpu, @Suppress("UNUSED_PARAMETER") value: Byte) = Unit
     override val mnemonic = "NOP abs"
     override fun evaluate(cpu: Cpu) {
         Absolute().value(cpu)
@@ -31,7 +35,9 @@ class NopAbs : Opcode(cycles = 4) {
     }
 }
 
-class NopAbsX : Opcode(cycles = 4) {
+class NopAbsX : Opcode(cycles = 4), ReadOpcode {
+    override val addressing: Addressing = Absolute(x = true)
+    override fun applyRead(@Suppress("UNUSED_PARAMETER") cpu: Cpu, @Suppress("UNUSED_PARAMETER") value: Byte) = Unit
     override val mnemonic = "NOP abs,X"
     override fun evaluate(cpu: Cpu) {
         Absolute(x = true).value(cpu)
@@ -40,7 +46,9 @@ class NopAbsX : Opcode(cycles = 4) {
     }
 }
 
-class NopZpX : Opcode(cycles = 4) {
+class NopZpX : Opcode(cycles = 4), ReadOpcode {
+    override val addressing: Addressing = ZeroPage(x = true)
+    override fun applyRead(@Suppress("UNUSED_PARAMETER") cpu: Cpu, @Suppress("UNUSED_PARAMETER") value: Byte) = Unit
     override val mnemonic = "NOP zp,X"
     override fun evaluate(cpu: Cpu) {
         ZeroPage(x = true).value(cpu)
@@ -48,7 +56,9 @@ class NopZpX : Opcode(cycles = 4) {
     }
 }
 
-class NopImm : Opcode(cycles = 2) {
+class NopImm : Opcode(cycles = 2), ReadOpcode {
+    override val addressing: Addressing = Immediate
+    override fun applyRead(@Suppress("UNUSED_PARAMETER") cpu: Cpu, @Suppress("UNUSED_PARAMETER") value: Byte) = Unit
     override val mnemonic = "NOP imm"
     override fun evaluate(cpu: Cpu) {
         cpu.readByteAtPC()

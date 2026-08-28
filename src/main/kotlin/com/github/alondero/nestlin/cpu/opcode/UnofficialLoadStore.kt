@@ -14,15 +14,18 @@ import com.github.alondero.nestlin.toUnsignedInt
  * Original Opcodes.kt:409-414, 770-778.
  */
 class Lax(
-    val addressing: Addressing,
+    override val addressing: Addressing,
     cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles) {
-    override fun evaluate(cpu: Cpu) {
-        val value = addressing.value(cpu)
+) : Opcode(cycles), ReadOpcode {
+    override fun applyRead(cpu: Cpu, value: Byte) {
         cpu.registers.accumulator = value
         cpu.registers.indexX = value
         cpu.processorStatus.resolveZeroAndNegativeFlags(value)
+    }
+
+    override fun evaluate(cpu: Cpu) {
+        applyRead(cpu, addressing.value(cpu))
         // Issue #17 / #172: +1 cycle on page cross for abs,Y / ($zp),Y.
         cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
@@ -37,15 +40,16 @@ class Lax(
  * Original Opcodes.kt:417-420, 780-785.
  */
 class Sax(
-    val addressing: Addressing,
+    override val addressing: Addressing,
     cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles) {
+) : Opcode(cycles), StoreOpcode {
+    override fun storeValue(cpu: Cpu, @Suppress("UNUSED_PARAMETER") address: Int): Byte =
+        (cpu.registers.accumulator.toUnsignedInt() and cpu.registers.indexX.toUnsignedInt()).toSignedByte()
+
     override fun evaluate(cpu: Cpu) {
         val addr = addressing.address(cpu)
-        cpu.memory[addr] =
-            (cpu.registers.accumulator.toUnsignedInt() and
-             cpu.registers.indexX.toUnsignedInt()).toSignedByte()
+        cpu.memory[addr] = storeValue(cpu, addr)
         // SAX is a store — no page-cross +1 cycle (real 6502 behaviour).
         // zp / abs / zp,Y / (ind,X) all keep their base cycle count.
         cpu.workCyclesLeft = cycles
@@ -62,15 +66,19 @@ class Sax(
  * Original Opcodes.kt:423-424.
  */
 class Ahx(
-    val addressing: Addressing,
+    override val addressing: Addressing,
+    cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles = 4) {
+) : Opcode(cycles), StoreOpcode {
+    override fun storeValue(cpu: Cpu, @Suppress("UNUSED_PARAMETER") address: Int): Byte =
+        (cpu.registers.accumulator.toUnsignedInt() and cpu.registers.indexX.toUnsignedInt()).toSignedByte()
+
     override fun evaluate(cpu: Cpu) {
         val value = (cpu.registers.accumulator.toUnsignedInt() and
                      cpu.registers.indexX.toUnsignedInt()).toSignedByte()
         cpu.memory[addressing.address(cpu)] = value
         // AHX is a store — no page-cross +1 cycle.
-        cpu.workCyclesLeft = 4
+        cpu.workCyclesLeft = this.cycles
     }
 }
 
@@ -97,15 +105,18 @@ class Xaa : Opcode(cycles = 2) {
  * Original Opcodes.kt:431, 835-844.
  */
 class Las(
-    val addressing: Addressing,
+    override val addressing: Addressing,
     override val mnemonic: String,
-) : Opcode(cycles = 4) {
-    override fun evaluate(cpu: Cpu) {
-        val value = addressing.value(cpu)
+) : Opcode(cycles = 4), ReadOpcode {
+    override fun applyRead(cpu: Cpu, value: Byte) {
         cpu.registers.accumulator = value
         cpu.registers.indexX = value
         cpu.registers.stackPointer = value
         cpu.processorStatus.resolveZeroAndNegativeFlags(value)
+    }
+
+    override fun evaluate(cpu: Cpu) {
+        applyRead(cpu, addressing.value(cpu))
         // LAS abs,Y — +1 cycle on page cross.
         cpu.workCyclesLeft = 4 + (if (cpu.pageBoundaryFlag) 1 else 0)
     }
@@ -126,10 +137,16 @@ class Las(
  * indexed addressing mode's cost.
  */
 class Tas(
-    val addressing: Addressing,
+    override val addressing: Addressing,
     cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles) {
+) : Opcode(cycles), StoreOpcode {
+    override fun storeValue(cpu: Cpu, address: Int): Byte {
+        cpu.registers.stackPointer = cpu.registers.accumulator
+        return (cpu.registers.accumulator.toUnsignedInt() and cpu.registers.indexX.toUnsignedInt() and
+            (((address shr 8) + 1) and 0xFF)).toSignedByte()
+    }
+
     override fun evaluate(cpu: Cpu) {
         cpu.registers.stackPointer = cpu.registers.accumulator
         // Original helper ignored the address value; we replicate that.
@@ -140,30 +157,32 @@ class Tas(
 }
 
 class Shx(
-    val addressing: Addressing,
+    override val addressing: Addressing,
     cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles) {
+) : Opcode(cycles), StoreOpcode {
+    override fun storeValue(cpu: Cpu, address: Int): Byte =
+        (cpu.registers.indexX.toUnsignedInt() and (((address shr 8) + 1) and 0xFF)).toSignedByte()
+
     override fun evaluate(cpu: Cpu) {
         val addr = addressing.address(cpu)
-        val highByte = ((addr shr 8) + 1) and 0xFF
-        cpu.memory[addr] =
-            (cpu.registers.indexX.toUnsignedInt() and highByte).toSignedByte()
+        cpu.memory[addr] = storeValue(cpu, addr)
         // SHX is a store — no page-cross +1.
         cpu.workCyclesLeft = cycles
     }
 }
 
 class Shy(
-    val addressing: Addressing,
+    override val addressing: Addressing,
     cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles) {
+) : Opcode(cycles), StoreOpcode {
+    override fun storeValue(cpu: Cpu, address: Int): Byte =
+        (cpu.registers.indexY.toUnsignedInt() and (((address shr 8) + 1) and 0xFF)).toSignedByte()
+
     override fun evaluate(cpu: Cpu) {
         val addr = addressing.address(cpu)
-        val highByte = ((addr shr 8) + 1) and 0xFF
-        cpu.memory[addr] =
-            (cpu.registers.indexY.toUnsignedInt() and highByte).toSignedByte()
+        cpu.memory[addr] = storeValue(cpu, addr)
         // SHY is a store — no page-cross +1.
         cpu.workCyclesLeft = cycles
     }

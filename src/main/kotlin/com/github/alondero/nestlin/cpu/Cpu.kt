@@ -61,16 +61,20 @@ class Cpu(
     private var _idle = false
     private var logger: Logger? = null
     private val opcodes = OpcodesRefactor
-    private var activeInstruction: MicrocodedInstruction? = null
-    private var activeInterrupt: MicrocodedInterrupt? = null
-    private data class OamDmaState(
-        val page: Int,
-        var dummyCycles: Int,
-        var index: Int = 0,
-        var reading: Boolean = true,
-        var buffer: Byte = 0,
-    )
-    private var oamDma: OamDmaState? = null
+    // A single reusable micro-operation object keeps the hot instruction path
+    // allocation-free. Its primitive latches are part of the CPU save state.
+    private val instructionState = MicrocodedInstruction(this)
+    private var activeInstruction = false
+    private val interruptState = MicrocodedInterrupt(this)
+    private var activeInterrupt = false
+    // OAM DMA latches are primitive fields so starting a transfer does not
+    // allocate a transfer object on the emulation thread.
+    private var oamDmaActive = false
+    private var oamDmaPage = 0
+    private var oamDmaDummyCycles = 0
+    private var oamDmaIndex = 0
+    private var oamDmaReading = true
+    private var oamDmaBuffer: Byte = 0
     private var genericStallCycles = 0
 
     // --- Controlled-access properties (issue #23) --------------------------------
@@ -115,7 +119,7 @@ class Cpu(
      * Cumulative CPU cycles elapsed since the last [reset] / [softReset].
      * Incremented at the end of every [tick]. The trace [Logger] multiplies
      * this by 3 to produce nestest.log's PPU-cycle column; the raw CPU count
-     * is exposed here for any consumer that wants CPU-cycle timing. Version-8
+     * is exposed here for any consumer that wants CPU-cycle timing. Version-9
      * save states persist it because its parity controls the alignment cycle
      * of a future OAM DMA. See issue #17 and #298.
      */
@@ -123,8 +127,8 @@ class Cpu(
         get() = _cycleCount
 
     internal val executionInFlight: Boolean
-        get() = activeInstruction != null || activeInterrupt != null ||
-            oamDma != null || genericStallCycles > 0
+        get() = activeInstruction || activeInterrupt ||
+            oamDmaActive || genericStallCycles > 0
 
     fun getCurrentPc(): Short = registers.programCounter
     // TODO: Development-only feature - Remove undocumented opcode logging once emulator stability is proven
@@ -165,9 +169,14 @@ class Cpu(
         _nmiCount = 0
         _irqCount = 0
         _cycleCount = 0
-        activeInstruction = null
-        activeInterrupt = null
-        oamDma = null
+        activeInstruction = false
+        activeInterrupt = false
+        oamDmaActive = false
+        oamDmaPage = 0
+        oamDmaDummyCycles = 0
+        oamDmaIndex = 0
+        oamDmaReading = true
+        oamDmaBuffer = 0
         genericStallCycles = 0
         currentGame?.let {
             memory.readCartridge(it)
@@ -209,25 +218,25 @@ class Cpu(
         memory.mapper?.tickCpuCycle()
 
         try {
-            oamDma?.let { dma ->
+            if (oamDmaActive) {
                 when {
-                    dma.dummyCycles > 0 -> {
+                    oamDmaDummyCycles > 0 -> {
                         memory[registers.programCounter.toUnsignedInt()]
-                        dma.dummyCycles--
+                        oamDmaDummyCycles--
                     }
-                    dma.reading -> {
-                        dma.buffer = memory[(dma.page shl 8) or dma.index]
-                        dma.reading = false
+                    oamDmaReading -> {
+                        oamDmaBuffer = memory[(oamDmaPage shl 8) or oamDmaIndex]
+                        oamDmaReading = false
                     }
                     else -> {
-                        memory[0x2004] = dma.buffer
-                        dma.reading = true
-                        dma.index++
+                        memory[0x2004] = oamDmaBuffer
+                        oamDmaReading = true
+                        oamDmaIndex++
                     }
                 }
                 if (_workCyclesLeft > 0) _workCyclesLeft--
-                if (dma.index == 256) {
-                    oamDma = null
+                if (oamDmaIndex == 256) {
+                    oamDmaActive = false
                     _workCyclesLeft = 0
                 }
                 return
@@ -242,22 +251,22 @@ class Cpu(
                 return
             }
 
-            activeInterrupt?.let { interrupt ->
-                interrupt.step()
+            if (activeInterrupt) {
+                interruptState.step()
                 if (_workCyclesLeft > 0) _workCyclesLeft--
-                if (interrupt.isComplete) {
-                    activeInterrupt = null
+                if (interruptState.isComplete) {
+                    activeInterrupt = false
                     _workCyclesLeft = 0
                 }
                 return
             }
 
-            activeInstruction?.let { instruction ->
-                instruction.step()
+            if (activeInstruction) {
+                instructionState.step()
                 if (_workCyclesLeft > 0) _workCyclesLeft--
-                if (instruction.isComplete) {
-                    activeInstruction = null
-                    if (oamDma == null && genericStallCycles == 0) _workCyclesLeft = 0
+                if (instructionState.isComplete) {
+                    activeInstruction = false
+                    if (!oamDmaActive && genericStallCycles == 0) _workCyclesLeft = 0
                 }
                 return
             }
@@ -271,17 +280,19 @@ class Cpu(
                 when (interruptController.pendingInterrupt(idle, processorStatus.interruptDisable)) {
                     InterruptKind.NMI -> {
                         interruptController.acknowledge(InterruptKind.NMI)
-                        activeInterrupt = MicrocodedInterrupt.start(this, InterruptKind.NMI)
+                        interruptState.begin(InterruptKind.NMI)
+                        activeInterrupt = true
                         idle = false
-                        activeInterrupt!!.step()
+                        interruptState.step()
                         workCyclesLeft = 6
                         return
                     }
                     InterruptKind.IRQ -> {
                         interruptController.acknowledge(InterruptKind.IRQ)
-                        activeInterrupt = MicrocodedInterrupt.start(this, InterruptKind.IRQ)
+                        interruptState.begin(InterruptKind.IRQ)
+                        activeInterrupt = true
                         idle = false
-                        activeInterrupt!!.step()
+                        interruptState.step()
                         workCyclesLeft = 6
                         return
                     }
@@ -324,22 +335,12 @@ class Cpu(
                     // ($zp),Y with page cross). Issue #17 / #172.
                     pageBoundaryFlag = false
                     logger?.cpuTick(initialPC, opcodeVal, this)
-                    activeInstruction = MicrocodedInstruction.start(
-                        this,
-                        opcodeVal,
-                        it,
-                        initialPC.toUnsignedInt(),
-                    )
-                    workCyclesLeft = when {
-                        it is Kil -> 0
-                        it is com.github.alondero.nestlin.cpu.opcode.Branch && it.condition(this) -> {
-                            val offset = memory.peek((initialPC.toUnsignedInt() + 1) and 0xFFFF).toInt()
-                            val target = (initialPC.toUnsignedInt() + 2 + offset.toByte()) and 0xFFFF
-                            val total = if (((initialPC.toUnsignedInt() + 2) and 0xFF00) != (target and 0xFF00)) 4 else 3
-                            total - 1
-                        }
-                        else -> (it.cycles - 1).coerceAtLeast(0)
-                    }
+                    instructionState.begin(opcodeVal, it, initialPC.toUnsignedInt())
+                    activeInstruction = true
+                    // The fetch bus cycle has already happened. The state
+                    // machine adjusts this count if a branch or indexed read
+                    // discovers a dynamic page-cross cycle later.
+                    workCyclesLeft = if (it is Kil) 0 else (it.cycles - 1).coerceAtLeast(0)
                 } ?: run {
                     // For test ROMs, throw exception to maintain test compatibility
                     // For regular games, log and treat as 2-cycle NOP
@@ -399,14 +400,19 @@ class Cpu(
         // Nestlin's PPU model (and the existing Akira regression contract)
         // starts every DMA at OAM[0], regardless of the last $2003 write.
         memory.ppuAddressedMemory.oamAddress = 0
-        oamDma = OamDmaState(page and 0xFF, dummyCycles)
+        oamDmaActive = true
+        oamDmaPage = page and 0xFF
+        oamDmaDummyCycles = dummyCycles
+        oamDmaIndex = 0
+        oamDmaReading = true
+        oamDmaBuffer = 0
         _workCyclesLeft = dummyCycles + 512
     }
 
     /**
      * Save state — issue #190 removes the `_nmiArmed` field from the CPU
      * block (it now lives in [interruptController] as the controller's
-     * own state). The save-state format is bumped to VERSION 8 in
+     * own state). The save-state format is bumped to VERSION 9 in
      * [SaveState]; the new "interrupt controller" sub-block lives
      * between the CPU and RAM blocks and holds the controller's `nmiArmed`.
      *
@@ -433,18 +439,18 @@ class Cpu(
         // Cycle parity determines the alignment delay for a future OAM DMA;
         // preserve the full counter so save/load also keeps logger timing.
         out.writeInt(_cycleCount)
-        out.writeBoolean(activeInstruction != null)
-        activeInstruction?.save(out)
-        out.writeBoolean(activeInterrupt != null)
-        activeInterrupt?.save(out)
+        out.writeBoolean(activeInstruction)
+        if (activeInstruction) instructionState.save(out)
+        out.writeBoolean(activeInterrupt)
+        if (activeInterrupt) interruptState.save(out)
         out.writeInt(genericStallCycles)
-        out.writeBoolean(oamDma != null)
-        oamDma?.let { dma ->
-            out.writeByte(dma.page)
-            out.writeByte(dma.dummyCycles)
-            out.writeShort(dma.index)
-            out.writeBoolean(dma.reading)
-            out.writeByte(dma.buffer.toInt())
+        out.writeBoolean(oamDmaActive)
+        if (oamDmaActive) {
+            out.writeByte(oamDmaPage)
+            out.writeByte(oamDmaDummyCycles)
+            out.writeShort(oamDmaIndex)
+            out.writeBoolean(oamDmaReading)
+            out.writeByte(oamDmaBuffer.toInt())
         }
     }
 
@@ -462,28 +468,53 @@ class Cpu(
         // nmiArmed moved to interruptController.loadState in VERSION 4.
         // Reserved slot — see saveState.
         input.readInt()
-        if (version >= 8) {
+        if (version >= 9) {
             _cycleCount = input.readInt()
-            activeInstruction = if (input.readBoolean()) {
-                MicrocodedInstruction.load(this, input) { opcodes[it] }
-            } else null
-            activeInterrupt = if (input.readBoolean()) MicrocodedInterrupt.load(this, input) else null
+            activeInstruction = input.readBoolean()
+            if (activeInstruction) instructionState.load(input) { opcodes[it] }
+            activeInterrupt = input.readBoolean()
+            if (activeInterrupt) interruptState.load(input)
             genericStallCycles = input.readInt()
-            oamDma = if (input.readBoolean()) {
-                OamDmaState(
-                    page = input.readUnsignedByte(),
-                    dummyCycles = input.readUnsignedByte(),
-                    index = input.readUnsignedShort(),
-                    reading = input.readBoolean(),
-                    buffer = input.readByte(),
+            oamDmaActive = input.readBoolean()
+            if (oamDmaActive) {
+                oamDmaPage = input.readUnsignedByte()
+                oamDmaDummyCycles = input.readUnsignedByte()
+                oamDmaIndex = input.readUnsignedShort()
+                oamDmaReading = input.readBoolean()
+                oamDmaBuffer = input.readByte()
+            }
+        } else if (version == 8) {
+            // Version 8 used the old replay engine's variable-length read
+            // journal. Idle v8 states have no instruction payload and remain
+            // loadable; an in-flight v8 instruction cannot be resumed by the
+            // direct-latch engine, so fail explicitly instead of corrupting
+            // the following subsystem offsets.
+            _cycleCount = input.readInt()
+            val legacyInstruction = input.readBoolean()
+            if (legacyInstruction) {
+                instructionState.discardLegacy(input)
+                throw SaveState.IncompatibleSaveStateException(
+                    "Version 8 in-flight CPU state used the removed replay journal; save again with version 9"
                 )
-            } else null
+            }
+            activeInstruction = false
+            activeInterrupt = input.readBoolean()
+            if (activeInterrupt) interruptState.load(input)
+            genericStallCycles = input.readInt()
+            oamDmaActive = input.readBoolean()
+            if (oamDmaActive) {
+                oamDmaPage = input.readUnsignedByte()
+                oamDmaDummyCycles = input.readUnsignedByte()
+                oamDmaIndex = input.readUnsignedShort()
+                oamDmaReading = input.readBoolean()
+                oamDmaBuffer = input.readByte()
+            }
         } else {
             _cycleCount = 0
-            activeInstruction = null
-            activeInterrupt = null
+            activeInstruction = false
+            activeInterrupt = false
             genericStallCycles = _workCyclesLeft.coerceAtLeast(0)
-            oamDma = null
+            oamDmaActive = false
         }
     }
 

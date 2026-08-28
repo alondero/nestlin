@@ -17,6 +17,19 @@ import java.io.DataOutputStream
 
 class CpuBusTraceTest {
     @Test
+    fun `LDA absolute changes registers on the operand bus cycle`() {
+        val fixture = fixture(0xAD, 0x10, 0x00)
+        fixture.cpu.registers.accumulator = 0x7F
+        fixture.memory[0x0010] = 0x42
+
+        fixture.tick(3)
+        assertThat(fixture.cpu.registers.accumulator, equalTo(0x7F.toSignedByte()))
+
+        fixture.tick(4)
+        assertThat(fixture.cpu.registers.accumulator, equalTo(0x42.toSignedByte()))
+    }
+
+    @Test
     fun `STA absolute writes on its fourth cycle`() {
         val fixture = fixture(0x8D, 0x01, 0x20)
         fixture.cpu.registers.accumulator = 0x5A
@@ -126,6 +139,103 @@ class CpuBusTraceTest {
             )
         )
         assertThat(fixture.cpu.registers.stackPointer.toInt() and 0xFF, equalTo(0xFA))
+    }
+
+    @Test
+    fun `taken branch performs its sequential dummy read before changing PC`() {
+        val fixture = fixture(0xD0, 0x02) // BNE $0204
+        fixture.cpu.processorStatus.zero = false
+
+        fixture.tick(3)
+
+        assertThat(
+            fixture.trace.map { it.operation to it.address },
+            equalTo(
+                listOf(
+                    READ to 0x0200,
+                    READ to 0x0201,
+                    READ to 0x0202,
+                )
+            )
+        )
+        assertThat(fixture.cpu.registers.programCounter.toUnsignedInt(), equalTo(0x0204))
+    }
+
+    @Test
+    fun `JSR uses a stack dummy read and pushes the return address across six cycles`() {
+        val fixture = fixture(0x20, 0x34, 0x12) // JSR $1234
+        fixture.cpu.registers.stackPointer = 0xFD.toSignedByte()
+
+        fixture.tick(6)
+
+        assertThat(
+            fixture.trace.map { it.operation to it.address },
+            equalTo(
+                listOf(
+                    READ to 0x0200,
+                    READ to 0x0201,
+                    READ to 0x01FD,
+                    WRITE to 0x01FD,
+                    WRITE to 0x01FC,
+                    READ to 0x0202,
+                )
+            )
+        )
+        assertThat(fixture.cpu.registers.programCounter.toUnsignedInt(), equalTo(0x1234))
+    }
+
+    @Test
+    fun `RTS pops the return address and performs its final read`() {
+        val fixture = fixture(0x60)
+        fixture.cpu.registers.stackPointer = 0xFB.toSignedByte()
+        fixture.memory[0x01FC] = 0x02
+        fixture.memory[0x01FD] = 0x02
+        fixture.trace.clear()
+
+        fixture.tick(6)
+
+        assertThat(
+            fixture.trace.map { it.operation to it.address },
+            equalTo(
+                listOf(
+                    READ to 0x0200,
+                    READ to 0x0201,
+                    READ to 0x01FB,
+                    READ to 0x01FC,
+                    READ to 0x01FD,
+                    READ to 0x0203,
+                )
+            )
+        )
+        assertThat(fixture.cpu.registers.programCounter.toUnsignedInt(), equalTo(0x0203))
+    }
+
+    @Test
+    fun `RTI restores status and vector across six bus cycles`() {
+        val fixture = fixture(0x40)
+        fixture.cpu.registers.stackPointer = 0xFB.toSignedByte()
+        fixture.memory[0x01FC] = 0x01 // carry
+        fixture.memory[0x01FD] = 0x78
+        fixture.memory[0x01FE] = 0x56
+        fixture.trace.clear()
+
+        fixture.tick(6)
+
+        assertThat(
+            fixture.trace.map { it.operation to it.address },
+            equalTo(
+                listOf(
+                    READ to 0x0200,
+                    READ to 0x0201,
+                    READ to 0x01FB,
+                    READ to 0x01FC,
+                    READ to 0x01FD,
+                    READ to 0x01FE,
+                )
+            )
+        )
+        assertThat(fixture.cpu.registers.programCounter.toUnsignedInt(), equalTo(0x5678))
+        assertThat(fixture.cpu.processorStatus.carry, equalTo(true))
     }
 
     @Test

@@ -400,9 +400,9 @@ class OpcodeCycleTableTest {
 
             // ===== AHX (2) — mask fixed in issue #207 =======================
             // 0x07 mask was a typo; now stores A AND X with no spurious mask.
-            rows += OpcodeRow(0x93, 3, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x93, 5, listOf(b(POINTER_BASE and 0xFF)),
                 indirectYPointer(), "AHX (ind),Y")
-            rows += OpcodeRow(0x9F, 3, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x9F, 4, listOf(b(0x00), b(0x05)),
                 { it.registers.indexY = 0x00 }, "AHX abs,Y")
 
             // ===== SHX / SHY (issue #207 quirk fix) ========================
@@ -425,85 +425,85 @@ class OpcodeCycleTableTest {
                 { it.registers.indexY = 0x00 }, "LAS abs,Y")
 
             // ===== DCP (7) — issue #207 quirk fix: 0xE3 is DCP, not ISC ==
-            rows += OpcodeRow(0xC7, 5, listOf(b(0x42)), mnemonic = "DCP zp")
+            rows += OpcodeRow(0xC7, 4, listOf(b(0x42)), mnemonic = "DCP zp")
             rows += OpcodeRow(0xD7, 5, listOf(b(0x42)),
                 { it.registers.indexX = 0x00 }, "DCP zp,X")
             rows += OpcodeRow(0xCF, 5, listOf(b(0x00), b(0x05)), mnemonic = "DCP abs")
-            rows += OpcodeRow(0xDF, 5, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0xDF, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexX = 0x00 }, "DCP abs,X")
-            rows += OpcodeRow(0xDB, 5, listOf(b(0x42)),
-                { it.registers.indexY = 0x00 }, "DCP zp,Y")
-            rows += OpcodeRow(0xD3, 5, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0xDB, 6, listOf(b(0x00), b(0x05)),
+                { it.registers.indexY = 0x00 }, "DCP abs,Y")
+            rows += OpcodeRow(0xD3, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectXPointer(), "DCP (ind,X)")
-            rows += OpcodeRow(0xE3, 5, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0xE3, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectXPointer(), "DCP (ind,X) [issue #207: 0xE3 is DCP]")
 
             // ===== ISC (6) — 0xF3 stays ISC; 0xE3 moved to DCP =============
-            rows += OpcodeRow(0xE7, 5, listOf(b(0x42)), mnemonic = "ISC zp")
+            rows += OpcodeRow(0xE7, 4, listOf(b(0x42)), mnemonic = "ISC zp")
             rows += OpcodeRow(0xF7, 5, listOf(b(0x42)),
                 { it.registers.indexX = 0x00 }, "ISC zp,X")
             rows += OpcodeRow(0xEF, 5, listOf(b(0x00), b(0x05)), mnemonic = "ISC abs")
-            rows += OpcodeRow(0xFF, 5, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0xFF, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexX = 0x00 }, "ISC abs,X")
-            rows += OpcodeRow(0xFB, 5, listOf(b(0x42)),
-                { it.registers.indexY = 0x00 }, "ISC zp,Y")
-            rows += OpcodeRow(0xF3, 5, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0xFB, 6, listOf(b(0x00), b(0x05)),
+                { it.registers.indexY = 0x00 }, "ISC abs,Y")
+            rows += OpcodeRow(0xF3, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectYPointer(), "ISC (ind),Y")
 
             // ===== RLA (7) ==================================================
             rows += OpcodeRow(0x27, 4, listOf(b(0x42)), mnemonic = "RLA zp")
-            rows += OpcodeRow(0x37, 4, listOf(b(0x42)),
+            rows += OpcodeRow(0x37, 5, listOf(b(0x42)),
                 { it.registers.indexX = 0x00 }, "RLA zp,X")
-            rows += OpcodeRow(0x2F, 4, listOf(b(0x00), b(0x05)), mnemonic = "RLA abs")
-            rows += OpcodeRow(0x3F, 4, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x2F, 5, listOf(b(0x00), b(0x05)), mnemonic = "RLA abs")
+            rows += OpcodeRow(0x3F, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexX = 0x00 }, "RLA abs,X")
-            rows += OpcodeRow(0x3B, 4, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x3B, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexY = 0x00 }, "RLA abs,Y")
-            rows += OpcodeRow(0x23, 4, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x23, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectXPointer(), "RLA (ind,X)")
-            rows += OpcodeRow(0x33, 4, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x33, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectYPointer(), "RLA (ind),Y")
 
             // ===== RRA (7) ==================================================
             rows += OpcodeRow(0x67, 4, listOf(b(0x42)), mnemonic = "RRA zp")
-            rows += OpcodeRow(0x77, 4, listOf(b(0x42)),
+            rows += OpcodeRow(0x77, 5, listOf(b(0x42)),
                 { it.registers.indexX = 0x00 }, "RRA zp,X")
-            rows += OpcodeRow(0x6F, 4, listOf(b(0x00), b(0x05)), mnemonic = "RRA abs")
-            rows += OpcodeRow(0x7F, 4, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x6F, 5, listOf(b(0x00), b(0x05)), mnemonic = "RRA abs")
+            rows += OpcodeRow(0x7F, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexX = 0x00 }, "RRA abs,X")
-            rows += OpcodeRow(0x7B, 4, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x7B, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexY = 0x00 }, "RRA abs,Y")
-            rows += OpcodeRow(0x63, 4, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x63, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectXPointer(), "RRA (ind,X)")
-            rows += OpcodeRow(0x73, 4, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x73, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectYPointer(), "RRA (ind),Y")
 
             // ===== SLO (7) ==================================================
             rows += OpcodeRow(0x07, 4, listOf(b(0x42)), mnemonic = "SLO zp")
-            rows += OpcodeRow(0x17, 4, listOf(b(0x42)),
+            rows += OpcodeRow(0x17, 5, listOf(b(0x42)),
                 { it.registers.indexX = 0x00 }, "SLO zp,X")
-            rows += OpcodeRow(0x0F, 4, listOf(b(0x00), b(0x05)), mnemonic = "SLO abs")
-            rows += OpcodeRow(0x1F, 4, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x0F, 5, listOf(b(0x00), b(0x05)), mnemonic = "SLO abs")
+            rows += OpcodeRow(0x1F, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexX = 0x00 }, "SLO abs,X")
-            rows += OpcodeRow(0x1B, 4, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x1B, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexY = 0x00 }, "SLO abs,Y")
-            rows += OpcodeRow(0x03, 4, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x03, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectXPointer(), "SLO (ind,X)")
-            rows += OpcodeRow(0x13, 4, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x13, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectYPointer(), "SLO (ind),Y")
 
             // ===== SRE (7) ==================================================
             rows += OpcodeRow(0x47, 4, listOf(b(0x42)), mnemonic = "SRE zp")
-            rows += OpcodeRow(0x57, 4, listOf(b(0x42)),
+            rows += OpcodeRow(0x57, 5, listOf(b(0x42)),
                 { it.registers.indexX = 0x00 }, "SRE zp,X")
-            rows += OpcodeRow(0x4F, 4, listOf(b(0x00), b(0x05)), mnemonic = "SRE abs")
-            rows += OpcodeRow(0x5F, 4, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x4F, 5, listOf(b(0x00), b(0x05)), mnemonic = "SRE abs")
+            rows += OpcodeRow(0x5F, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexX = 0x00 }, "SRE abs,X")
-            rows += OpcodeRow(0x5B, 4, listOf(b(0x00), b(0x05)),
+            rows += OpcodeRow(0x5B, 6, listOf(b(0x00), b(0x05)),
                 { it.registers.indexY = 0x00 }, "SRE abs,Y")
-            rows += OpcodeRow(0x43, 4, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x43, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectXPointer(), "SRE (ind,X)")
-            rows += OpcodeRow(0x53, 4, listOf(b(POINTER_BASE and 0xFF)),
+            rows += OpcodeRow(0x53, 7, listOf(b(POINTER_BASE and 0xFF)),
                 indirectYPointer(), "SRE (ind),Y")
 
             // ===== ALR / ARR (2) ============================================

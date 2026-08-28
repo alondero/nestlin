@@ -12,17 +12,19 @@ import com.github.alondero.nestlin.toUnsignedInt
  * Original Opcodes.kt:566-574, 84-107.
  */
 class Logic(
-    val addressing: Addressing,
+    override val addressing: Addressing,
     val op: (Int, Int) -> Int,
     cycles: Int,
     override val mnemonic: String,
-) : Opcode(cycles) {
+) : Opcode(cycles), ReadOpcode {
+    override fun applyRead(cpu: Cpu, value: Byte) {
+        val result = op(cpu.registers.accumulator.toUnsignedInt(), value.toUnsignedInt()).toSignedByte()
+        cpu.registers.accumulator = result
+        cpu.processorStatus.resolveZeroAndNegativeFlags(result)
+    }
+
     override fun evaluate(cpu: Cpu) {
-        val acc = cpu.registers.accumulator.toUnsignedInt()
-        val mem = addressing.value(cpu).toUnsignedInt()
-        cpu.registers.accumulator = op(acc, mem).toSignedByte().apply {
-            cpu.processorStatus.resolveZeroAndNegativeFlags(this)
-        }
+        applyRead(cpu, addressing.value(cpu))
         // Issue #17 / #172: +1 cycle on page cross for abs,X / abs,Y /
         // ($zp),Y. AND / ORA / EOR use all three indexed variants.
         cpu.workCyclesLeft = cycles + (if (cpu.pageBoundaryFlag) 1 else 0)

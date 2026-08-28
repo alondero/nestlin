@@ -7,359 +7,482 @@ import com.github.alondero.nestlin.toUnsignedInt
 import java.io.DataInput
 import java.io.DataOutput
 
-/** One resumable 6502 instruction. Every [step] performs exactly one real bus access. */
-internal class MicrocodedInstruction private constructor(
-    private val cpu: Cpu,
-    val opcodeByte: Int,
-    private val opcode: Opcode,
-    private val startPc: Int,
-    private val initialSp: Int,
-) {
-    private enum class Role { READ, STORE, RMW, IMPLIED, BRANCH, PUSH, PULL, JMP, JSR, RTS, RTI, BRK }
+/**
+ * Reusable 6502 instruction sequencer.
+ *
+ * The object is allocated once by [Cpu] and reset for each opcode. Its fields
+ * are the live latches of one instruction; no reads are recorded and no opcode
+ * is replayed. Every call to [step] performs one real CPU-bus operation and
+ * updates architectural state at the point the 6502 does so.
+ */
+internal class MicrocodedInstruction(private val cpu: Cpu) {
     private enum class Mode { IMPLIED, IMMEDIATE, ZERO_PAGE, ZERO_PAGE_INDEXED, ABSOLUTE, ABSOLUTE_INDEXED, INDIRECT_X, INDIRECT_Y }
 
-    private val role = roleOf(opcode)
-    private val mode = modeOf(opcode)
+    private var opcodeByte = 0
+    private var opcode: Opcode? = null
+    private var startPc = 0
+    private var initialSp = 0
     private var phase = 1
     private var operandLow = 0
     private var operandHigh = 0
     private var pointerLow = 0
     private var pointerHigh = 0
     private var effectiveAddress = 0
+    private var baseAddress = 0
     private var originalValue: Byte = 0
     private var complete = false
-    private val semanticReads = linkedMapOf<Int, MutableList<Byte>>()
+    private var branchTaken = false
+    private var branchTarget = 0
+    private var branchCrossed = false
 
     val isComplete: Boolean get() = complete
+
+    fun begin(opcodeByte: Int, opcode: Opcode, startPc: Int) {
+        this.opcodeByte = opcodeByte and 0xFF
+        this.opcode = opcode
+        this.startPc = startPc and 0xFFFF
+        this.initialSp = cpu.registers.stackPointer.toUnsignedInt()
+        phase = 1
+        operandLow = 0
+        operandHigh = 0
+        pointerLow = 0
+        pointerHigh = 0
+        effectiveAddress = 0
+        baseAddress = 0
+        originalValue = 0
+        complete = false
+        branchTaken = false
+        branchTarget = 0
+        branchCrossed = false
+    }
+
     fun step() {
-        check(!complete)
+        check(!complete) { "completed CPU instruction stepped again" }
         phase++
-        when (role) {
-            Role.READ, Role.STORE, Role.RMW -> stepAddressed()
-            Role.IMPLIED -> {
-                read(startPc + 1)
-                finishSemantics()
-            }
-            Role.BRANCH -> stepBranch(opcode as Branch)
-            Role.PUSH -> stepPush()
-            Role.PULL -> stepPull()
-            Role.JMP -> stepJump()
-            Role.JSR -> stepJsr()
-            Role.RTS -> stepRts()
-            Role.RTI -> stepRti()
-            Role.BRK -> stepBrk()
+        val current = requireNotNull(opcode)
+        when {
+            current is Branch -> stepBranch(current)
+            current is Push -> stepPush(current)
+            current is Pull -> stepPull(current)
+            current is Jump -> stepJump()
+            current is JumpIndirect -> stepJumpIndirect()
+            current is JumpToSubroutine -> stepJsr()
+            current is ReturnFromSubroutine -> stepRts()
+            current is ReturnFromInterrupt -> stepRti()
+            current is Break -> stepBrk()
+            current is AddressedOpcode -> stepAddressed(current)
+            else -> stepImplied(current)
         }
     }
 
-    private fun stepAddressed() {
-        when (mode) {
+    private fun stepImplied(current: Opcode) {
+        check(phase == 2)
+        read(startPc + 1)
+        when (current) {
+            is NopImplied, is Xaa -> Unit
+            is Kil -> cpu.idle = true
+            is Flag -> current.setter(cpu)
+            is Transfer -> {
+                val value = current.from(cpu)
+                cpu.processorStatus.resolveZeroAndNegativeFlags(value)
+                current.to(cpu, value)
+            }
+            is TransferNoFlags -> cpu.registers.stackPointer = cpu.registers.indexX
+            is RegisterIncDec -> {
+                val result = ((current.register(cpu).toUnsignedInt() + current.delta) and 0xFF).toSignedByte()
+                current.setter(cpu, result)
+                cpu.processorStatus.resolveZeroAndNegativeFlags(result)
+            }
+            is AccShiftRotate -> current.operation(cpu)
+            else -> error("${current.mnemonic} has no implied implementation")
+        }
+        complete = true
+    }
+
+    private fun stepAddressed(current: AddressedOpcode) {
+        when (modeOf(current.addressing)) {
             Mode.IMMEDIATE -> {
                 check(phase == 2)
-                semanticRead(startPc + 1)
-                finishSemantics()
+                applyRead(current, fetchOperand().toSignedByte())
+                complete = true
             }
             Mode.ZERO_PAGE -> when (phase) {
-                2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
-                3 -> finalAddressCycle(operandLow)
-                4 -> { check(role == Role.RMW); write(effectiveAddress, originalValue) }
-                5 -> { check(role == Role.RMW); finishRmw(effectiveAddress) }
+                2 -> operandLow = fetchOperand()
+                3 -> readAddressedFinal(current, operandLow)
+                4 -> write(effectiveAddress, originalValue)
+                5 -> finishRmw(current)
             }
             Mode.ZERO_PAGE_INDEXED -> when (phase) {
-                2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
+                2 -> operandLow = fetchOperand()
                 3 -> read(operandLow)
-                4 -> finalAddressCycle((operandLow + indexForMode()) and 0xFF)
-                5 -> { check(role == Role.RMW); write(effectiveAddress, originalValue) }
-                6 -> { check(role == Role.RMW); finishRmw(effectiveAddress) }
+                4 -> readAddressedFinal(current, (operandLow + indexOf(current.addressing)) and 0xFF)
+                5 -> write(effectiveAddress, originalValue)
+                6 -> finishRmw(current)
             }
             Mode.ABSOLUTE -> when (phase) {
-                2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
-                3 -> operandHigh = semanticRead(startPc + 2).toUnsignedInt()
-                4 -> finalAddressCycle(operandLow or (operandHigh shl 8))
-                5 -> { check(role == Role.RMW); write(effectiveAddress, originalValue) }
-                6 -> { check(role == Role.RMW); finishRmw(effectiveAddress) }
+                2 -> operandLow = fetchOperand()
+                3 -> operandHigh = fetchOperand()
+                4 -> readAddressedFinal(current, operandLow or (operandHigh shl 8))
+                5 -> write(effectiveAddress, originalValue)
+                6 -> finishRmw(current)
             }
-            Mode.ABSOLUTE_INDEXED -> stepAbsoluteIndexed()
-            Mode.INDIRECT_X -> stepIndirectX()
-            Mode.INDIRECT_Y -> stepIndirectY()
-            Mode.IMPLIED -> error("Addressed opcode ${opcode.mnemonic} has implied mode")
+            Mode.ABSOLUTE_INDEXED -> stepAbsoluteIndexed(current)
+            Mode.INDIRECT_X -> stepIndirectX(current)
+            Mode.INDIRECT_Y -> stepIndirectY(current)
+            Mode.IMPLIED -> error("${(current as Opcode).mnemonic} has no addressed micro-sequence")
         }
     }
 
-    private fun stepAbsoluteIndexed() {
+    private fun stepAbsoluteIndexed(current: AddressedOpcode) {
         when (phase) {
-            2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
+            2 -> operandLow = fetchOperand()
             3 -> {
-                operandHigh = semanticRead(startPc + 2).toUnsignedInt()
-                val base = operandLow or (operandHigh shl 8)
-                effectiveAddress = (base + indexForMode()) and 0xFFFF
+                operandHigh = fetchOperand()
+                baseAddress = operandLow or (operandHigh shl 8)
+                effectiveAddress = (baseAddress + indexOf(current.addressing)) and 0xFFFF
+                branchCrossed = (baseAddress and 0xFF00) != (effectiveAddress and 0xFF00)
+                if (!current.isStoreLike() && !current.isRmwLike() && branchCrossed) cpu.workCyclesLeft++
             }
             4 -> {
-                val base = operandLow or (operandHigh shl 8)
-                val provisional = (base and 0xFF00) or (effectiveAddress and 0xFF)
-                val crossed = (base and 0xFF00) != (effectiveAddress and 0xFF00)
-                when (role) {
-                    Role.READ -> {
-                        if (crossed) read(provisional) else {
-                            semanticRead(effectiveAddress)
-                            finishSemantics()
-                        }
-                    }
-                    Role.STORE, Role.RMW -> read(provisional)
-                    else -> error("Unexpected addressed role $role")
+                val provisional = (baseAddress and 0xFF00) or (effectiveAddress and 0xFF)
+                when {
+                    current.isStoreLike() || current.isRmwLike() || branchCrossed -> read(provisional)
+                    else -> readAddressedFinal(current, effectiveAddress)
                 }
             }
-            5 -> when (role) {
-                Role.READ -> {
-                    semanticRead(effectiveAddress)
-                    finishSemantics()
-                }
-                Role.STORE -> finishStore(effectiveAddress)
-                Role.RMW -> originalValue = semanticRead(effectiveAddress)
-                else -> error("Unexpected addressed role $role")
+            5 -> when {
+                current.isRmwLike() -> readAddressedFinal(current, effectiveAddress)
+                current.isStoreLike() -> writeStore(current, effectiveAddress)
+                else -> readAddressedFinal(current, effectiveAddress)
             }
             6 -> {
-                check(role == Role.RMW)
+                check(current.isRmwLike())
                 write(effectiveAddress, originalValue)
             }
             7 -> {
-                check(role == Role.RMW)
-                finishRmw(effectiveAddress)
+                check(current.isRmwLike())
+                finishRmw(current)
             }
         }
     }
 
-    private fun stepIndirectX() {
+    private fun stepIndirectX(current: AddressedOpcode) {
         when (phase) {
-            2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
+            2 -> operandLow = fetchOperand()
             3 -> read(operandLow)
-            4 -> pointerLow = semanticRead((operandLow + cpu.registers.indexX.toUnsignedInt()) and 0xFF).toUnsignedInt()
+            4 -> pointerLow = read((operandLow + indexOf(current.addressing)) and 0xFF).toUnsignedInt()
             5 -> {
-                pointerHigh = semanticRead((operandLow + cpu.registers.indexX.toUnsignedInt() + 1) and 0xFF).toUnsignedInt()
+                pointerHigh = read((operandLow + indexOf(current.addressing) + 1) and 0xFF).toUnsignedInt()
                 effectiveAddress = pointerLow or (pointerHigh shl 8)
             }
-            6 -> when (role) {
-                Role.READ -> { semanticRead(effectiveAddress); finishSemantics() }
-                Role.STORE -> finishStore(effectiveAddress)
-                Role.RMW -> originalValue = semanticRead(effectiveAddress)
-                else -> error("Unexpected addressed role $role")
-            }
-            7 -> { check(role == Role.RMW); write(effectiveAddress, originalValue) }
-            8 -> { check(role == Role.RMW); finishRmw(effectiveAddress) }
-        }
-    }
-
-    private fun stepIndirectY() {
-        when (phase) {
-            2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
-            3 -> pointerLow = semanticRead(operandLow).toUnsignedInt()
-            4 -> {
-                pointerHigh = semanticRead((operandLow + 1) and 0xFF).toUnsignedInt()
-                val base = pointerLow or (pointerHigh shl 8)
-                effectiveAddress = (base + cpu.registers.indexY.toUnsignedInt()) and 0xFFFF
-            }
-            5 -> {
-                val base = pointerLow or (pointerHigh shl 8)
-                val provisional = (base and 0xFF00) or (effectiveAddress and 0xFF)
-                val crossed = (base and 0xFF00) != (effectiveAddress and 0xFF00)
-                if (role == Role.READ && !crossed) {
-                    semanticRead(effectiveAddress)
-                    finishSemantics()
-                } else {
-                    read(provisional)
+            6 -> {
+                if (current.isRmwLike()) readAddressedFinal(current, effectiveAddress)
+                else if (current.isStoreLike()) writeStore(current, effectiveAddress)
+                else {
+                    applyRead(current, read(effectiveAddress))
+                    complete = true
                 }
             }
-            6 -> when (role) {
-                Role.READ -> { semanticRead(effectiveAddress); finishSemantics() }
-                Role.STORE -> finishStore(effectiveAddress)
-                Role.RMW -> originalValue = semanticRead(effectiveAddress)
-                else -> error("Unexpected addressed role $role")
+            7 -> {
+                check(current.isRmwLike())
+                write(effectiveAddress, originalValue)
             }
-            7 -> { check(role == Role.RMW); write(effectiveAddress, originalValue) }
-            8 -> { check(role == Role.RMW); finishRmw(effectiveAddress) }
+            8 -> {
+                check(current.isRmwLike())
+                finishRmw(current)
+            }
         }
     }
 
-    private fun finalAddressCycle(address: Int) {
-        effectiveAddress = address
-        when (role) {
-            Role.READ -> { semanticRead(address); finishSemantics() }
-            Role.STORE -> finishStore(address)
-            Role.RMW -> {
-                originalValue = semanticRead(address)
-                // ZP/ABS RMW still have two following write cycles.
+    private fun stepIndirectY(current: AddressedOpcode) {
+        when (phase) {
+            2 -> operandLow = fetchOperand()
+            3 -> pointerLow = read(operandLow).toUnsignedInt()
+            4 -> {
+                pointerHigh = read((operandLow + 1) and 0xFF).toUnsignedInt()
+                baseAddress = pointerLow or (pointerHigh shl 8)
+                effectiveAddress = (baseAddress + indexOf(current.addressing)) and 0xFFFF
+                branchCrossed = (baseAddress and 0xFF00) != (effectiveAddress and 0xFF00)
+                if (!current.isStoreLike() && !current.isRmwLike() && branchCrossed) cpu.workCyclesLeft++
             }
-            else -> error("Unexpected addressed role $role")
+            5 -> {
+                val provisional = (baseAddress and 0xFF00) or (effectiveAddress and 0xFF)
+                when {
+                    current.isStoreLike() || current.isRmwLike() || branchCrossed -> read(provisional)
+                    else -> {
+                        applyRead(current, read(effectiveAddress))
+                        complete = true
+                    }
+                }
+            }
+            6 -> when {
+                current.isStoreLike() -> writeStore(current, effectiveAddress)
+                current.isRmwLike() -> readAddressedFinal(current, effectiveAddress)
+                else -> {
+                    applyRead(current, read(effectiveAddress))
+                    complete = true
+                }
+            }
+            7 -> {
+                check(current.isRmwLike())
+                write(effectiveAddress, originalValue)
+            }
+            8 -> {
+                check(current.isRmwLike())
+                finishRmw(current)
+            }
+        }
+    }
+
+    private fun readAddressedFinal(current: AddressedOpcode, address: Int) {
+        effectiveAddress = address and 0xFFFF
+        if (current.isStoreLike()) {
+            writeStore(current, effectiveAddress)
+            return
+        }
+        val value = read(effectiveAddress)
+        if (current.isRmwLike()) originalValue = value
+        else {
+            applyRead(current, value)
+            complete = true
         }
     }
 
     private fun stepBranch(branch: Branch) {
         when (phase) {
             2 -> {
-                operandLow = semanticRead(startPc + 1).toUnsignedInt()
-                if (!branch.condition(cpu)) finishSemantics()
+                val offset = fetchOperand()
+                branchTaken = branch.condition(cpu)
+                if (!branchTaken) {
+                    complete = true
+                    return
+                }
+                branchTarget = (cpu.registers.programCounter.toUnsignedInt() + offset.toSignedByte()) and 0xFFFF
+                branchCrossed = (cpu.registers.programCounter.toUnsignedInt() and 0xFF00) != (branchTarget and 0xFF00)
+                cpu.workCyclesLeft++
+                cpu.pageBoundaryFlag = branchCrossed
             }
             3 -> {
-                read(startPc + 2)
-                effectiveAddress = (startPc + 2 + operandLow.toSignedByte()) and 0xFFFF
-                if (((startPc + 2) and 0xFF00) == (effectiveAddress and 0xFF00)) finishSemantics()
+                read(cpu.registers.programCounter.toUnsignedInt())
+                if (branchCrossed) cpu.workCyclesLeft++
+                else {
+                    cpu.registers.programCounter = branchTarget.toSignedShort()
+                    if (branchTarget == startPc) cpu.idle = true
+                    complete = true
+                }
             }
             4 -> {
-                val provisional = ((startPc + 2) and 0xFF00) or (effectiveAddress and 0xFF)
+                val provisional = (cpu.registers.programCounter.toUnsignedInt() and 0xFF00) or (branchTarget and 0xFF)
                 read(provisional)
-                finishSemantics()
-            }
-        }
-    }
-
-    private fun stepPush() {
-        when (phase) {
-            2 -> read(startPc + 1)
-            3 -> {
-                val (_, writes) = evaluateSemantics()
-                val write = writes.single()
-                write(write.first, write.second)
+                cpu.registers.programCounter = branchTarget.toSignedShort()
+                if (branchTarget == startPc) cpu.idle = true
                 complete = true
             }
         }
     }
 
-    private fun stepPull() {
+    private fun stepPush(push: Push) {
         when (phase) {
             2 -> read(startPc + 1)
-            3 -> read(0x100 or initialSp)
-            4 -> { semanticRead(0x100 or ((initialSp + 1) and 0xFF)); finishSemantics() }
+            3 -> {
+                write(0x100 or cpu.registers.stackPointer.toUnsignedInt(), push.source(cpu))
+                cpu.registers.stackPointer--
+                complete = true
+            }
+        }
+    }
+
+    private fun stepPull(pull: Pull) {
+        when (phase) {
+            2 -> read(startPc + 1)
+            3 -> read(0x100 or cpu.registers.stackPointer.toUnsignedInt())
+            4 -> {
+                cpu.registers.stackPointer++
+                val value = read(0x100 or cpu.registers.stackPointer.toUnsignedInt())
+                pull.setter(cpu, value)
+                if (pull.resolvesFlags) cpu.processorStatus.resolveZeroAndNegativeFlags(value)
+                complete = true
+            }
         }
     }
 
     private fun stepJump() {
-        if (opcode is Jump) {
-            when (phase) {
-                2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
-                3 -> { operandHigh = semanticRead(startPc + 2).toUnsignedInt(); finishSemantics() }
+        when (phase) {
+            2 -> operandLow = fetchOperand()
+            3 -> {
+                operandHigh = fetchOperand()
+                val target = operandLow or (operandHigh shl 8)
+                cpu.registers.programCounter = target.toSignedShort()
+                if (target == startPc) cpu.idle = true
+                complete = true
             }
-        } else {
-            when (phase) {
-                2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
-                3 -> operandHigh = semanticRead(startPc + 2).toUnsignedInt()
-                4 -> {
-                    effectiveAddress = operandLow or (operandHigh shl 8)
-                    pointerLow = semanticRead(effectiveAddress).toUnsignedInt()
-                }
-                5 -> {
-                    val highAddress = (effectiveAddress and 0xFF00) or ((effectiveAddress + 1) and 0xFF)
-                    pointerHigh = semanticRead(highAddress).toUnsignedInt()
-                    finishSemantics()
-                }
+        }
+    }
+
+    private fun stepJumpIndirect() {
+        when (phase) {
+            2 -> operandLow = fetchOperand()
+            3 -> operandHigh = fetchOperand()
+            4 -> {
+                effectiveAddress = operandLow or (operandHigh shl 8)
+                pointerLow = read(effectiveAddress).toUnsignedInt()
+            }
+            5 -> {
+                val highAddress = (effectiveAddress and 0xFF00) or ((effectiveAddress + 1) and 0xFF)
+                pointerHigh = read(highAddress).toUnsignedInt()
+                val target = pointerLow or (pointerHigh shl 8)
+                cpu.registers.programCounter = target.toSignedShort()
+                if (target == startPc) cpu.idle = true
+                complete = true
             }
         }
     }
 
     private fun stepJsr() {
         when (phase) {
-            2 -> operandLow = semanticRead(startPc + 1).toUnsignedInt()
-            3 -> read(0x100 or initialSp)
-            4 -> write(0x100 or initialSp, ((startPc + 2) shr 8).toSignedByte())
-            5 -> write(0x100 or ((initialSp - 1) and 0xFF), (startPc + 2).toSignedByte())
-            6 -> { operandHigh = semanticRead(startPc + 2).toUnsignedInt(); finishSemantics() }
+            2 -> operandLow = fetchOperand()
+            3 -> read(0x100 or cpu.registers.stackPointer.toUnsignedInt())
+            4 -> {
+                val returnAddress = cpu.registers.programCounter.toUnsignedInt()
+                write(0x100 or cpu.registers.stackPointer.toUnsignedInt(), (returnAddress shr 8).toSignedByte())
+                cpu.registers.stackPointer--
+            }
+            5 -> {
+                val returnAddress = cpu.registers.programCounter.toUnsignedInt()
+                write(0x100 or cpu.registers.stackPointer.toUnsignedInt(), returnAddress.toSignedByte())
+                cpu.registers.stackPointer--
+            }
+            6 -> {
+                operandHigh = fetchOperand()
+                cpu.registers.programCounter = (operandLow or (operandHigh shl 8)).toSignedShort()
+                complete = true
+            }
         }
     }
 
     private fun stepRts() {
         when (phase) {
             2 -> read(startPc + 1)
-            3 -> read(0x100 or initialSp)
-            4 -> pointerLow = semanticRead(0x100 or ((initialSp + 1) and 0xFF)).toUnsignedInt()
-            5 -> pointerHigh = semanticRead(0x100 or ((initialSp + 2) and 0xFF)).toUnsignedInt()
-            6 -> { read((pointerLow or (pointerHigh shl 8)) + 1); finishSemantics() }
+            3 -> read(0x100 or cpu.registers.stackPointer.toUnsignedInt())
+            4 -> {
+                cpu.registers.stackPointer++
+                pointerLow = read(0x100 or cpu.registers.stackPointer.toUnsignedInt()).toUnsignedInt()
+            }
+            5 -> {
+                cpu.registers.stackPointer++
+                pointerHigh = read(0x100 or cpu.registers.stackPointer.toUnsignedInt()).toUnsignedInt()
+            }
+            6 -> {
+                val returnAddress = ((pointerHigh shl 8) or pointerLow) + 1
+                read(returnAddress)
+                cpu.registers.programCounter = (returnAddress and 0xFFFF).toSignedShort()
+                complete = true
+            }
         }
     }
 
     private fun stepRti() {
         when (phase) {
             2 -> read(startPc + 1)
-            3 -> read(0x100 or initialSp)
-            4 -> semanticRead(0x100 or ((initialSp + 1) and 0xFF))
-            5 -> pointerLow = semanticRead(0x100 or ((initialSp + 2) and 0xFF)).toUnsignedInt()
-            6 -> { pointerHigh = semanticRead(0x100 or ((initialSp + 3) and 0xFF)).toUnsignedInt(); finishSemantics() }
+            3 -> read(0x100 or cpu.registers.stackPointer.toUnsignedInt())
+            4 -> {
+                cpu.registers.stackPointer++
+                cpu.processorStatus.toFlags(read(0x100 or cpu.registers.stackPointer.toUnsignedInt()))
+            }
+            5 -> {
+                cpu.registers.stackPointer++
+                pointerLow = read(0x100 or cpu.registers.stackPointer.toUnsignedInt()).toUnsignedInt()
+            }
+            6 -> {
+                cpu.registers.stackPointer++
+                pointerHigh = read(0x100 or cpu.registers.stackPointer.toUnsignedInt()).toUnsignedInt()
+                cpu.registers.programCounter = (pointerLow or (pointerHigh shl 8)).toSignedShort()
+                complete = true
+            }
         }
     }
 
     private fun stepBrk() {
         when (phase) {
-            2 -> read(startPc + 1)
-            3 -> write(0x100 or initialSp, ((startPc + 2) shr 8).toSignedByte())
-            4 -> write(0x100 or ((initialSp - 1) and 0xFF), (startPc + 2).toSignedByte())
-            5 -> write(0x100 or ((initialSp - 2) and 0xFF), (cpu.processorStatus.asByte().toUnsignedInt() or 0x10).toSignedByte())
-            6 -> semanticRead(0xFFFE)
-            7 -> { semanticRead(0xFFFF); finishSemantics() }
-        }
-    }
-
-    private fun finishStore(address: Int) {
-        val (_, writes) = evaluateSemantics()
-        val finalValue = writes.lastOrNull()?.also { finalWrite ->
-            check(finalWrite.first == address) {
-                "${opcode.mnemonic} replay wrote $${"%04X".format(finalWrite.first)}, expected $${"%04X".format(address)}"
+            2 -> {
+                read(startPc + 1)
+                cpu.registers.programCounter++
             }
-        }?.second ?: if (opcode is Tas) {
-            val mask = ((address shr 8) + 1) and 0xFF
-            (cpu.registers.accumulator.toUnsignedInt() and cpu.registers.indexX.toUnsignedInt() and mask).toSignedByte()
-        } else {
-            error("${opcode.mnemonic} produced no write during semantic replay")
+            3 -> {
+                write(0x100 or cpu.registers.stackPointer.toUnsignedInt(), (cpu.registers.programCounter.toUnsignedInt() shr 8).toSignedByte())
+                cpu.registers.stackPointer--
+            }
+            4 -> {
+                write(0x100 or cpu.registers.stackPointer.toUnsignedInt(), cpu.registers.programCounter.toUnsignedInt().toSignedByte())
+                cpu.registers.stackPointer--
+            }
+            5 -> {
+                cpu.processorStatus.breakCommand = true
+                write(0x100 or cpu.registers.stackPointer.toUnsignedInt(), cpu.processorStatus.asByte())
+                cpu.registers.stackPointer--
+                cpu.processorStatus.breakCommand = false
+            }
+            6 -> pointerLow = read(0xFFFE).toUnsignedInt()
+            7 -> {
+                pointerHigh = read(0xFFFF).toUnsignedInt()
+                cpu.registers.programCounter = (pointerLow or (pointerHigh shl 8)).toSignedShort()
+                cpu.processorStatus.interruptDisable = true
+                complete = true
+            }
         }
-        write(address, finalValue)
+    }
+
+    private fun applyRead(current: AddressedOpcode, value: Byte) {
+        (current as? ReadOpcode)?.applyRead(cpu, value)
+            ?: error("${(current as Opcode).mnemonic} cannot consume a memory read")
+    }
+
+    private fun finishRmw(current: AddressedOpcode) {
+        val rmw = current as? RmwOpcode
+            ?: error("${(current as Opcode).mnemonic} is not read-modify-write")
+        val result = rmw.transformedValue(cpu, originalValue)
+        write(effectiveAddress, result)
+        rmw.commitResult(cpu, originalValue, result)
         complete = true
     }
 
-    private fun finishRmw(address: Int) {
-        val (_, writes) = evaluateSemantics()
-        val finalWrite = writes.last()
-        write(address, finalWrite.second)
+    private fun writeStore(current: AddressedOpcode, address: Int) {
+        val store = current as? StoreOpcode
+            ?: error("${(current as Opcode).mnemonic} is not a store")
+        write(address, store.storeValue(cpu, address))
         complete = true
     }
 
-    private fun finishSemantics() {
-        evaluateSemantics()
-        complete = true
-    }
-
-    private fun evaluateSemantics(): Pair<Unit, List<Pair<Int, Byte>>> {
-        cpu.registers.programCounter = (startPc + 1).toSignedShort()
-        cpu.registers.stackPointer = initialSp.toSignedByte()
-        cpu.pageBoundaryFlag = false
-        val result = try {
-            cpu.memory.replayCpuSemantics(semanticReads) { opcode.evaluate(cpu) }
-        } catch (error: IllegalStateException) {
-            throw IllegalStateException(
-                "${opcode.mnemonic} at $${"%04X".format(startPc)}: ${error.message}",
-                error,
-            )
-        }
-        cpu.workCyclesLeft = 0
+    private fun fetchOperand(): Int {
+        val result = read(cpu.registers.programCounter.toUnsignedInt()).toUnsignedInt()
+        cpu.registers.programCounter++
         return result
     }
 
     private fun read(address: Int): Byte = cpu.memory[address and 0xFFFF]
 
-    private fun semanticRead(address: Int): Byte {
-        val normalized = address and 0xFFFF
-        val value = read(normalized)
-        semanticReads.getOrPut(normalized) { mutableListOf() }.add(value)
-        return value
-    }
-
     private fun write(address: Int, value: Byte) {
         cpu.memory[address and 0xFFFF] = value
     }
 
-    private fun indexForMode(): Int = when {
-        opcode is NopZpX || opcode is NopAbsX -> cpu.registers.indexX.toUnsignedInt()
-        else -> when (val addressing = addressingOf(opcode)) {
+    private fun indexOf(addressing: Addressing): Int = when (addressing) {
         is ZeroPage -> if (addressing.x) cpu.registers.indexX.toUnsignedInt() else cpu.registers.indexY.toUnsignedInt()
         is Absolute -> if (addressing.x) cpu.registers.indexX.toUnsignedInt() else cpu.registers.indexY.toUnsignedInt()
+        IndirectX -> cpu.registers.indexX.toUnsignedInt()
+        IndirectY -> cpu.registers.indexY.toUnsignedInt()
         else -> 0
-        }
     }
+
+    private fun modeOf(addressing: Addressing): Mode = when (addressing) {
+        Immediate -> Mode.IMMEDIATE
+        is ZeroPage -> if (addressing.isIndexed) Mode.ZERO_PAGE_INDEXED else Mode.ZERO_PAGE
+        is Absolute -> if (addressing.isIndexed) Mode.ABSOLUTE_INDEXED else Mode.ABSOLUTE
+        IndirectX -> Mode.INDIRECT_X
+        IndirectY -> Mode.INDIRECT_Y
+    }
+
+    private fun AddressedOpcode.isStoreLike(): Boolean = this is StoreOpcode
+    private fun AddressedOpcode.isRmwLike(): Boolean = this is RmwOpcode
 
     fun save(out: DataOutput) {
         out.writeByte(opcodeByte)
@@ -370,102 +493,48 @@ internal class MicrocodedInstruction private constructor(
         out.writeShort(operandHigh)
         out.writeShort(pointerLow)
         out.writeShort(pointerHigh)
-        out.writeInt(effectiveAddress)
+        out.writeShort(effectiveAddress)
+        out.writeShort(baseAddress)
         out.writeByte(originalValue.toInt())
-        out.writeInt(semanticReads.size)
-        semanticReads.forEach { (address, values) ->
-            out.writeShort(address)
-            out.writeInt(values.size)
-            values.forEach { out.writeByte(it.toInt()) }
-        }
+        out.writeBoolean(branchTaken)
+        out.writeShort(branchTarget)
+        out.writeBoolean(branchCrossed)
     }
 
-    companion object {
-        fun start(cpu: Cpu, opcodeByte: Int, opcode: Opcode, startPc: Int) =
-            MicrocodedInstruction(cpu, opcodeByte, opcode, startPc, cpu.registers.stackPointer.toUnsignedInt())
+    fun load(input: DataInput, lookup: (Int) -> Opcode?) {
+        opcodeByte = input.readUnsignedByte()
+        startPc = input.readUnsignedShort()
+        initialSp = input.readUnsignedByte()
+        opcode = requireNotNull(lookup(opcodeByte)) { "Cannot restore unmapped opcode $${"%02X".format(opcodeByte)}" }
+        phase = input.readUnsignedByte()
+        operandLow = input.readUnsignedShort()
+        operandHigh = input.readUnsignedShort()
+        pointerLow = input.readUnsignedShort()
+        pointerHigh = input.readUnsignedShort()
+        effectiveAddress = input.readUnsignedShort()
+        baseAddress = input.readUnsignedShort()
+        originalValue = input.readByte()
+        branchTaken = input.readBoolean()
+        branchTarget = input.readUnsignedShort()
+        branchCrossed = input.readBoolean()
+        complete = false
+    }
 
-        fun load(cpu: Cpu, input: DataInput, lookup: (Int) -> Opcode?): MicrocodedInstruction {
-            val opcodeByte = input.readUnsignedByte()
-            val startPc = input.readUnsignedShort()
-            val initialSp = input.readUnsignedByte()
-            val instruction = MicrocodedInstruction(
-                cpu,
-                opcodeByte,
-                requireNotNull(lookup(opcodeByte)) { "Cannot restore unmapped opcode $${"%02X".format(opcodeByte)}" },
-                startPc,
-                initialSp,
-            )
-            instruction.phase = input.readUnsignedByte()
-            instruction.operandLow = input.readUnsignedShort()
-            instruction.operandHigh = input.readUnsignedShort()
-            instruction.pointerLow = input.readUnsignedShort()
-            instruction.pointerHigh = input.readUnsignedShort()
-            instruction.effectiveAddress = input.readInt()
-            instruction.originalValue = input.readByte()
-            repeat(input.readInt()) {
-                val address = input.readUnsignedShort()
-                val values = MutableList(input.readInt()) { input.readByte() }
-                instruction.semanticReads[address] = values
-            }
-            return instruction
-        }
-
-        private fun roleOf(opcode: Opcode): Role = when (opcode) {
-            is Load, is Logic, is Adc, is Sbc, is Compare, is Bit, is Lax, is Las,
-            is NopZp, is NopAbs, is NopAbsX, is NopZpX, is NopImm, is Alr, is Arr -> Role.READ
-            is Store, is Sax, is Ahx, is Shx, is Shy, is Tas -> Role.STORE
-            is MemoryShiftRotate, is MemoryIncDec, is Dcp, is Isc, is Rla, is Rra, is Slo, is Sre -> Role.RMW
-            is Branch -> Role.BRANCH
-            is Push -> Role.PUSH
-            is Pull -> Role.PULL
-            is Jump, is JumpIndirect -> Role.JMP
-            is JumpToSubroutine -> Role.JSR
-            is ReturnFromSubroutine -> Role.RTS
-            is ReturnFromInterrupt -> Role.RTI
-            is Break -> Role.BRK
-            else -> Role.IMPLIED
-        }
-
-        private fun modeOf(opcode: Opcode): Mode = when (opcode) {
-            is NopZp -> Mode.ZERO_PAGE
-            is NopAbs -> Mode.ABSOLUTE
-            is NopAbsX -> Mode.ABSOLUTE_INDEXED
-            is NopZpX -> Mode.ZERO_PAGE_INDEXED
-            is NopImm, is Alr, is Arr -> Mode.IMMEDIATE
-            else -> when (val addressing = addressingOf(opcode)) {
-                Immediate -> Mode.IMMEDIATE
-                is ZeroPage -> if (addressing.isIndexed) Mode.ZERO_PAGE_INDEXED else Mode.ZERO_PAGE
-                is Absolute -> if (addressing.isIndexed) Mode.ABSOLUTE_INDEXED else Mode.ABSOLUTE
-                IndirectX -> Mode.INDIRECT_X
-                IndirectY -> Mode.INDIRECT_Y
-                null -> Mode.IMPLIED
-            }
-        }
-
-        private fun addressingOf(opcode: Opcode): Addressing? = when (opcode) {
-            is Load -> opcode.addressing
-            is Store -> opcode.addressing
-            is Logic -> opcode.addressing
-            is Adc -> opcode.addressing
-            is Sbc -> opcode.addressing
-            is Compare -> opcode.addressing
-            is Bit -> opcode.addressing
-            is MemoryShiftRotate -> opcode.addressing
-            is MemoryIncDec -> opcode.addressing
-            is Lax -> opcode.addressing
-            is Sax -> opcode.addressing
-            is Ahx -> opcode.addressing
-            is Las -> opcode.addressing
-            is Tas -> opcode.addressing
-            is Shx -> opcode.addressing
-            is Shy -> opcode.addressing
-            is Dcp -> opcode.addressing
-            is Isc -> opcode.addressing
-            is Rla -> opcode.addressing
-            is Rra -> opcode.addressing
-            is Slo -> opcode.addressing
-            is Sre -> opcode.addressing
-            else -> null
+    /** Consume the obsolete v8 journal so the loader can report a precise error. */
+    fun discardLegacy(input: DataInput) {
+        input.readUnsignedByte() // opcode
+        input.readUnsignedShort() // start PC
+        input.readUnsignedByte() // initial SP
+        input.readUnsignedByte() // phase
+        input.readUnsignedShort() // operand low
+        input.readUnsignedShort() // operand high
+        input.readUnsignedShort() // pointer low
+        input.readUnsignedShort() // pointer high
+        input.readInt() // effective address
+        input.readByte() // original value
+        repeat(input.readInt()) {
+            input.readUnsignedShort()
+            repeat(input.readInt()) { input.readByte() }
         }
     }
 }

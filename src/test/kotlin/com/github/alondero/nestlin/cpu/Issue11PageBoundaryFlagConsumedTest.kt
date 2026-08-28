@@ -122,9 +122,11 @@ class Issue11PageBoundaryFlagConsumedTest {
 
         cpu.tick()
 
-        // 4-cycle branch (taken, page-crossed), post-tick decrement leaves 3.
-        assertThat(cpu.workCyclesLeft, equalTo(3))
+        // The page-cross cycle is added when the operand micro-step resolves
+        // the target, not while the opcode is being fetched.
+        assertThat(cpu.workCyclesLeft, equalTo(1))
         cpu.finishExecution()
+        assertThat(cpu.cycleCount, equalTo(4))
         assertThat(cpu.registers.programCounter, equalTo(0x1100.toSignedShort()))
         assertThat(cpu.pageBoundaryFlag, equalTo(true))
     }
@@ -144,9 +146,10 @@ class Issue11PageBoundaryFlagConsumedTest {
 
         cpu.tick()
 
-        // 3-cycle branch (taken, same page), post-tick decrement leaves 2.
-        assertThat(cpu.workCyclesLeft, equalTo(2))
+        // Branch timing is resolved by the operand micro-step.
+        assertThat(cpu.workCyclesLeft, equalTo(1))
         cpu.finishExecution()
+        assertThat(cpu.cycleCount, equalTo(3))
         assertThat(cpu.registers.programCounter, equalTo(0x10FF.toSignedShort()))
         assertThat(cpu.pageBoundaryFlag, equalTo(false))
     }
