@@ -37,13 +37,15 @@ import java.nio.file.Path
 class SaveStateMigrationTest {
 
     @Test
-    fun `SaveState VERSION is 10 for the in-flight reset sequencer`() {
+    fun `SaveState VERSION is 11 for the PPU open-bus latch`() {
         // Sanity check — fails fast if someone bumps or forgets the version
         // migration. The kdoc on SaveState and the load() version branch both
         // hinge on this constant. v7 (issue #271) appends an optional
         // length-prefixed RA runtime-progress block to every save; v10 appends
-        // the in-flight power/soft reset sequencer payload to the CPU block.
-        assertThat(SaveState.VERSION, equalTo(10))
+        // the in-flight power/soft reset sequencer payload to the CPU block;
+        // v11 appends one byte (the PPU open-bus latch) to the end of the PPU
+        // block so write-only register reads round-trip across save/load.
+        assertThat(SaveState.VERSION, equalTo(11))
     }
 
     @Test
