@@ -268,7 +268,11 @@ class PaletteRam {
         val index = addr and 0x1F
         // Mirror $3F10/$3F14/$3F18/$3F1C to $3F00/$3F04/$3F08/$3F0C
         val mirroredIndex = if (index and 0x13 == 0x10) index and 0x0F else index
-        memory[mirroredIndex] = value
+        // Palette RAM is 6-bit hardware: writes retain only bits 0-5. Bits 6-7
+        // are dropped here so CPU reads see them only when they come from the
+        // PPU open bus (issue #293). Rendering already masks downstream via
+        // `NesPalette.getRgb(index and 0x3F)`.
+        memory[mirroredIndex] = (value.toInt() and 0x3F).toByte()
     }
 
     fun saveState(out: DataOutput) { out.write(memory) }

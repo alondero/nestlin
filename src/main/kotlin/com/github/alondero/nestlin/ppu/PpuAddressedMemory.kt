@@ -219,7 +219,21 @@ class PpuAddressedMemory : NmiSource {
                     // The read buffer is still refilled, but with the NAMETABLE byte
                     // that sits "underneath" the palette (addr - $1000, the $2Fxx
                     // mirror), exactly as the real PPU's VRAM fetch does.
-                    result = ppuInternalMemory[vramAddr]
+                    //
+                    // The returned byte combines three sources (issue #293,
+                    // NESdev "PPU_registers#Reading_palette_RAM"):
+                    //   - bits 0-3: stored entry, masked to 0 when PPUMASK grayscale
+                    //                is set (mask 0x30); otherwise the raw 6-bit entry
+                    //                (mask 0x3F).
+                    //   - bits 6-7: PPU open bus (last byte written to ANY PPU register)
+                    //                — see issue #227 for the open-bus implementation.
+                    // The combined byte is also LATCHED onto the open bus, mirroring
+                    // Mesen2's `NesPpu.cpp` palette-read path.
+                    val entry = ppuInternalMemory[vramAddr].toInt() and 0x3F
+                    val paletteMask = if (mask.greyscale()) 0x30 else 0x3F
+                    val combined = (entry and paletteMask) or (openBus.toInt() and 0xC0)
+                    result = combined.toSignedByte()
+                    openBus = result
                     data = ppuInternalMemory[vramAddr - 0x1000]
                 } else {
                     result = data
