@@ -827,8 +827,8 @@ class Ppu(var memory: Memory) {
         writeSecondaryOamList(out, secondaryOam)
     }
 
-    fun loadState(input: DataInput) {
-        memory.ppuAddressedMemory.loadState(input)
+    fun loadState(input: DataInput, version: Int = SaveState.VERSION) {
+        memory.ppuAddressedMemory.loadState(input, version)
 
         cycle = input.readInt()
         scanline = input.readInt()

@@ -56,6 +56,13 @@ import java.io.OutputStream
  *                        the end of the CPU block, so v9 states remain an
  *                        exact prefix and load unchanged with no sequence in
  *                        flight.
+ *                        Version 11 appends one byte (the PPU's open-bus
+ *                        latch) to the end of the PPU block so the bus
+ *                        state observed by write-only register reads
+ *                        (`$2000`, `$2001`, `$2003`, `$2005`, `$2006`) and by
+ *                        `$2002` low-5-bit decay round-trips through save/load.
+ *                        v10 files load with openBus=0 — the safe cold-boot
+ *                        default. Issue #292.
  *   romCrc      long     CRC32 of the loaded ROM at save time
  *   romMapper   int      mapper id (validated on load)
  *   cpu         block    written by Cpu.saveState
@@ -93,7 +100,7 @@ import java.io.OutputStream
  */
 object SaveState {
     private const val MAGIC = 0x4E53544C  // "NSTL"
-    const val VERSION = 10
+    const val VERSION = 11
 
     /** Highest version this code can read. */
     private const val MIN_SUPPORTED_VERSION = 4
@@ -236,7 +243,7 @@ object SaveState {
         nestlin.cpu.loadState(dis, version)
         nestlin.cpu.interruptController.loadState(dis)
         nestlin.memory.loadRamState(dis)
-        nestlin.ppu.loadState(dis)
+        nestlin.ppu.loadState(dis, version)
         nestlin.apu.loadState(dis)
 
         // v5+ reads the ports block; v4 leaves both ports at their construction-time
