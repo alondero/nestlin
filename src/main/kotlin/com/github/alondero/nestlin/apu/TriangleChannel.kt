@@ -83,9 +83,18 @@ class TriangleChannel {
     }
 
     fun output(): Int {
+        // The DAC must hold whatever value the 32-step sequencer was at when
+        // the length counter / linear counter halts the channel — hardware
+        // freezes the phase level, it does not snap to zero. The sequencer
+        // itself stops advancing (clockTimer gates on both counters being
+        // nonzero), so sequenceStep is preserved naturally and the value at
+        // that step is the right answer. Returning it here is what makes
+        // triangle notes end without a click/pop and keeps the TND mixer
+        // contribution consistent across the note boundary (issue #296).
+        //
+        // Only the channel-enable gate remains: when $4015 bit 2 is clear,
+        // the channel is silenced and the DAC really does read zero.
         if (!isEnabled) return 0
-        if (lengthCounter.value == 0) return 0
-        if (linearCounter == 0) return 0
 
         // Hardware keeps the sequencer running at every timer rate, including
         // ultrasonic. We don't model the DAC slew-rate limit, so the sequence
