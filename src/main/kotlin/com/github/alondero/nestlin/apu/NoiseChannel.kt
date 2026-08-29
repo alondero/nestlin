@@ -49,16 +49,29 @@ class NoiseChannel {
             lengthCounter.loadCounter(lengthLoad)
         }
 
-        // Reset timer and start envelope
-        timerCounter = noisePeriodTable[period]
+        // Reset timer and start envelope. The timer is clocked once per APU
+        // cycle (every other CPU cycle, see Apu.tick), so we count in APU
+        // cycles: each table entry is divided by 2 here. Combined with the
+        // decrement-then-check-zero structure in clockTimer(), this yields
+        // successive LFSR shifts separated by exactly the table's CPU-cycle
+        // value (4, 8, 16, ...) — see GitHub issue #295.
+        timerCounter = noisePeriodTable[period] / 2
         envelope.startFlag = true
     }
 
     fun clockTimer() {
         if (timerCounter > 0) {
             timerCounter--
-        } else {
-            timerCounter = noisePeriodTable[period]
+        }
+
+        // Shift on the SAME call that decrements to zero (not the call after).
+        // If we deferred the shift by one cycle the spacing would become
+        // `period + 2` CPU cycles, which is exactly the "divide the initial
+        // value without checking down-counter terminal semantics" trap called
+        // out in issue #295. Decreasing-then-checking keeps the steady-state
+        // spacing at `period` CPU cycles.
+        if (timerCounter == 0) {
+            timerCounter = noisePeriodTable[period] / 2
 
             // Clock LFSR
             val feedback = if (modeFlag) {
@@ -110,6 +123,13 @@ class NoiseChannel {
         isEnabled = input.readBoolean()
         modeFlag = input.readBoolean()
         period = input.readInt()
+        // NOTE: timerCounter is stored in APU cycles (= CPU-cycle period / 2),
+        // not CPU cycles, per issue #295. A save written by a pre-#295 build
+        // would have this field in CPU cycles; on load, the next reload will
+        // snap it back to the current period/2 representation, so the worst
+        // observable effect of an old-save load is one LFSR step at the wrong
+        // rate. We deliberately do NOT bump the NSTL file version because the
+        // on-disk byte layout is unchanged.
         timerCounter = input.readInt()
         shiftRegister = input.readInt()
         envelope.loadState(input)
