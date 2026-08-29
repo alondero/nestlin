@@ -56,15 +56,20 @@ tasks.named<ShadowJar>("shadowJar") {
 // the basic `./gradlew build` path on worktrees that have the native
 // resources directory in place. The dependency is a no-op when the native
 // build is skipped — copyNativeRa itself is opt-in via `:buildNative`.
+// writeNativeRaManifest writes MANIFEST.json into the same resources tree,
+// so :jar must depend on it explicitly too — otherwise Gradle 8.5 strict
+// mode fails the build when :jar picks up the file via processResources.
 tasks.named("jar") {
-    dependsOn(copyNativeRa)
+    dependsOn(copyNativeRa, writeNativeRaManifest)
 }
 
 // Same dependency for `:test` — the test task transitively reads
 // `processTestResources` which can pick up the native tree. Without this,
 // `./gradlew build` (which runs `test`) fails the same validation.
+// writeNativeRaManifest writes MANIFEST.json into the same tree, so
+// :test must depend on it explicitly too — see the comment on :jar above.
 tasks.named("test") {
-    dependsOn(copyNativeRa)
+    dependsOn(copyNativeRa, writeNativeRaManifest)
 }
 
 // Friendly alias so `./gradlew uberJar` still works for humans and the CI step.
