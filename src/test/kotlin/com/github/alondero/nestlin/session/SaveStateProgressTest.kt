@@ -46,8 +46,11 @@ class SaveStateProgressTest {
 
     private fun snapshot(
         nes: Nestlin,
+        version: Int = SaveState.VERSION,
         capture: SaveState.ProgressCapture = SaveState.ProgressCapture { null },
-    ): ByteArray = ByteArrayOutputStream().also { SaveState.save(nes, it, capture) }.toByteArray()
+    ): ByteArray = ByteArrayOutputStream().also {
+        SaveState.save(nes, it, capture, version)
+    }.toByteArray()
 
     private fun restore(
         nes: Nestlin,
@@ -116,14 +119,14 @@ class SaveStateProgressTest {
 
     @Test
     fun `v6 save loads unchanged and resets the runtime against restored memory`() {
-        // Synthesize a v6 save (the previous format) by stripping the v7
-        // trailer and patching the version field. Loading it must not crash
-        // and must hand null to the restore callback so the runtime resets.
-        // We use the default (null) capture so the trailer is zero-length
-        // and the helper's length computation is trivially correct — the
-        // test exercises the version branch, not the trailer branch.
-        val currentBytes = snapshot(newNestlin())
-        val v6Bytes = stripTrailerAndRewriteVersion(currentBytes, targetVersion = 6)
+        // Produce a true v6-format byte stream by passing the target version
+        // into the version-aware SaveState.save (issue #297: every subsystem
+        // that grew fields between v6 and the current code now writes the
+        // pre-v7 byte layout when called with version < 7). Loading it must
+        // not crash and must hand null to the restore callback so the
+        // runtime resets — the `else` branch in SaveState.load that resets
+        // the runtime against the restored memory.
+        val v6Bytes = snapshot(newNestlin(), version = 6)
 
         val nes = newNestlin()
         var restoreCalls = 0
@@ -139,13 +142,12 @@ class SaveStateProgressTest {
     @Test
     fun `v5 save loads unchanged and resets the runtime`() {
         // v5 is still in the supported window (MIN_SUPPORTED_VERSION = 4)
-        // but pre-dates the v7 trailer AND pre-dates the v6 4-screen block
-        // conditional. Synthesizing a real v5 file requires hand-building
-        // the per-subsystem blocks; instead we round-trip the equivalent
-        // path by stripping both trailers and patching the version field.
-        // This still exercises the v7 load's `else` branch (version < 7).
-        val currentBytes = snapshot(newNestlin())
-        val v5Bytes = stripTrailerAndRewriteVersion(currentBytes, targetVersion = 5)
+        // but pre-dates the v6 4-screen block conditional AND the v7 RA
+        // trailer. A true v5 save is produced by the version-aware
+        // SaveState.save (issue #297), which omits every field added in
+        // v6+ when called with version=5. This exercises the
+        // `version < 7` else branch in SaveState.load.
+        val v5Bytes = snapshot(newNestlin(), version = 5)
 
         val nes = newNestlin()
         var restoreCalls = 0

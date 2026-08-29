@@ -4,14 +4,18 @@ import com.github.alondero.nestlin.input.InputDevice
 import com.github.alondero.nestlin.testutil.TestRoms
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Save-state format migration tests for v4 → v5 (issue: 2-player support)
- * and v6 → v7 (issue #271, RA progress trailer).
+ * Save-state format migration tests for v4 → v5 (issue: 2-player support),
+ * v6 → v7 (issue #271, RA progress trailer), and v10 → v11 (issue #297,
+ * APU $4017 deferred-reset pending state).
  *
  * v5 adds a `ports` sub-block recording the [InputDevice.DeviceType] of each
  * controller port. v4 files load with both ports defaulting to STANDARD_GAMEPAD.
@@ -22,6 +26,12 @@ import java.nio.file.Path
  * bytes through the [SaveState.ProgressCapture] / [SaveState.ProgressRestore]
  * callbacks. The dedicated v7 behaviour lives in
  * [com.github.alondero.nestlin.session.SaveStateProgressTest].
+ *
+ * v11 appends an optional pending-$4017-write payload to the APU/frame-counter
+ * block (issue #297). v10 and earlier files have no trailing bytes and load
+ * cleanly with the frame counter treated as having no pending write — same
+ * observable behaviour as a v10 save loaded into v10 code, which dropped
+ * the in-flight reset.
  *
  * Uses the in-repo `nestest.nes` so the test is self-contained — no external ROM,
  * no Mesen2, no display. The round-trip is the cheapest proof that the new bytes
@@ -37,13 +47,101 @@ import java.nio.file.Path
 class SaveStateMigrationTest {
 
     @Test
-    fun `SaveState VERSION is 10 for the in-flight reset sequencer`() {
+    fun `SaveState VERSION is 11 for the deferred $4017 reset pending write`() {
         // Sanity check — fails fast if someone bumps or forgets the version
         // migration. The kdoc on SaveState and the load() version branch both
         // hinge on this constant. v7 (issue #271) appends an optional
         // length-prefixed RA runtime-progress block to every save; v10 appends
-        // the in-flight power/soft reset sequencer payload to the CPU block.
-        assertThat(SaveState.VERSION, equalTo(10))
+        // the in-flight power/soft reset sequencer payload to the CPU block;
+        // v11 appends the deferred-$4017 pending write to the frame-counter
+        // block.
+        assertThat(SaveState.VERSION, equalTo(11))
+    }
+
+    @Test
+    fun `v10 save loads into v11 code without offset desync`() {
+        // Issue #297: a v10 save has 4 frame-counter fields (mode, irqInhibit,
+        // step, cyclesSinceReset). v11 always appends a trailing
+        // "hasPending" boolean to the frame-counter block. Loading a v10
+        // byte stream into the v11 FrameCounter.loadState must NOT try to
+        // read the 5th field from the next subsystem's bytes — that would
+        // corrupt the stream offset and shift every subsequent APU field
+        // (Pulse 1 timer, Pulse 2 timer, Triangle timer, Noise timer, DMC
+        // DMA state). The `version < 11` branch in FrameCounter.loadState
+        // leaves `pendingMode = null` and skips the trailing read.
+        //
+        // Synthesise a v10-format byte stream from a populated FrameCounter
+        // (non-default mode + non-zero step/cyclesSinceReset so a partial
+        // read would visibly mis-round-trip), then load it back with
+        // version=10. The active fields must round-trip; pendingModeForTest
+        // must report null (the v10 file carries no pending write).
+        val source = com.github.alondero.nestlin.apu.FrameCounter().apply {
+            region = com.github.alondero.nestlin.Region.NTSC
+            mode = com.github.alondero.nestlin.apu.FrameCounter.Mode.FIVE_STEP
+            irqInhibit = true
+            step = 2
+            cyclesSinceReset = 17000
+        }
+
+        val v10Bytes = ByteArrayOutputStream().also { baos ->
+            val dos = java.io.DataOutputStream(baos)
+            dos.writeInt(source.mode.ordinal)
+            dos.writeBoolean(source.irqInhibit)
+            dos.writeInt(source.step)
+            dos.writeInt(source.cyclesSinceReset)
+        }.toByteArray()
+
+        val restored = com.github.alondero.nestlin.apu.FrameCounter()
+        restored.loadState(
+            java.io.DataInputStream(ByteArrayInputStream(v10Bytes)),
+            version = 10
+        )
+        assertThat(restored.mode, equalTo(source.mode))
+        assertThat(restored.irqInhibit, equalTo(source.irqInhibit))
+        assertThat(restored.step, equalTo(source.step))
+        assertThat(restored.cyclesSinceReset, equalTo(source.cyclesSinceReset))
+        assertNull(restored.pendingModeForTest(), "v10 save must load with no pending write")
+        assertThat(restored.cyclesToResetForTest(), equalTo(0))
+    }
+
+    @Test
+    fun `v11 save round-trips a queued pending $4017 write`() {
+        // Companion to the v10→v11 migration test above. v11 saves carry
+        // the deferred-reset pending state; a savestate taken mid-delay
+        // (3 or 4 cycles after a $4017 write) must restore both the active
+        // mode AND the pending mode so the in-flight reset still fires on
+        // load.
+        val source = com.github.alondero.nestlin.apu.FrameCounter().apply {
+            region = com.github.alondero.nestlin.Region.NTSC
+            mode = com.github.alondero.nestlin.apu.FrameCounter.Mode.FOUR_STEP
+            // Queue a 5-step reset 2 cycles out (cpuCycle=0 → delay=3, 1
+            // tick has already elapsed).
+            write4017(0x80.toByte(), cpuCycle = 0)
+            repeat(1) { tick() }
+        }
+        assertThat(source.mode, equalTo(com.github.alondero.nestlin.apu.FrameCounter.Mode.FOUR_STEP))
+        assertThat(source.pendingModeForTest(), equalTo(com.github.alondero.nestlin.apu.FrameCounter.Mode.FIVE_STEP))
+        assertThat(source.cyclesToResetForTest(), equalTo(2))
+
+        val bytes = ByteArrayOutputStream().also { baos ->
+            source.saveState(java.io.DataOutputStream(baos))
+        }.toByteArray()
+
+        val restored = com.github.alondero.nestlin.apu.FrameCounter()
+        restored.loadState(java.io.DataInputStream(ByteArrayInputStream(bytes)))
+        assertThat(restored.mode, equalTo(com.github.alondero.nestlin.apu.FrameCounter.Mode.FOUR_STEP))
+        assertThat(restored.pendingModeForTest(), equalTo(com.github.alondero.nestlin.apu.FrameCounter.Mode.FIVE_STEP))
+        assertThat(restored.cyclesToResetForTest(), equalTo(2))
+
+        // Drain the restored delay; the deferred 5-step reset must fire on
+        // the tick that decrements cyclesToReset to 0 (which is tick 2 of
+        // the post-load advance — cyclesToReset starts at 2, ticks 1 and 2
+        // drain it).
+        val t1 = restored.tick()
+        assertThat(t1.resetClock, equalTo(false))
+        val resetTick = restored.tick()
+        assertThat(restored.mode, equalTo(com.github.alondero.nestlin.apu.FrameCounter.Mode.FIVE_STEP))
+        assertThat(resetTick.resetClock, equalTo(true))
     }
 
     @Test

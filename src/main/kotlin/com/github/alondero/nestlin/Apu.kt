@@ -116,6 +116,15 @@ class Apu(private val dmaPort: DmaPort) {
 
         if (frameResult.halfFrame) clockHalfFrame()
 
+        // Issue #297: a deferred $4017 reset (3 or 4 CPU cycles after the
+        // write, depending on the APU's get/put phase) emits an immediate
+        // quarter+half on the reset tick in 5-step mode. 4-step resets are
+        // silent (no clocks); the result's resetClock is false in that case.
+        if (frameResult.resetClock) {
+            clockQuarterFrame()
+            clockHalfFrame()
+        }
+
         if (frameResult.irq) {
             frameIrq = true
         }
@@ -251,14 +260,18 @@ class Apu(private val dmaPort: DmaPort) {
             0x13 -> dmc.write4013(value)
             0x15 -> handleStatusWrite(value)
             0x17 -> {
-                val immediateClock = frameCounter.write4017(value)
+                // Issue #297: the frame-counter reset is deferred 3 or 4 CPU
+                // cycles, depending on the APU's get/put phase at the time of
+                // the write (cpuCycleCounter % 2). IRQ-inhibit acknowledgement
+                // is the ONE piece that does NOT defer: clearing the frame
+                // interrupt on bit 6 happens at the write.
+                frameCounter.write4017(value, cpuCycleCounter)
                 if (value.isBitSet(6)) {
                     frameIrq = false
                 }
-                if (immediateClock) {
-                    clockQuarterFrame()
-                    clockHalfFrame()
-                }
+                // The (formerly-immediate) quarter+half clock for 5-step mode
+                // is now fired by Apu.tick() when the deferred reset lands,
+                // surfaced via FrameCounter.Result.resetClock. No clocks here.
             }
         }
     }
@@ -399,12 +412,15 @@ class Apu(private val dmaPort: DmaPort) {
         noise.clockLength()
     }
 
-    fun saveState(out: DataOutput) {
+    fun saveState(out: DataOutput, version: Int = SaveState.VERSION) {
         out.writeDouble(cycleAccumulator)
         out.writeInt(cpuCycleCounter)
         out.writeBoolean(frameIrq)
         apuMemory.saveState(out)
-        frameCounter.saveState(out)
+        // Issue #297: frame-counter pending-write block is gated on the
+        // save-state version. v11+ writes the optional pending fields; v4–v10
+        // writes the original 4 fields exactly as before.
+        frameCounter.saveState(out, version)
         pulse1.saveState(out)
         pulse2.saveState(out)
         triangle.saveState(out)
@@ -412,12 +428,14 @@ class Apu(private val dmaPort: DmaPort) {
         dmc.saveState(out)
     }
 
-    fun loadState(input: DataInput) {
+    fun loadState(input: DataInput, version: Int = SaveState.VERSION) {
         cycleAccumulator = input.readDouble()
         cpuCycleCounter = input.readInt()
         frameIrq = input.readBoolean()
         apuMemory.loadState(input)
-        frameCounter.loadState(input)
+        // Issue #297: $4017 deferred-reset state is gated on save-state version.
+        // v4–v10 saves have no pending-write bytes; v11+ do.
+        frameCounter.loadState(input, version)
         pulse1.loadState(input)
         pulse2.loadState(input)
         triangle.loadState(input)

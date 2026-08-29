@@ -56,6 +56,15 @@ import java.io.OutputStream
  *                        the end of the CPU block, so v9 states remain an
  *                        exact prefix and load unchanged with no sequence in
  *                        flight.
+ *                        Version 11 appends an optional pending-$4017-write
+ *                        payload to the APU/frame-counter block. The payload
+ *                        is a single boolean (is a deferred reset queued?);
+ *                        when true, it is followed by the pending Mode ordinal
+ *                        and the remaining delay in CPU cycles (3 or 4). v10
+ *                        and earlier files do not carry this trailing block
+ *                        and load cleanly with the frame counter treated as
+ *                        having no pending write — same as a v10 save loaded
+ *                        into v10 code, which dropped the in-flight reset.
  *   romCrc      long     CRC32 of the loaded ROM at save time
  *   romMapper   int      mapper id (validated on load)
  *   cpu         block    written by Cpu.saveState
@@ -93,7 +102,7 @@ import java.io.OutputStream
  */
 object SaveState {
     private const val MAGIC = 0x4E53544C  // "NSTL"
-    const val VERSION = 10
+    const val VERSION = 11
 
     /** Highest version this code can read. */
     private const val MIN_SUPPORTED_VERSION = 4
@@ -141,21 +150,22 @@ object SaveState {
         nestlin: Nestlin,
         out: OutputStream,
         captureProgress: ProgressCapture = ProgressCapture { null },
+        version: Int = VERSION,
     ) {
         val game = nestlin.cpu.currentGame
             ?: throw IllegalStateException("No game loaded; cannot save state")
 
         val dos = DataOutputStream(out)
         dos.writeInt(MAGIC)
-        dos.writeInt(VERSION)
+        dos.writeInt(version)
         dos.writeLong(game.crc.value)
         dos.writeInt(game.header.mapper)
 
-        nestlin.cpu.saveState(dos)
+        nestlin.cpu.saveState(dos, version)
         nestlin.cpu.interruptController.saveState(dos)
         nestlin.memory.saveRamState(dos)
-        nestlin.ppu.saveState(dos)
-        nestlin.apu.saveState(dos)
+        nestlin.ppu.saveState(dos, version)
+        nestlin.apu.saveState(dos, version)
 
         // v5 ports block: one length-prefixed UTF-8 string per port recording the
         // InputDevice.DeviceType.storageKey. Length-prefixed (rather than fixed-size
@@ -237,7 +247,7 @@ object SaveState {
         nestlin.cpu.interruptController.loadState(dis)
         nestlin.memory.loadRamState(dis)
         nestlin.ppu.loadState(dis)
-        nestlin.apu.loadState(dis)
+        nestlin.apu.loadState(dis, version)
 
         // v5+ reads the ports block; v4 leaves both ports at their construction-time
         // default (StandardGamepad). The controller1/controller2 fields are stable

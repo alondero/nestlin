@@ -489,7 +489,7 @@ class Cpu(
      * [SaveState.load] rejects mismatched versions before reaching this
      * readInt(), so we never need to consume a VERSION 3 byte stream.
      */
-    fun saveState(out: DataOutput) {
+    fun saveState(out: DataOutput, version: Int = SaveState.VERSION) {
         out.writeByte(_registers.stackPointer.toInt())
         out.writeByte(_registers.accumulator.toInt())
         out.writeByte(_registers.indexX.toInt())
@@ -503,26 +503,30 @@ class Cpu(
         out.writeBoolean(_idle)
         // Reserved 4-byte int slot — see kdoc above.
         out.writeInt(0)
-        // Cycle parity determines the alignment delay for a future OAM DMA;
-        // preserve the full counter so save/load also keeps logger timing.
-        out.writeInt(_cycleCount)
-        out.writeBoolean(activeInstruction)
-        if (activeInstruction) instructionState.save(out)
-        out.writeBoolean(activeInterrupt)
-        if (activeInterrupt) interruptState.save(out)
-        out.writeInt(genericStallCycles)
-        out.writeBoolean(oamDmaActive)
-        if (oamDmaActive) {
-            out.writeByte(oamDmaPage)
-            out.writeByte(oamDmaDummyCycles)
-            out.writeShort(oamDmaIndex)
-            out.writeBoolean(oamDmaReading)
-            out.writeByte(oamDmaBuffer.toInt())
+        if (version >= 9) {
+            // Cycle parity determines the alignment delay for a future OAM DMA;
+            // preserve the full counter so save/load also keeps logger timing.
+            out.writeInt(_cycleCount)
+            out.writeBoolean(activeInstruction)
+            if (activeInstruction) instructionState.save(out)
+            out.writeBoolean(activeInterrupt)
+            if (activeInterrupt) interruptState.save(out)
+            out.writeInt(genericStallCycles)
+            out.writeBoolean(oamDmaActive)
+            if (oamDmaActive) {
+                out.writeByte(oamDmaPage)
+                out.writeByte(oamDmaDummyCycles)
+                out.writeShort(oamDmaIndex)
+                out.writeBoolean(oamDmaReading)
+                out.writeByte(oamDmaBuffer.toInt())
+            }
+            if (version >= 10) {
+                // VERSION 10: the in-flight power/soft reset bus sequence
+                // (written last so the pre-10 CPU block layout is an exact prefix).
+                out.writeBoolean(activeReset)
+                if (activeReset) resetState.save(out)
+            }
         }
-        // VERSION 10: the in-flight power/soft reset bus sequence (written last
-        // so the pre-10 CPU block layout is an exact prefix).
-        out.writeBoolean(activeReset)
-        if (activeReset) resetState.save(out)
     }
 
     fun loadState(input: DataInput, version: Int = SaveState.VERSION) {
