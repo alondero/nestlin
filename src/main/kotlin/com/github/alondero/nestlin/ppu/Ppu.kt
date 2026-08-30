@@ -799,8 +799,8 @@ class Ppu(var memory: Memory) {
         frameCompletionListeners.remove(listener)
     }
 
-    fun saveState(out: DataOutput) {
-        memory.ppuAddressedMemory.saveState(out)
+    fun saveState(out: DataOutput, version: Int = SaveState.VERSION) {
+        memory.ppuAddressedMemory.saveState(out, version)
 
         out.writeInt(cycle)
         out.writeInt(scanline)

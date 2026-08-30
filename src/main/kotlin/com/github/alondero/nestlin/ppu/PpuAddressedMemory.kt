@@ -128,7 +128,7 @@ class PpuAddressedMemory : NmiSource {
         writeToggle = false
     }
 
-    fun saveState(out: DataOutput) {
+    fun saveState(out: DataOutput, version: Int = SaveState.VERSION) {
         out.writeByte(controller.register.toInt())
         out.writeByte(mask.register.toInt())
         out.writeByte(status.register.toInt())
@@ -137,7 +137,13 @@ class PpuAddressedMemory : NmiSource {
         out.writeByte(scroll.toInt())
         out.writeByte(address.toInt())
         out.writeByte(data.toInt())
-        out.writeByte(openBus.toInt())
+        // VERSION 11: openBus byte round-trips through save/load so that
+        // reads of write-only registers see the same latch a live session
+        // would. Gated symmetrically with loadState (which only reads the
+        // byte on `version >= 11`) so v10- saves stay byte-identical and the
+        // version-aware SaveState.save can synthesise a v10-format byte
+        // stream for migration tests.
+        if (version >= 11) out.writeByte(openBus.toInt())
         out.writeBoolean(writeToggle)
         vRamAddress.saveState(out)
         tempVRamAddress.saveState(out)
