@@ -196,6 +196,20 @@ class Memory : DmaPort {
      */
     var dataBus: Byte = 0
 
+    /**
+     * DMC-vs-OAM DMA arbitration (issues #228, #294). The 2A03's DMC
+     * channel can stall an in-flight OAM DMA's source-read half-cycle.
+     * The CPU consults [DmaArbiter.dmcReadInProgress] at the start of
+     * every OAM DMA get phase; while true, the read is suppressed and
+     * the DMA's other state is preserved. Defaults to [DmaArbiter.NONE]
+     * so behaviour matches DMC-silent hardware.
+     *
+     * Set by the wiring in [Nestlin] (and tests) — not part of save state
+     * because the DMC channel re-arms on every frame from $4015/$4011.
+     */
+    @Volatile
+    var dmaArbiter: DmaArbiter = DmaArbiter.NONE
+
     fun readCartridge(data: GamePak) {
         val m = data.createMapper()
         mapper = m

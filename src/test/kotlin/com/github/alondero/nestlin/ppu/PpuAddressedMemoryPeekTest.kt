@@ -10,19 +10,33 @@ import org.junit.jupiter.api.Test
  * Memory Editor (issue #168). The real [PpuAddressedMemory.get] mutates state on
  * read ($2002 clears vblank + resets the write toggle, $2007 increments VRAM);
  * peek must return the same value while touching nothing.
+ *
+ * Issue #292: for write-only registers (`$2000`, `$2001`, `$2003`, `$2005`,
+ * `$2006`) both [PpuAddressedMemory.get] and [PpuAddressedMemory.peek] now
+ * report the current [PpuAddressedMemory.openBus] value rather than the
+ * internal software mirror. These tests were updated to reflect the new
+ * semantics: peek MUST match what a real read would return.
  */
 class PpuAddressedMemoryPeekTest {
 
     @Test
-    fun `peek returns the backing register bytes`() {
+    fun `peek of write-only registers returns the open-bus value, not the backing field`() {
         val ppu = PpuAddressedMemory()
-        ppu[0] = 0x80.toSignedByte() // PPUCTRL
-        ppu[1] = 0x1E.toSignedByte() // PPUMASK
-        ppu.oamAddress = 0x12
+        // The CPU's writes do land on the bus, so the value the user most
+        // recently wrote is still observable — but only because the bus
+        // remembers it. The internal mirrors (controller.register, mask.register,
+        // oamAddress, scroll, address) are NOT exposed by reads of write-only
+        // registers on real hardware (issue #292).
+        ppu[0] = 0x80.toSignedByte() // PPUCTRL: bus = 0x80
+        ppu[1] = 0x1E.toSignedByte() // PPUMASK: bus = 0x1E (overwrites prior bus)
+        ppu.oamAddress = 0x12         // direct field write — does NOT touch the bus
 
-        assertThat(ppu.peek(0), equalTo(0x80.toSignedByte()))
+        // peek must match what a real read would return. After the writes
+        // above, the bus holds 0x1E, so every write-only register read sees
+        // 0x1E — NOT its individually stored value.
+        assertThat(ppu.peek(0), equalTo(0x1E.toSignedByte()))
         assertThat(ppu.peek(1), equalTo(0x1E.toSignedByte()))
-        assertThat(ppu.peek(3), equalTo(0x12.toSignedByte()))
+        assertThat(ppu.peek(3), equalTo(0x1E.toSignedByte()))
     }
 
     @Test

@@ -385,15 +385,41 @@ class SaveStateProgressTest {
         // active-instruction flag, active-interrupt flag, generic-stall int,
         // and OAM-DMA flag. v10 appended the in-flight reset sequencer: a
         // boolean plus a five-byte payload while a reset sequence is
-        // mid-flight. These
-        // snapshots are taken immediately after reset, so all flags are false
+        // mid-flight. v11 appended one byte (the PPU open-bus latch) to the
+        // end of the PPU block so write-only register reads round-trip.
+        // Snapshots are taken immediately after reset, so all flags are false
         // except the reset sequence, which is always in flight.
         val cpuV8ExtensionStart = 20 + 18
         val cpuV8ExtensionBytes = if (targetVersion < 8) 11 else 0
         val resetFlagOffset = cpuV8ExtensionStart + 11
         val resetActive = currentBytes[resetFlagOffset] != 0.toByte()
         val cpuResetBlockBytes = if (targetVersion < 10) 1 + (if (resetActive) 5 else 0) else 0
-        val outSize = bodyEnd - cpuV8ExtensionBytes - cpuResetBlockBytes
+        // The PPU block in the current (v11) snapshot starts after the header
+        // (20 bytes) + CPU block (18 idle + 11 v8 ext + 1 boolean + 5 reset
+        // payload when active) + interruptController (1 byte) + RAM (2048).
+        // The open-bus byte sits at offset 8 within the PPU block (after the
+        // eight register mirrors: controller, mask, status, oamAddress,
+        // oamData, scroll, address, data). When synthesising a pre-v11 target
+        // we drop that byte.
+        val currentCpuBlockSize = cpuV8ExtensionStart + 11 + (1 + (if (resetActive) 5 else 0))
+        val ppuOpenBusOffsetInCurrent = 20 + currentCpuBlockSize + 1 + 2048 + 8
+        val ppuOpenBusBytes = if (targetVersion < 11) 1 else 0
+        // Build the set of source-byte offsets to skip and assemble the output
+        // by copying every byte NOT in that set. This handles the three
+        // conditional extensions (v8 CPU, v10 reset, v11 PPU open-bus) with
+        // one code path.
+        val skipRanges = mutableListOf<IntRange>()
+        if (cpuV8ExtensionBytes > 0) {
+            skipRanges.add(cpuV8ExtensionStart until cpuV8ExtensionStart + 11)
+        }
+        if (cpuResetBlockBytes > 0) {
+            skipRanges.add(resetFlagOffset until resetFlagOffset + cpuResetBlockBytes)
+        }
+        if (ppuOpenBusBytes > 0) {
+            skipRanges.add(ppuOpenBusOffsetInCurrent until ppuOpenBusOffsetInCurrent + 1)
+        }
+        val skipSet: Set<Int> = skipRanges.flatten().toSet()
+        val outSize = bodyEnd - skipSet.size
         val out = ByteArray(outSize)
         // Copy magic verbatim.
         System.arraycopy(currentBytes, 0, out, 0, 4)
@@ -403,16 +429,16 @@ class SaveStateProgressTest {
         out[5] = ((targetVersion ushr 16) and 0xFF).toByte()
         out[6] = ((targetVersion ushr 8) and 0xFF).toByte()
         out[7] = (targetVersion and 0xFF).toByte()
-        // Copy the body, omitting the CPU extension for a pre-v8 target.
-        System.arraycopy(currentBytes, 8, out, 8, cpuV8ExtensionStart - 8)
-        val sourceAfterCpuExtension = cpuV8ExtensionStart + cpuV8ExtensionBytes + cpuResetBlockBytes
-        System.arraycopy(
-            currentBytes,
-            sourceAfterCpuExtension,
-            out,
-            cpuV8ExtensionStart,
-            outSize - cpuV8ExtensionStart,
-        )
+        // Copy each body byte, skipping the conditional extensions.
+        var src = 8
+        var dst = 8
+        while (src < bodyEnd) {
+            if (src in skipSet) {
+                src++
+            } else {
+                out[dst++] = currentBytes[src++]
+            }
+        }
         return out
     }
 

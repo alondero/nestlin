@@ -56,15 +56,20 @@ tasks.named<ShadowJar>("shadowJar") {
 // the basic `./gradlew build` path on worktrees that have the native
 // resources directory in place. The dependency is a no-op when the native
 // build is skipped — copyNativeRa itself is opt-in via `:buildNative`.
+// writeNativeRaManifest writes MANIFEST.json into the same resources tree,
+// so :jar must depend on it explicitly too — otherwise Gradle 8.5 strict
+// mode fails the build when :jar picks up the file via processResources.
 tasks.named("jar") {
-    dependsOn(copyNativeRa)
+    dependsOn(copyNativeRa, writeNativeRaManifest)
 }
 
 // Same dependency for `:test` — the test task transitively reads
 // `processTestResources` which can pick up the native tree. Without this,
 // `./gradlew build` (which runs `test`) fails the same validation.
+// writeNativeRaManifest writes MANIFEST.json into the same tree, so
+// :test must depend on it explicitly too — see the comment on :jar above.
 tasks.named("test") {
-    dependsOn(copyNativeRa)
+    dependsOn(copyNativeRa, writeNativeRaManifest)
 }
 
 // Friendly alias so `./gradlew uberJar` still works for humans and the CI step.
@@ -435,6 +440,30 @@ fun mergeFragments(fragments: List<java.io.File>): String {
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
     dependsOn(copyNativeRa, writeNativeRaManifest)
+}
+
+// Same dependency on the plain `:jar` task — without it, Gradle 8.5's
+// implicit-dependency validator flags that `:jar` reads the merged
+// MANIFEST.json written by `:writeNativeRaManifest` without declaring it.
+// The dependency already existed on `:shadowJar` (the canonical release
+// JAR); adding it here means `./gradlew build` also produces a correct
+// plain JAR for users who want one without the shadow plugin.
+tasks.named<Jar>("jar") {
+    dependsOn(writeNativeRaManifest)
+}
+
+// `:writeNativeRaManifest` writes into `build/resources/main/native-ra/`,
+// which falls under the standard `processResources` output directory. Chain
+// it off `processResources` so every downstream consumer (`:test`, `:jar`,
+// `:shadowJar`, runnable distribution tasks, etc.) gets the manifest
+// without each one having to declare `dependsOn(writeNativeRaManifest)`
+// explicitly. Without this, Gradle 8.5's implicit-dependency validator
+// raises "uses this output of task :writeNativeRaManifest without declaring
+// an explicit or implicit dependency" on every downstream task.
+afterEvaluate {
+    tasks.named("processResources") {
+        dependsOn(writeNativeRaManifest)
+    }
 }
 
 // Wire the native lib into the runnable JAR. `:shadowJar` is the canonical

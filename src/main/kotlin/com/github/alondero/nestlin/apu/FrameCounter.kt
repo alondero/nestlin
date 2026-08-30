@@ -205,9 +205,13 @@ class FrameCounter {
         // pending block is only written for v11+ saves; v4–v10 saves carry
         // exactly the same 4 fields they always did, so a v10 save produced
         // by older code round-trips through the v11 reader without an offset
-        // mismatch (and the v11 writer can synthesise a v10-format byte
-        // stream when `version` is passed in below SaveState.VERSION 11).
-        if (version >= 11) {
+        // Issue #297 (SaveState.VERSION 12): the pending block is only
+        // written for v12+ saves. v11 saves (issue #292) and earlier carry
+        // exactly the same 4 fields they always did, so a v11 save produced
+        // by older code round-trips through the v12 reader without an offset
+        // mismatch (and the v12 writer can synthesise a v11-format byte
+        // stream when `version` is passed in below SaveState.VERSION 12).
+        if (version >= 12) {
             out.writeBoolean(pendingMode != null)
             if (pendingMode != null) {
                 out.writeInt(pendingMode!!.ordinal)
@@ -221,7 +225,7 @@ class FrameCounter {
         irqInhibit = input.readBoolean()
         step = input.readInt()
         cyclesSinceReset = input.readInt()
-        if (version >= 11) {
+        if (version >= 12) {
             val hasPending = input.readBoolean()
             if (hasPending) {
                 pendingMode = Mode.entries[input.readInt()]
@@ -231,7 +235,7 @@ class FrameCounter {
                 cyclesToReset = 0
             }
         } else {
-            // Pre-v11 saves never carried a pending write; if a $4017 reset
+            // Pre-v12 saves never carried a pending write; if a $4017 reset
             // was in flight at the moment of capture, the old format
             // implicitly dropped it on load — match that behaviour for
             // backwards compatibility.

@@ -24,15 +24,21 @@ class PpuAddressedMemory : NmiSource {
     var data: Byte = 0                     // $2007
 
     /**
-     * Internal CPU-PPU data-bus "open-bus" decay (issue #227).
+     * Internal CPU-PPU data-bus latch (issue #227 + #292).
      *
-     * $2002's low 5 bits are not backed by any register; on hardware they decay
-     * to whatever byte last appeared on the internal data bus. Every PPU write
-     * ($2000-$2007) updates this value, and $2002 reads pull the low 5 bits from
-     * here. Nestlin used to return status.register's low 5 bits — always zero —
-     * which is a deterministic but inaccurate value.
+     * The 2C02's CPU-visible window has one shared internal data bus. Every
+     * CPU write to `$2000`-`$2007` places a byte on this bus; reads of write-only
+     * registers (`$2000`, `$2001`, `$2003`, `$2005`, `$2006`) return whatever
+     * the bus currently holds, NOT a mirror of the value the CPU stored there.
+     * Reads of readable registers (`$2002`, `$2004`, `$2007`) latch the
+     * combined return byte onto the bus so subsequent write-only reads pick it
+     * up.
      *
      * Default 0: a cold-boot PPU has a 0-valued bus (no previous write).
+     * Hardware bus decay (the capacitor-on-the-trace slow-leak) is not modelled
+     * here; future refinement tracked separately. The non-decayed semantics
+     * are still accurate: every PPU I/O access updates the latch to the byte
+     * it drives onto the bus.
      */
     var openBus: Byte = 0
 
@@ -122,7 +128,7 @@ class PpuAddressedMemory : NmiSource {
         writeToggle = false
     }
 
-    fun saveState(out: DataOutput) {
+    fun saveState(out: DataOutput, version: Int = SaveState.VERSION) {
         out.writeByte(controller.register.toInt())
         out.writeByte(mask.register.toInt())
         out.writeByte(status.register.toInt())
@@ -131,6 +137,13 @@ class PpuAddressedMemory : NmiSource {
         out.writeByte(scroll.toInt())
         out.writeByte(address.toInt())
         out.writeByte(data.toInt())
+        // VERSION 11: openBus byte round-trips through save/load so that
+        // reads of write-only registers see the same latch a live session
+        // would. Gated symmetrically with loadState (which only reads the
+        // byte on `version >= 11`) so v10- saves stay byte-identical and the
+        // version-aware SaveState.save can synthesise a v10-format byte
+        // stream for migration tests.
+        if (version >= 11) out.writeByte(openBus.toInt())
         out.writeBoolean(writeToggle)
         vRamAddress.saveState(out)
         tempVRamAddress.saveState(out)
@@ -141,7 +154,7 @@ class PpuAddressedMemory : NmiSource {
         objectAttributeMemory.saveState(out)
     }
 
-    fun loadState(input: DataInput) {
+    fun loadState(input: DataInput, version: Int = SaveState.VERSION) {
         controller.register = input.readByte()
         mask.register = input.readByte()
         status.register = input.readByte()
@@ -150,6 +163,11 @@ class PpuAddressedMemory : NmiSource {
         scroll = input.readByte()
         address = input.readByte()
         data = input.readByte()
+        // VERSION 11: openBus byte appended to the PPU block so subsequent
+        // reads of write-only registers see the same latch a live session
+        // would. Older saves (v10-) leave openBus at 0 — the safe default
+        // for a fresh PPU bus.
+        openBus = if (version >= 11) input.readByte() else 0
         writeToggle = input.readBoolean()
         vRamAddress.loadState(input)
         tempVRamAddress.loadState(input)
@@ -168,26 +186,31 @@ class PpuAddressedMemory : NmiSource {
      *  - `$2002` does NOT clear the vblank flag, the NMI latch, or the write toggle;
      *  - `$2007` returns the read buffer ([data]) WITHOUT incrementing the VRAM
      *    address (and without the palette fast-path, since that too would read
-     *    through to backing VRAM).
+     *    through to backing VRAM);
+     *  - write-only registers (`$2000`/`$2001`/`$2003`/`$2005`/`$2006`) report
+     *    the current [openBus] latch, matching the value [get] would return
+     *    for a real read. peek does NOT mutate [openBus] itself — a real read
+     *    of these write-only registers doesn't drive anything new onto the bus
+     *    either (issue #292).
      *
      * [register] is the low 3 bits of the CPU address (`$2000-$2007`, mirrored
      * every 8 bytes through `$3FFF`).
      */
     fun peek(register: Int): Byte = when (register and 7) {
-        0 -> controller.register
-        1 -> mask.register
+        0 -> openBus
+        1 -> openBus
         2 -> status.register
-        3 -> oamAddress
+        3 -> openBus
         4 -> objectAttributeMemory[oamAddress.toUnsignedInt()]
-        5 -> scroll
-        6 -> address
+        5 -> openBus
+        6 -> openBus
         else /*7*/ -> data
     }
 
     operator fun get(addr: Int): Byte {
         return when (addr) {
-            0 -> controller.register
-            1 -> mask.register
+            0 -> openBus
+            1 -> openBus
             2 -> {
                 writeToggle = false
                 // Open-bus decay: bits 5-7 come from the status register (sprite
@@ -200,6 +223,11 @@ class PpuAddressedMemory : NmiSource {
                 // Reading $2002 also clears the NMI flag?
                 // NESdev: "Reading $2002... will also acknowledge the interrupt"
                 nmiOccurred = false
+                // $2002 drives a real byte onto the internal data bus. Subsequent
+                // reads of write-only registers see this combined byte, not the
+                // previous open-bus value. NESdev: PPU register reads update the
+                // open-bus latch (issue #292).
+                openBus = value
                 // Debug logging
                 if (debugLogStatusReads) {
                     val bit7 = (value.toUnsignedInt() and 0x80) != 0
@@ -207,10 +235,19 @@ class PpuAddressedMemory : NmiSource {
                 }
                 value
             }
-            3 -> oamAddress
-            4 -> objectAttributeMemory[oamAddress.toUnsignedInt()]
-            5 -> scroll
-            6 -> address
+            3 -> openBus
+            4 -> {
+                // $2004 (OAMDATA) drives the read byte onto the bus. The returned
+                // byte is whatever sits at the current OAM address (rendering-time
+                // attribute masking and sprite-0 hit detection are handled elsewhere
+                // in the PPU pipeline; from the bus-latch perspective the byte that
+                // appears on the bus is the OAM byte the CPU requested).
+                val result = objectAttributeMemory[oamAddress.toUnsignedInt()]
+                openBus = result
+                result
+            }
+            5 -> openBus
+            6 -> openBus
             else /*7*/ -> {
                 val vramAddr = vRamAddress.asAddress() and 0x3FFF
                 val result: Byte
@@ -219,12 +256,31 @@ class PpuAddressedMemory : NmiSource {
                     // The read buffer is still refilled, but with the NAMETABLE byte
                     // that sits "underneath" the palette (addr - $1000, the $2Fxx
                     // mirror), exactly as the real PPU's VRAM fetch does.
-                    result = ppuInternalMemory[vramAddr]
+                    //
+                    // The returned byte combines three sources (issue #293,
+                    // NESdev "PPU_registers#Reading_palette_RAM"):
+                    //   - bits 0-3: stored entry, masked to 0 when PPUMASK grayscale
+                    //                is set (mask 0x30); otherwise the raw 6-bit entry
+                    //                (mask 0x3F).
+                    //   - bits 6-7: PPU open bus (last byte written to ANY PPU register)
+                    //                — see issue #227 for the open-bus implementation.
+                    // The combined byte is also LATCHED onto the open bus, mirroring
+                    // Mesen2's `NesPpu.cpp` palette-read path.
+                    val entry = ppuInternalMemory[vramAddr].toInt() and 0x3F
+                    val paletteMask = if (mask.greyscale()) 0x30 else 0x3F
+                    val combined = (entry and paletteMask) or (openBus.toInt() and 0xC0)
+                    result = combined.toSignedByte()
+                    openBus = result
                     data = ppuInternalMemory[vramAddr - 0x1000]
                 } else {
                     result = data
                     data = ppuInternalMemory[vramAddr]
                 }
+                // $2007 drives the returned byte onto the internal data bus. The
+                // returned value is what the CPU sees on the read; latch it.
+                // (Palette fast-path: palette reads are addressed separately by
+                // their own issue, but the bus-latch semantics are the same.)
+                openBus = result
                 vRamAddress.increment(controller.vramAddressIncrement())
                 result
             }

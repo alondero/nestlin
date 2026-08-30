@@ -282,10 +282,30 @@ class Cpu(
                         oamDmaDummyCycles--
                     }
                     oamDmaReading -> {
-                        oamDmaBuffer = memory[(oamDmaPage shl 8) or oamDmaIndex]
-                        oamDmaReading = false
+                        // DMC arbitration seam (issues #228, #294). When the DMC
+                        // channel is currently pulling a sample, this CPU cycle
+                        // belongs to DMC and the OAM DMA's get phase must wait.
+                        // The buffer/latch is preserved; the write phase still
+                        // runs in steady state on the next half-cycle when DMC
+                        // is silent. With [DmaArbiter.NONE] (the default) the
+                        // check is a single false read and the DMA proceeds
+                        // at full speed.
+                        if (!memory.dmaArbiter.dmcReadInProgress) {
+                            oamDmaBuffer = memory[(oamDmaPage shl 8) or oamDmaIndex]
+                            oamDmaReading = false
+                        }
                     }
                     else -> {
+                        // Write phase — issue #294:
+                        //   * `$2004`'s normal write path ([writeOamData])
+                        //     increments OAMADDR naturally and wraps at 256
+                        //     back to 0. This is exactly the hardware
+                        //     behaviour the issue pins: "Starting at OAMADDR
+                        //     `$04`, source `$xx00` lands at OAM `$04`, and
+                        //     the final bytes wrap through OAM `$00-$03`."
+                        //   * `ObjectAttributeMemory.set` masks the 2C02's
+                        //     unwired attribute bits 2-4 to zero, matching
+                        //     a software $2004 write.
                         memory[0x2004] = oamDmaBuffer
                         oamDmaReading = true
                         oamDmaIndex++
@@ -463,9 +483,14 @@ class Cpu(
 
     override fun startOamDma(page: Int) {
         val dummyCycles = 1 + (_cycleCount and 1)
-        // Nestlin's PPU model (and the existing Akira regression contract)
-        // starts every DMA at OAM[0], regardless of the last $2003 write.
-        memory.ppuAddressedMemory.oamAddress = 0
+        // Issue #294: OAM DMA must NOT reset OAMADDR. Per the NESdev wiki,
+        // the 256 writes start at the current $2003 latched address and wrap
+        // through OAM[0]. Software is expected to write $2003 first when it
+        // wants conventional alignment — that's the Akira/NESdev contract,
+        // and re-zeroing it here would be the very behaviour the games
+        // pre-empt by writing $2003 explicitly. The $2004 write path
+        // ([PpuAddressedMemory.writeOamData]) increments OAMADDR naturally,
+        // so the DMA just routes its bytes through `memory[0x2004] = ...`.
         oamDmaActive = true
         oamDmaPage = page and 0xFF
         oamDmaDummyCycles = dummyCycles

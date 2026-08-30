@@ -333,7 +333,12 @@ class CpuBusTraceTest {
     fun `OAM DMA alternates one bus access per cycle and resumes after 513 cycles`() {
         val fixture = fixture(0xEA)
         repeat(256) { fixture.memory[0x0300 + it] = it.toSignedByte() }
-        fixture.memory.ppuAddressedMemory.oamAddress = 0x20.toSignedByte()
+        // Issue #294: DMA must NOT reset OAMADDR. Setting oamAddress to $00
+        // before DMA is the software's responsibility (the documented
+        // pre-DMA housekeeping on real hardware). When oamAddress is
+        // already $00 the DMA writes source[0..255] into OAM[0..255] in
+        // ascending order, exactly as before.
+        fixture.memory.ppuAddressedMemory.oamAddress = 0x00.toSignedByte()
         fixture.memory[0x4014] = 0x03.toByte()
         fixture.trace.clear()
 

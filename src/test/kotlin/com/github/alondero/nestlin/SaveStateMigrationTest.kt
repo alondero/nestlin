@@ -47,33 +47,35 @@ import java.nio.file.Path
 class SaveStateMigrationTest {
 
     @Test
-    fun `SaveState VERSION is 11 for the deferred $4017 reset pending write`() {
+    fun `SaveState VERSION is 12 for the deferred $4017 reset pending write`() {
         // Sanity check — fails fast if someone bumps or forgets the version
         // migration. The kdoc on SaveState and the load() version branch both
         // hinge on this constant. v7 (issue #271) appends an optional
         // length-prefixed RA runtime-progress block to every save; v10 appends
         // the in-flight power/soft reset sequencer payload to the CPU block;
-        // v11 appends the deferred-$4017 pending write to the frame-counter
+        // v11 appends the PPU open-bus latch to the PPU block (issue #292);
+        // v12 appends the deferred-$4017 pending write to the frame-counter
         // block.
-        assertThat(SaveState.VERSION, equalTo(11))
+        assertThat(SaveState.VERSION, equalTo(12))
     }
 
     @Test
-    fun `v10 save loads into v11 code without offset desync`() {
+    fun `v11 save loads into v12 code without offset desync`() {
         // Issue #297: a v10 save has 4 frame-counter fields (mode, irqInhibit,
         // step, cyclesSinceReset). v11 always appends a trailing
-        // "hasPending" boolean to the frame-counter block. Loading a v10
-        // byte stream into the v11 FrameCounter.loadState must NOT try to
+        // "hasPending" boolean to the frame-counter block. Loading a v11
+        // byte stream into the v12 FrameCounter.loadState must NOT try to
         // read the 5th field from the next subsystem's bytes — that would
         // corrupt the stream offset and shift every subsequent APU field
         // (Pulse 1 timer, Pulse 2 timer, Triangle timer, Noise timer, DMC
-        // DMA state). The `version < 11` branch in FrameCounter.loadState
+        // DMA state). The `version < 12` branch in FrameCounter.loadState
         // leaves `pendingMode = null` and skips the trailing read.
         //
-        // Synthesise a v10-format byte stream from a populated FrameCounter
-        // (non-default mode + non-zero step/cyclesSinceReset so a partial
-        // read would visibly mis-round-trip), then load it back with
-        // version=10. The active fields must round-trip; pendingModeForTest
+        // Synthesise a v11-format byte stream (4 active fields, NO pending
+        // byte) from a populated FrameCounter (non-default mode + non-zero
+        // step/cyclesSinceReset so a partial read would visibly mis-round-
+        // trip), then load it back with version=11. The active fields must
+        // round-trip; pendingModeForTest
         // must report null (the v10 file carries no pending write).
         val source = com.github.alondero.nestlin.apu.FrameCounter().apply {
             region = com.github.alondero.nestlin.Region.NTSC
@@ -83,7 +85,7 @@ class SaveStateMigrationTest {
             cyclesSinceReset = 17000
         }
 
-        val v10Bytes = ByteArrayOutputStream().also { baos ->
+        val v11Bytes = ByteArrayOutputStream().also { baos ->
             val dos = java.io.DataOutputStream(baos)
             dos.writeInt(source.mode.ordinal)
             dos.writeBoolean(source.irqInhibit)
@@ -93,20 +95,20 @@ class SaveStateMigrationTest {
 
         val restored = com.github.alondero.nestlin.apu.FrameCounter()
         restored.loadState(
-            java.io.DataInputStream(ByteArrayInputStream(v10Bytes)),
-            version = 10
+            java.io.DataInputStream(ByteArrayInputStream(v11Bytes)),
+            version = 11
         )
         assertThat(restored.mode, equalTo(source.mode))
         assertThat(restored.irqInhibit, equalTo(source.irqInhibit))
         assertThat(restored.step, equalTo(source.step))
         assertThat(restored.cyclesSinceReset, equalTo(source.cyclesSinceReset))
-        assertNull(restored.pendingModeForTest(), "v10 save must load with no pending write")
+        assertNull(restored.pendingModeForTest(), "v11 save must load with no pending write")
         assertThat(restored.cyclesToResetForTest(), equalTo(0))
     }
 
     @Test
-    fun `v11 save round-trips a queued pending $4017 write`() {
-        // Companion to the v10→v11 migration test above. v11 saves carry
+    fun `v12 save round-trips a queued pending $4017 write`() {
+        // Companion to the v11→v12 migration test above. v12 saves carry
         // the deferred-reset pending state; a savestate taken mid-delay
         // (3 or 4 cycles after a $4017 write) must restore both the active
         // mode AND the pending mode so the in-flight reset still fires on

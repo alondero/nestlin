@@ -56,15 +56,23 @@ import java.io.OutputStream
  *                        the end of the CPU block, so v9 states remain an
  *                        exact prefix and load unchanged with no sequence in
  *                        flight.
- *                        Version 11 appends an optional pending-$4017-write
+ *                        Version 11 appends one byte (the PPU's open-bus
+ *                        latch) to the end of the PPU block so the bus
+ *                        state observed by write-only register reads
+ *                        (`$2000`, `$2001`, `$2003`, `$2005`, `$2006`) and by
+ *                        `$2002` low-5-bit decay round-trips through save/load.
+ *                        v10 files load with openBus=0 — the safe cold-boot
+ *                        default. Issue #292.
+ *                        Version 12 appends an optional pending-$4017-write
  *                        payload to the APU/frame-counter block. The payload
  *                        is a single boolean (is a deferred reset queued?);
  *                        when true, it is followed by the pending Mode ordinal
- *                        and the remaining delay in CPU cycles (3 or 4). v10
+ *                        and the remaining delay in CPU cycles (3 or 4). v11
  *                        and earlier files do not carry this trailing block
  *                        and load cleanly with the frame counter treated as
- *                        having no pending write — same as a v10 save loaded
- *                        into v10 code, which dropped the in-flight reset.
+ *                        having no pending write — same as a v11 save loaded
+ *                        into v11 code, which dropped the in-flight reset.
+ *                        Issue #297.
  *   romCrc      long     CRC32 of the loaded ROM at save time
  *   romMapper   int      mapper id (validated on load)
  *   cpu         block    written by Cpu.saveState
@@ -102,7 +110,7 @@ import java.io.OutputStream
  */
 object SaveState {
     private const val MAGIC = 0x4E53544C  // "NSTL"
-    const val VERSION = 11
+    const val VERSION = 12
 
     /** Highest version this code can read. */
     private const val MIN_SUPPORTED_VERSION = 4
@@ -164,6 +172,9 @@ object SaveState {
         nestlin.cpu.saveState(dos, version)
         nestlin.cpu.interruptController.saveState(dos)
         nestlin.memory.saveRamState(dos)
+        // v11: PPU block grows by one byte (openBus latch, gated in
+        // PpuAddressedMemory.saveState). v12: APU block grows by an optional
+        // pending-$4017-write payload (gated in Apu.saveState).
         nestlin.ppu.saveState(dos, version)
         nestlin.apu.saveState(dos, version)
 
@@ -246,7 +257,12 @@ object SaveState {
         nestlin.cpu.loadState(dis, version)
         nestlin.cpu.interruptController.loadState(dis)
         nestlin.memory.loadRamState(dis)
-        nestlin.ppu.loadState(dis)
+        // v12: Ppu.loadState now takes the version (always-gated; v11 also
+        // accepted the parameter as a forward-compat no-op) and Apu.loadState
+        // takes the version (v12+ reads the optional pending-$4017-write
+        // block, v11 and earlier treat the frame counter as having no pending
+        // write).
+        nestlin.ppu.loadState(dis, version)
         nestlin.apu.loadState(dis, version)
 
         // v5+ reads the ports block; v4 leaves both ports at their construction-time
