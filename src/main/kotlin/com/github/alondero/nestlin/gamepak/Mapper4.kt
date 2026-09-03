@@ -321,8 +321,20 @@ open class Mapper4(private val gamePak: GamePak) : Mapper {
         chrPrgInvert = input.readBoolean()
         prgMode = input.readBoolean()
         scanlineCounter.loadState(input)
+        // Sentinel: a negative ordinal means "no override" (the documented
+        // pre-v3 save format). A positive but out-of-range ordinal is file
+        // corruption — throw IncompatibleSaveStateException rather than
+        // silently aliasing it to "no override" (which would mask the
+        // corruption). Issue #311 review.
         val mirrorOrd = input.readInt()
-        mirroringOverride = if (mirrorOrd < 0) null else Mapper.MirroringMode.values()[mirrorOrd]
+        mirroringOverride = if (mirrorOrd < 0) {
+            null
+        } else {
+            Mapper.MirroringMode.entries.getOrNull(mirrorOrd)
+                ?: throw com.github.alondero.nestlin.SaveState.IncompatibleSaveStateException(
+                    "Invalid mirroring override ordinal $mirrorOrd",
+                )
+        }
         chrMemory.deserialize(input)
     }
 

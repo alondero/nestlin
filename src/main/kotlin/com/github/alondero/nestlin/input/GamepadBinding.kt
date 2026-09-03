@@ -65,8 +65,11 @@ enum class AxisDirection(val token: String, val sign: String) {
     NEGATIVE("neg", "-");
 
     companion object {
-        fun fromToken(token: String): AxisDirection? =
-            values().firstOrNull { it.token == token }
+        fun fromToken(token: String): AxisDirection? = when (token) {
+            "pos" -> POSITIVE
+            "neg" -> NEGATIVE
+            else -> null
+        }
     }
 }
 
@@ -77,7 +80,11 @@ enum class PovDirection(val token: String, val label: String) {
     CENTER("center", "center");
 
     companion object {
-        fun fromToken(token: String): PovDirection? =
-            values().firstOrNull { it.token == token }
+        fun fromToken(token: String): PovDirection? = when (token) {
+            "n" -> N; "ne" -> NE; "e" -> E; "se" -> SE
+            "s" -> S; "sw" -> SW; "w" -> W; "nw" -> NW
+            "center" -> CENTER
+            else -> null
+        }
     }
 }

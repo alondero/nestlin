@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.gamepak
 
+import com.github.alondero.nestlin.readEnum
 import com.github.alondero.nestlin.toUnsignedInt
 import java.io.DataInput
 import java.io.DataOutput
@@ -140,7 +141,7 @@ class Mapper9(private val gamePak: GamePak) : Mapper {
         chrBank1FE = input.readInt()
         latch0Fe = input.readBoolean()
         latch1Fe = input.readBoolean()
-        mirroringMode = Mapper.MirroringMode.values()[input.readInt()]
+        mirroringMode = input.readEnum<Mapper.MirroringMode>()
     }
 
     override fun snapshot(): MapperStateSnapshot {

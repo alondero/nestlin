@@ -221,10 +221,18 @@ class Mapper34(private val gamePak: GamePak, submapper: Int = 0) : Mapper {
         // If a save state was made with a different decode (BNROM <-> NINA-001),
         // refuse to corrupt it — the underlying bank registers mean different
         // things in each variant.
-        val loadedVariantOrdinal = input.readInt()
-        if (loadedVariantOrdinal != variant.ordinal) {
+        //
+        // Issue #311 review: use safe lookup so a corrupted save state with
+        // an out-of-range variant ordinal produces an IncompatibleSaveStateException
+        // (caller-friendly error type) instead of an IndexOutOfBoundsException
+        // raised by `entries[i]` before the exception can be constructed.
+        // The ordinal is read separately so the error message can name it.
+        val loadedOrdinal = input.readInt()
+        val loadedVariant = Variant.entries.getOrNull(loadedOrdinal)
+        if (loadedVariant != variant) {
+            val loadedName = loadedVariant?.name ?: "unknown($loadedOrdinal)"
             throw com.github.alondero.nestlin.SaveState.IncompatibleSaveStateException(
-                "Mapper34 variant mismatch: save state was ${Variant.values()[loadedVariantOrdinal]} " +
+                "Mapper34 variant mismatch: save state was $loadedName " +
                     "but this cartridge's header decodes as $variant"
             )
         }

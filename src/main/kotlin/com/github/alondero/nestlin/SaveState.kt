@@ -2,6 +2,7 @@ package com.github.alondero.nestlin
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.DataInput
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
@@ -353,4 +354,39 @@ object SaveState {
             .firstOrNull { it.storageKey == key }
             ?: com.github.alondero.nestlin.input.InputDevice.DeviceType.STANDARD_GAMEPAD
     }
+}
+
+/**
+ * Read an enum constant by ordinal from a save-state stream, throwing
+ * [SaveState.IncompatibleSaveStateException] on a negative or out-of-range
+ * ordinal. Issue #311 review: every save-state deserialization site that
+ * reads an enum from disk was previously using `Enum.entries[ordinal]`,
+ * which raises a raw [IndexOutOfBoundsException] on a corrupted file and
+ * leaks a runtime exception across the save-state boundary. Use this helper
+ * at every enum read site so the failure mode is uniform.
+ *
+ * Uses [enumValues] (the reified builtin) rather than `T.entries` because
+ * Kotlin's static `entries` property is not exposed on a generic type
+ * parameter — only concrete enum types have it. [enumValues] is fine here
+ * because save-state restore is a discrete user event, not a hot path.
+ *
+ * For sites that need to handle out-of-range ordinals themselves (e.g.
+ * Mapper34 reports a variant mismatch with both the loaded name and the
+ * current instance's variant name), read the ordinal manually and use
+ * `T.entries.getOrNull(ordinal)` directly.
+ *
+ * Example:
+ * ```
+ * override fun loadState(input: DataInput) {
+ *     state = input.readEnum<State>()
+ *     ...
+ * }
+ * ```
+ */
+inline fun <reified T : Enum<T>> DataInput.readEnum(): T {
+    val ordinal = readInt()
+    return enumValues<T>().getOrNull(ordinal)
+        ?: throw SaveState.IncompatibleSaveStateException(
+            "Invalid ordinal $ordinal for enum ${T::class.simpleName}",
+        )
 }

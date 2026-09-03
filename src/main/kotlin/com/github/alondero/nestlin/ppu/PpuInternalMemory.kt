@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.ppu
 
+import com.github.alondero.nestlin.readEnum
 import java.io.DataInput
 import java.io.DataOutput
 
@@ -237,7 +238,7 @@ class PpuInternalMemory {
         input.readFully(nameTable0)
         input.readFully(nameTable1)
         paletteRam.loadState(input)
-        mirroring = Mirroring.values()[input.readInt()]
+        mirroring = input.readEnum<Mirroring>()
         // Mirror of saveState: only a FOUR_SCREEN save carries the extra tables.
         if (mirroring == Mirroring.FOUR_SCREEN) {
             input.readFully(nameTable2)
