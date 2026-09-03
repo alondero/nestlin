@@ -1,5 +1,7 @@
 package com.github.alondero.nestlin.gamepak
 
+import com.github.alondero.nestlin.readEnum
+
 /**
  * Minimal I2C + 24Cxx EEPROM model for the Bandai LZ93D50 chip.
  *
@@ -242,7 +244,7 @@ class BandaiEeprom(val sizeBytes: Int = 256) {
         scl = input.readInt() != 0
         sda = input.readInt() != 0
         sdaOut = input.readInt() != 0
-        state = State.values()[input.readInt()]
+        state = input.readEnum<State>()
         shiftReg = input.readInt()
         bitCount = input.readInt()
         wordAddress = input.readInt()

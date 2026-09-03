@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin.gamepak
 
 import com.github.alondero.nestlin.SaveState
+import com.github.alondero.nestlin.testutil.assertThrowsWithMessage
 import com.github.alondero.nestlin.testutil.testGamePak
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toUnsignedInt
@@ -488,6 +489,61 @@ class Mapper34Test {
         val fresh = newBnrom()
         assertThrows<SaveState.IncompatibleSaveStateException> {
             DataInputStream(ByteArrayInputStream(bytes)).use { fresh.loadState(it) }
+        }
+    }
+
+    /**
+     * Issue #311 review: a save state with an out-of-range variant ordinal
+     * (corrupted file, byte shuffled to garbage) must raise the caller-friendly
+     * [SaveState.IncompatibleSaveStateException], not a raw
+     * [IndexOutOfBoundsException] raised by `Variant.entries[i]` before the
+     * exception can be constructed.
+     *
+     * Mapper34.saveState writes `super.saveState(out)` (1 byte: saveStateVersion)
+     * then `out.writeInt(variant.ordinal)` (4 bytes). So the variant ordinal
+     * sits at byte offset 1 of the mapper-only stream (no SaveState.save magic/
+     * version/CRC wrapper — that test calls `m.saveState(it)` directly).
+     *
+     * The test patches the 4 bytes via [DataOutputStream] (not manual bit shifts)
+     * and asserts both the exception type AND that the message includes the
+     * "unknown(ordinal)" sentinel — that's the whole point of the fix and the
+     * only thing a regression test could miss if it only checked the exception
+     * type.
+     */
+    @Test
+    fun `corrupted variant ordinal raises IncompatibleSaveStateException with unknown ordinal in message`() {
+        listOf(99, -1, Int.MAX_VALUE, Int.MIN_VALUE).forEach { badOrdinal ->
+            val patched = saveStateBytesWithPatchedOrdinal(newBnrom(), badOrdinal)
+            val fresh = newBnrom()
+            assertThrowsWithMessage<SaveState.IncompatibleSaveStateException>(
+                "unknown($badOrdinal)",
+            ) {
+                DataInputStream(ByteArrayInputStream(patched)).use { fresh.loadState(it) }
+            }
+        }
+    }
+
+    /**
+     * Helper: take a fresh BNROM mapper, save it, then rewrite the variant
+     * ordinal at bytes [1, 5) to [badOrdinal] via a fresh DataOutputStream
+     * (per CLAUDE.md "don't write manual bit shifts in test code"). The
+     * resulting byte stream is what loadState would receive from a corrupted
+     * file.
+     */
+    private fun saveStateBytesWithPatchedOrdinal(m: Mapper34, badOrdinal: Int): ByteArray {
+        val original = ByteArrayOutputStream().use { baos ->
+            DataOutputStream(baos).use { m.saveState(it) }
+            baos.toByteArray()
+        }
+        // Mapper34.saveState layout: byte 0 = saveStateVersion, bytes 1..4 = variant ordinal.
+        // Rewrite bytes 1..4 in place using DataOutputStream's int writer (big-endian).
+        return ByteArrayOutputStream().use { baos ->
+            DataOutputStream(baos).use { dos ->
+                dos.writeByte(original[0].toInt())              // saveStateVersion
+                dos.writeInt(badOrdinal)                        // patched variant ordinal
+                dos.write(original, 5, original.size - 5)       // rest of the saveState body
+            }
+            baos.toByteArray()
         }
     }
 

@@ -41,6 +41,11 @@ CLAUDE.local.md
 /SPEED_THROTTLING_PLAN.md
 /NES_REFERENCE_GUIDE_FINDINGS.md
 
+# Ephemeral commit-message scratch files (per-session, should never be tracked)
+/.commit-msg.txt
+/commit-msg.txt
+.pr-body.md
+
 # Screenshot directory (generated at runtime)
 screenshots/
 

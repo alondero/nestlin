@@ -739,7 +739,7 @@ class NestlinApplication : FrameListener, Application() {
             // Scale submenu (1x / 2x / 3x / 4x / Fit) as a mutually-exclusive radio group.
             val scaleMenu = javafx.scene.control.Menu("Scale")
             val scaleGroup = javafx.scene.control.ToggleGroup()
-            ScaleMode.values().forEach { mode ->
+            for (mode in ScaleMode.entries) {
                 val item = javafx.scene.control.RadioMenuItem(mode.label())
                 item.toggleGroup = scaleGroup
                 item.isSelected = displayConfig.scale == mode

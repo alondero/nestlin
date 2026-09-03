@@ -134,7 +134,8 @@ interface Mapper {
         ONE_SCREEN_UPPER,
         // Four-screen VRAM: the cartridge supplies an extra 2 KB so all four
         // nametables are distinct. Appended LAST so existing ordinals (0-3) —
-        // persisted by Mapper4/9/10 via values()[ord] — stay valid. See GH #105.
+        // persisted by Mapper4/9/10 via entries[ord] (issue #311) — stay
+        // valid. See GH #105.
         FOUR_SCREEN
     }
 }
