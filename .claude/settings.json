@@ -9,6 +9,15 @@
             "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/hooks/worktree-guard.ps1"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/hooks/commit-pr-guard.ps1"
+          }
+        ]
       }
     ],
     "Stop": [
