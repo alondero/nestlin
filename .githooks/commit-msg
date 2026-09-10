@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Git commit-msg hook enforcing Conventional Commits standard.
+#
+# Formats: <type>(<scope>): <description> or <type>: <description>
+# Allowed types: feat, fix, docs, refactor, test, chore, perf, style, build, ci
+
+COMMIT_MSG_FILE="$1"
+FIRST_LINE=$(head -n 1 "$COMMIT_MSG_FILE" | tr -d '\r')
+# Strip leading UTF-8 BOM (EF BB BF) if present. PowerShell's
+# `Write-Output ... > file` and `Set-Content` default to UTF-8 BOM on
+# Windows, so a user-saved commit message file will often start with
+# the BOM. Without this strip the regex sees 0xEF as the first char
+# and rejects every message.
+FIRST_LINE=${FIRST_LINE#$'\xef\xbb\xbf'}
+
+# Skip merge commits or squash merge defaults
+if [[ "$FIRST_LINE" =~ ^Merge\  ]] || [[ "$FIRST_LINE" =~ ^Revert\  ]]; then
+    exit 0
+fi
+
+# POSIX ERE: bash `=~` is NOT PCRE, so no `\s`, and in-class `-`
+# must be at the end. `[a-z0-9_./-]` and `[[:space:]]` are the
+# portable equivalents of the PCRE form written in the PowerShell
+# variant.
+CONVENTIONAL_REGEX='^(feat|fix|docs|refactor|test|chore|perf|style|build|ci)(\([a-z0-9_./-]+\))?(!)?:[[:space:]]+[^[:space:]@].+$'
+
+if [[ ! "$FIRST_LINE" =~ $CONVENTIONAL_REGEX ]]; then
+    echo "ERROR: Invalid commit message format." >&2
+    echo "Rejected subject: '$FIRST_LINE'" >&2
+    echo "Expected format: <type>(<optional-scope>): <description>" >&2
+    echo "Allowed types: feat, fix, docs, refactor, test, chore, perf, style, build, ci" >&2
+    echo "Example: fix(apu): defer frame counter reset by get-put phase (Closes #297)" >&2
+    exit 1
+fi
+
+exit 0
