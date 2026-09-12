@@ -96,6 +96,31 @@ class NestlinApplication : FrameListener, Application() {
     private val canvasHolder = StackPane(canvasGroup)
     private var nestlin = Nestlin().also { it.addFrameListener(this) }
 
+    // Shared RetroAchievements service (issues #266 / #272 / #288).
+    // Extracted into its own `by lazy` field so both [sessionCoordinator]
+    // and [achievementsControllerLazy] can depend on it without depending
+    // on each other. The previous wiring constructed the service inside
+    // `sessionCoordinator`'s initializer and had
+    // `achievementsControllerLazy`'s initializer read
+    // `sessionCoordinator.service` — a mutual `by lazy` back-reference
+    // that stack-overflowed on first access at UI startup. See
+    // `SessionLazyInitRegressionTest` for the regression test that
+    // pins this shape.
+    //
+    // The factory call is wrapped in try/catch so a corrupt library
+    // (UnsatisfiedLinkError from a half-built DLL, NoClassDefFoundError
+    // on a JNA mismatch, etc.) cannot crash the UI. The fallback is the
+    // no-op; the menu indicator reflects the absence via
+    // [updateRetroAchievementsStatus].
+    private val raService: com.github.alondero.nestlin.session.RetroAchievementsService by lazy {
+        try {
+            com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.create()
+        } catch (t: Throwable) {
+            println("[APP] RetroAchievements service init failed: ${t.javaClass.simpleName}: ${t.message}")
+            NoOpRetroAchievementsService
+        }
+    }
+
     // Game-session coordinator (issue #266): every ROM-load / reset / unload /
     // shutdown path goes through this single orchestration point so the
     // battery-flush / service-unload / install-and-reset / battery-restore /
@@ -104,14 +129,6 @@ class NestlinApplication : FrameListener, Application() {
     // (per the coordinator's contract — its `onBeforeRomChange` /
     // `onAfterRomChange` are notification points, not thread-management
     // hooks).
-    //
-    // Issue #267: the coordinator's service is now sourced through
-    // [RetroAchievementsServiceFactory], which picks the native rcheevos
-    // client when the façade library is available on the search path and
-    // falls back to NoOp when it isn't. The factory call is wrapped in a
-    // try/catch so a corrupt library can't crash the UI at startup — the
-    // worst case is the menu's "RetroAchievements" item shows disabled
-    // with a tooltip explaining why.
     //
     // **Why `clearPauseState` is NOT in the hook:** it must run SYNCHRONOUSLY
     // before the caller invokes `startEmulation()` (the emulation thread
@@ -123,16 +140,6 @@ class NestlinApplication : FrameListener, Application() {
     // startEmulation. Production call sites that need the pause-clear must
     // do it themselves, between the coordinator call and startEmulation().
     private val sessionCoordinator: GameSessionCoordinator by lazy {
-        val raService = try {
-            com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.create()
-        } catch (t: Throwable) {
-            // Defensive: any factory failure (UnsatisfiedLinkError from a
-            // half-built library, NoClassDefFoundError on a JNA mismatch,
-            // etc.) must NOT prevent the UI from launching. The fallback
-            // is the no-op; the menu indicator will reflect the absence.
-            println("[APP] RetroAchievements service init failed: ${t.javaClass.simpleName}: ${t.message}")
-            NoOpRetroAchievementsService
-        }
         // Issue #271: wire the RA progress trailer into Nestlin's save-state
         // path. Every Nestlin.saveState() (and every per-frame rewind
         // snapshot, since the buffer stores opaque blobs) now embeds the
@@ -255,7 +262,13 @@ class NestlinApplication : FrameListener, Application() {
      */
     private val achievementsControllerLazy: com.github.alondero.nestlin.session.RaAchievementsController by lazy {
         com.github.alondero.nestlin.session.RaAchievementsController(
-            service = sessionCoordinator.service,
+            // Read the shared `raService` directly — DO NOT go through
+            // `sessionCoordinator.service`. Reaching into the coordinator
+            // here forms a `by lazy` cycle with `sessionCoordinator`
+            // (whose own initializer takes this controller as a constructor
+            // argument), which stack-overflows at UI startup. See
+            // `SessionLazyInitRegressionTest` for the regression pin.
+            service = raService,
             signInState = { raSignInManagerRef?.state ?: com.github.alondero.nestlin.session.RaSignInState.SignedOut },
             loadedRomInfo = {
                 val rom = nestlin.loadedRom ?: return@RaAchievementsController null
@@ -1522,11 +1535,15 @@ class NestlinApplication : FrameListener, Application() {
      * factory's catch-all (any UnsatisfiedLinkError / NoClassDefFoundError
      * etc.) keeps the UI alive even if the manager init throws.
      *
+     * Reads [raService] directly rather than `sessionCoordinator.service`
+     * so this doesn't pull the coordinator (and its dependency chain)
+     * into existence just to look up the service instance.
+     *
      * On construction the manager attempts a token-restore login against
      * any persisted credentials; the menu state updates via the listener.
      */
     private fun initializeRaSignInManager() {
-        val service = sessionCoordinator.service
+        val service = raService
         val manager = try {
             com.github.alondero.nestlin.session.RaSignInManager.from(service)
         } catch (t: Throwable) {
