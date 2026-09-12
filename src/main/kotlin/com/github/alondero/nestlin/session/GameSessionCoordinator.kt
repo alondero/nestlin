@@ -275,6 +275,16 @@ class GameSessionCoordinator(
     private var frameCounter: Long = 0L
 
     /**
+     * Idempotency guard for [shutdown]. Set on the first call so a
+     * second invocation is a true no-op. Without it, `Application.handleExit`
+     * → `Platform.exit` → JavaFX `Application.stop()` chains a second
+     * shutdown that re-issues `unloadGame` against the destroyed handle.
+     * See [shutdown] for the full failure mode.
+     */
+    @Volatile
+    private var shutdownCalled: Boolean = false
+
+    /**
      * Install the side-effect-free memory reader (issue #270 AC). Called
      * automatically after every successful [prepareServiceForCurrent] so
      * rcheevos's read_memory callback resolves to [Memory.peek] rather
@@ -533,8 +543,21 @@ class GameSessionCoordinator(
      *
      * The application is responsible for stopping the emulation thread
      * before calling this; the coordinator does not own the thread.
+     *
+     * **Why the early-return matters** (regression pinned by
+     * `GameSessionCoordinatorShutdownIdempotencyTest`): `Application.handleExit`
+     * calls `sessionCoordinator.shutdown()` and then `Platform.exit()`,
+     * which triggers JavaFX's `Application.stop()`, which calls
+     * `sessionCoordinator.shutdown()` again. Without the guard, the
+     * second call's `service.unloadGame()` hits the handle the first
+     * call's `service.shutdown()` just destroyed; JNA then throws
+     * `java.lang.Error: Invalid memory access`, the narrow per-method
+     * `UnsatisfiedLinkError` catches miss it, and the JVM exits 1 on
+     * every Nestlin quit. The guard makes the second call a true no-op.
      */
     fun shutdown() {
+        if (shutdownCalled) return
+        shutdownCalled = true
         nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
         runService { service.unloadGame() }
         runService { service.shutdown() }
