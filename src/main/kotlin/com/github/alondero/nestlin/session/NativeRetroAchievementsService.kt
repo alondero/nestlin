@@ -353,19 +353,12 @@ internal class NativeRetroAchievementsService private constructor(
         val tracker = latencyTracker
         val startNanos = if (tracker != null) System.nanoTime() else 0L
         try {
-            // Push our handle onto the thread-local stack so the
-            // shared JNA callback can find the right JVM-side reader.
-            // Popped in `finally` so a thrown exception from the native
-            // side can't leak a stale handle to the next facade.
-            val prior = currentHandle.get()
-            currentHandle.set(handle)
-            try {
-                bindings.ra_facade_evaluate_frame(handle, frameIndex)
-                bindings.ra_facade_idle(handle)
-                drainEvents()
-            } finally {
-                currentHandle.set(prior)
-            }
+            // The JNA trampoline installed by [installMemoryReader]
+            // closes over the JVM-side reader directly, so there's no
+            // per-call handle routing to manage here.
+            bindings.ra_facade_evaluate_frame(handle, frameIndex)
+            bindings.ra_facade_idle(handle)
+            drainEvents()
             // Clear pendingSync once the native queue is drained AND
             // the load state is READY. The pending-sync indicator stays
             // up while the runtime is still catching up on its submission
@@ -487,20 +480,20 @@ internal class NativeRetroAchievementsService private constructor(
      * synchronously on the emulation thread — it must NOT call back into
      * any ra_facade_* method.
      *
-     * The reader is stored in a process-wide map keyed by the façade
-     * handle. The shared `jnaMemoryReader` callback is what rcheevos
-     * actually calls; on each invocation it looks up the JVM-side
-     * reader from the map using the [currentHandle] ThreadLocal that
-     * `evaluate_frame` pushes before the native call.
+     * The reader is bridged into a JNA [RaReadMemoryFn] (the façade
+     * expects a Pointer-based callback) by [wrapJvmReader]; the
+     * closure captures this reader directly, so there's no per-handle
+     * map or ThreadLocal to maintain — the JNA trampoline and the JVM
+     * delegate are wired at the same site.
      */
-    override fun installMemoryReader(reader: RaReadMemoryFn) {
-        memoryReaders[handle] = reader
+    override fun installMemoryReader(reader: JvmReadMemoryFn) {
         try {
             // The C shim stores the userdata pointer but never dereferences
-            // it — the JVM-side uses the ThreadLocal handle instead. We
-            // pass the handle pointer for symmetry, in case future
-            // C-side debugging wants to inspect what's installed.
-            bindings.ra_facade_set_memory_reader(handle, jnaMemoryReader, handle)
+            // it; we pass the handle for symmetry, in case future C-side
+            // debugging wants to inspect what's installed. The JNA-side
+            // [RaReadMemoryFn] built by [wrapJvmReader] closes over
+            // `reader` directly — no per-handle map or ThreadLocal needed.
+            bindings.ra_facade_set_memory_reader(handle, wrapJvmReader(reader), handle)
         } catch (e: UnsatisfiedLinkError) { /* see above */ }
     }
 
@@ -755,47 +748,11 @@ internal class NativeRetroAchievementsService private constructor(
         /** Poll interval used inside the C-side wait helper. */
         const val DEFAULT_PREPARE_POLL_MS: Int = 50
 
-        // Per-instance map of native handles to JVM-side readers. The
-        // pointer key is unique per facade instance, so a stale entry
-        // for a destroyed facade can't be reached from a live one (the
-        // reader closure captures the facade, and the facade's
-        // shutdown() doesn't touch this map — destroyed façades are
-        // garbage-collected and their entries are pruned when a new
-        // facade happens to reuse the same pointer address, which is
-        // not a correctness concern because the handle is freed).
-        private val memoryReaders = java.util.concurrent.ConcurrentHashMap<Pointer, RaReadMemoryFn>()
-
-        // Thread-local handle stack: pushed/popped by each evaluate_frame
-        // call so jnaMemoryReader can find the right reader.
-        private val currentHandle = ThreadLocal.withInitial<Pointer?> { null }
-
-        // The shared JNA-side callback. JNA's "callback" mapping wraps
-        // this interface so native code can call into the JVM. The
-        // single static instance is shared across all façades because
-        // JNA's `Callback` interface is stateless once bound; the
-        // per-call façade identity comes from [currentHandle].
-        //
-        // Bounds-safe (issue #270 AC "Memory reads are side-effect-free
-        // and bounds-safe"): three guards reject malformed conditions
-        // that would otherwise crash the JVM with an out-of-bounds array
-        // access. rcheevos is a trusted library but a malicious or
-        // hand-crafted achievement set could probe the read path; the
-        // worst case from a malformed condition is a missed trigger, not
-        // a JVM crash.
-        private val jnaMemoryReader = RaReadMemoryFn { address, buffer, numBytes ->
-            // 1. Reject negative address (uint32_t wrapped to negative Int).
-            // 2. Reject addresses above the NES CPU bus range.
-            if (address < 0 || address > 0xFFFF) return@RaReadMemoryFn 0
-            // 3. Reject non-positive counts and over-sized reads. A
-            //    non-positive count means "no bytes requested" — return 0
-            //    so the runtime falls back to its zero-fill default.
-            if (numBytes <= 0) return@RaReadMemoryFn 0
-            val handle = currentHandle.get() ?: return@RaReadMemoryFn 0
-            val reader = memoryReaders[handle] ?: return@RaReadMemoryFn 0
-            val n = numBytes.coerceAtMost(buffer.size)
-            if (n <= 0) return@RaReadMemoryFn 0
-            reader.read(address, buffer, n)
-        }
+        // The bridge between JvmReadMemoryFn and RaReadMemoryFn is built
+        // per-call from [wrapJvmReader], so each façade's JNA trampoline
+        // closes over its own reader. There is no per-handle map or
+        // ThreadLocal to maintain here — the closure captures the
+        // reader directly.
     }
 }
 
@@ -820,12 +777,12 @@ internal class NativeRetroAchievementsService private constructor(
  *
  * Tests against this helper are in `MemoryPeekRaReaderTest`.
  */
-internal fun peekReader(memory: Memory): RaReadMemoryFn =
-    RaReadMemoryFn { address, buffer, numBytes ->
-        if (address < 0 || address > 0xFFFF) return@RaReadMemoryFn 0
-        if (numBytes <= 0) return@RaReadMemoryFn 0
+internal fun peekReader(memory: Memory): JvmReadMemoryFn =
+    JvmReadMemoryFn { address, buffer, numBytes ->
+        if (address < 0 || address > 0xFFFF) return@JvmReadMemoryFn 0
+        if (numBytes <= 0) return@JvmReadMemoryFn 0
         val n = numBytes.coerceAtMost(buffer.size)
-        if (n <= 0) return@RaReadMemoryFn 0
+        if (n <= 0) return@JvmReadMemoryFn 0
         for (i in 0 until n) {
             buffer[i] = memory.peek(address + i)
         }

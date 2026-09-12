@@ -100,7 +100,9 @@ interface RetroAchievementsService {
      * The default no-op is correct for [NoOpRetroAchievementsService]
      * (no runtime = no reads needed) and any service that doesn't talk
      * to rcheevos. The native client overrides this to push the
-     * [RaReadMemoryFn] into the façade's `ra_facade_set_memory_reader`.
+     * reader into the façade's `ra_facade_set_memory_reader` via
+     * [wrapJvmReader] (the JNA-side takes a [Pointer]; the public
+     * surface stays ergonomic with a [ByteArray]).
      *
      * Side-effect-free reads (issue #270 AC): the reader MUST NOT mutate
      * PPU/APU/controller/mapper/bus state. The coordinator's wrapping
@@ -114,7 +116,7 @@ interface RetroAchievementsService {
      * destination buffer can hold are clamped to the buffer size. The
      * coordinator's wrapping `peekReader` enforces both.
      */
-    fun installMemoryReader(reader: RaReadMemoryFn) { /* default no-op */ }
+    fun installMemoryReader(reader: JvmReadMemoryFn) { /* default no-op */ }
 
     /**
      * Reset the active runtime. No-op if no game is currently prepared.

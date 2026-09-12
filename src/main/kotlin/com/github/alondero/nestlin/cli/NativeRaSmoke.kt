@@ -3,7 +3,7 @@ package com.github.alondero.nestlin.cli
 import com.github.alondero.nestlin.session.RaEvent
 import com.github.alondero.nestlin.session.RaFacadeBindings
 import com.github.alondero.nestlin.session.RaManifest
-import com.github.alondero.nestlin.session.RaReadMemoryFn
+import com.github.alondero.nestlin.session.JvmReadMemoryFn
 import com.github.alondero.nestlin.session.RaStatus
 import com.github.alondero.nestlin.util.Redactor
 import com.sun.jna.Pointer
@@ -23,7 +23,7 @@ import java.nio.file.Paths
  * reader was installed successfully and was NOT called on the no-game
  * path" (we never tick evaluate_frame / idle on a bare client).
  */
-private val smokeMemoryReader = RaReadMemoryFn { _, _, _ -> 0 }
+private val smokeMemoryReader = JvmReadMemoryFn { _, _, _ -> 0 }
 
 /**
  * Native RetroAchievements smoke runner (issue #273 AC: "Each release
