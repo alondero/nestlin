@@ -443,6 +443,11 @@ internal class NativeRetroAchievementsService private constructor(
         } catch (e: UnsatisfiedLinkError) {
             // Already gone — nothing more to do.
         }
+        // Drop the JNA callback wrapper strong reference now that the
+        // C handle is destroyed. The C side has released its function
+        // pointer, so GC may reclaim the wrapper; any further native
+        // call against this façade is impossible (handle is freed).
+        activeReaderWrapper = null
         // The native handle is now invalid. Mark this instance so a
         // follow-up call doesn't try to use a freed pointer.
         // (Subsequent calls go through `bindings.ra_facade_*` which would
@@ -475,6 +480,33 @@ internal class NativeRetroAchievementsService private constructor(
     // ------------------------------------------------------------------
 
     /**
+     * Strong reference to the active JNA callback wrapper. **Must not be
+     * dropped** between `installMemoryReader` and either (a) the next
+     * `installMemoryReader` (which replaces it) or (b) `shutdown` (which
+     * destroys the native handle and any pending native calls).
+     *
+     * JNA tracks [Callback] instances via [WeakReference] so it can
+     * clean up when the C side releases the function pointer. If user
+     * code doesn't hold a strong reference, GC reclaims the wrapper
+     * while the C side still owns the function pointer — every
+     * subsequent native `evaluate_frame` then lands in freed memory and
+     * crashes the JVM with a fatal access violation. This field is the
+     * retention contract.
+     */
+    private var activeReaderWrapper: RaReadMemoryFn? = null
+
+    /**
+     * Scratch buffer for the per-frame callback. Pre-allocated at
+     * install time so the hot path doesn't allocate a `ByteArray` per
+     * call at 60 FPS. Sized to cover the common rcheevos trigger /
+     * measured / leaderboard read widths (1–8 bytes typical, 32 bytes
+     * for measured-progress counters). Reads larger than the scratch
+     * fall back to a one-shot allocation in [wrapJvmReader] — rare in
+     * practice and acceptable because measured-progress reads dominate.
+     */
+    private val readerScratch: ByteArray = ByteArray(64)
+
+    /**
      * Install the JVM-side memory reader so rcheevos can read emulated
      * RAM/registers during `evaluate_frame`. The callback runs
      * synchronously on the emulation thread — it must NOT call back into
@@ -484,16 +516,22 @@ internal class NativeRetroAchievementsService private constructor(
      * expects a Pointer-based callback) by [wrapJvmReader]; the
      * closure captures this reader directly, so there's no per-handle
      * map or ThreadLocal to maintain — the JNA trampoline and the JVM
-     * delegate are wired at the same site.
+     * delegate are wired at the same site. The wrapper is retained in
+     * [activeReaderWrapper] so GC can't reclaim it mid-emulation.
      */
     override fun installMemoryReader(reader: JvmReadMemoryFn) {
         try {
+            val wrapper = wrapJvmReader(reader, readerScratch)
+            // Strong-reference the wrapper BEFORE handing it to JNA. If
+            // we let the local go out of scope before the C side stores
+            // the function pointer, a GC cycle could reclaim it and the
+            // native call would jump into freed memory. The field
+            // outlives every install / uninstall until shutdown.
+            activeReaderWrapper = wrapper
             // The C shim stores the userdata pointer but never dereferences
             // it; we pass the handle for symmetry, in case future C-side
-            // debugging wants to inspect what's installed. The JNA-side
-            // [RaReadMemoryFn] built by [wrapJvmReader] closes over
-            // `reader` directly — no per-handle map or ThreadLocal needed.
-            bindings.ra_facade_set_memory_reader(handle, wrapJvmReader(reader), handle)
+            // debugging wants to inspect what's installed.
+            bindings.ra_facade_set_memory_reader(handle, wrapper, handle)
         } catch (e: UnsatisfiedLinkError) { /* see above */ }
     }
 
