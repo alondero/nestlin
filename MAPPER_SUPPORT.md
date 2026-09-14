@@ -1,6 +1,16 @@
 # NES Mapper Support Status
 
-Active mapper list: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 22, 24, 26, 30, 33, 34, 64, 65, 66, 68, 69, 153, 206, 228.**
+**Current as of 2026-09-14.** `GamePak.createMapper()` routes 33 mapper IDs. This document is the source of truth for mapper implementation status, tested game/dump coverage, evidence, and known limits; the list is not a promise that every game using a routed mapper is playable.
+
+Active mapper IDs: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 18, 19, 21, 22, 23, 24, 25, 26, 30, 33, 34, 64, 65, 66, 68, 69, 71, 113, 119, 153, 206, 228.**
+
+## Status terms
+
+- **Working:** the implementation has focused tests and is usable for the games named in this entry, but coverage may not include every board variant or title.
+- **Supported:** the mapper path is implemented and has some regression or real-game evidence; compatibility remains title- and dump-dependent.
+- **Stub:** the mapper is routed but intentionally incomplete and should not be described as playable.
+
+When adding or changing a mapper, record the exact mapper/submapper, game or dump identity, region, test command/evidence, and known limitations. Use `python tools/rom_info.py info <rom>` before trusting a ROM header. The checklist at the end of this file and `.claude/skills/new-mapper/SKILL.md` are part of the required workflow.
 
 ## Mapper 0 (NROM)
 **Status:** Working

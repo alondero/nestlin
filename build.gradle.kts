@@ -79,6 +79,29 @@ tasks.register("uberJar") {
     dependsOn("shadowJar")
 }
 
+// Documentation is part of the normal verification contract. Keep the check
+// dependency-free so it can run on developer machines and CI without a Node
+// toolchain or a documentation website build.
+tasks.register("docsLint") {
+    group = "verification"
+    description = "Checks required documentation files, headings, final newlines, and local links"
+    doLast {
+        val configuredPython = System.getenv("PYTHON")?.takeIf { it.isNotBlank() }
+        val python = configuredPython ?: if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
+            "python"
+        } else {
+            "python3"
+        }
+        exec {
+            commandLine(python, layout.projectDirectory.file("tools/docs_lint.py").asFile.absolutePath)
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn("docsLint")
+}
+
 // ---------------------------------------------------------------------------
 // :buildNative — compile the RetroAchievements façade + vendored rcheevos
 // v12.4.0 into a per-platform shared library (librcheevos_facade.so /

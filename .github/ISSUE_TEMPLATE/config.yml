@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: User and developer documentation
+    url: https://github.com/alondero/nestlin/tree/master/docs
+    about: Read the user guide, troubleshooting guide, development guide, and testing strategy first.
+  - name: Security report
+    url: https://github.com/alondero/nestlin/security/advisories/new
+    about: Report vulnerabilities or exposed credentials privately.
