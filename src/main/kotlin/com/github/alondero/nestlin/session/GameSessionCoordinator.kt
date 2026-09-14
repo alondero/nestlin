@@ -275,14 +275,22 @@ class GameSessionCoordinator(
     private var frameCounter: Long = 0L
 
     /**
-     * Idempotency guard for [shutdown]. Set on the first call so a
-     * second invocation is a true no-op. Without it, `Application.handleExit`
-     * → `Platform.exit` → JavaFX `Application.stop()` chains a second
-     * shutdown that re-issues `unloadGame` against the destroyed handle.
-     * See [shutdown] for the full failure mode.
+     * Idempotency guard for [shutdown]. Uses [AtomicBoolean.compareAndSet]
+     * rather than a `@Volatile var` because two threads racing into
+     * shutdown (e.g. `Application.handleExit` on the JavaFX Application
+     * Thread and `Application.stop` on the JavaFX Application Thread
+     * after `Platform.exit()`) can both read `false` before either
+     * writes `true`, and both would proceed past a non-atomic guard.
+     * `compareAndSet(false, true)` succeeds for exactly one of the two
+     * racers; the other returns `false` and exits cleanly.
+     *
+     * Without this guard the second call's `service.unloadGame()` hits
+     * the handle the first call's `service.shutdown()` just destroyed,
+     * JNA throws `Invalid memory access`, and the JVM exits with
+     * code 1. See [shutdown] for the full failure mode.
      */
-    @Volatile
-    private var shutdownCalled: Boolean = false
+    private val shutdownCalled: java.util.concurrent.atomic.AtomicBoolean =
+        java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * Install the side-effect-free memory reader (issue #270 AC). Called
@@ -556,8 +564,12 @@ class GameSessionCoordinator(
      * every Nestlin quit. The guard makes the second call a true no-op.
      */
     fun shutdown() {
-        if (shutdownCalled) return
-        shutdownCalled = true
+        // Atomic claim — only one concurrent caller proceeds. The second
+        // (e.g. JavaFX's Application.stop() racing handleExit's
+        // Platform.exit) returns false from compareAndSet and exits
+        // cleanly without re-issuing `service.unloadGame` against the
+        // already-destroyed handle.
+        if (!shutdownCalled.compareAndSet(false, true)) return
         nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
         runService { service.unloadGame() }
         runService { service.shutdown() }
