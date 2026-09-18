@@ -3,27 +3,12 @@ package com.github.alondero.nestlin.cli
 import com.github.alondero.nestlin.session.RaEvent
 import com.github.alondero.nestlin.session.RaFacadeBindings
 import com.github.alondero.nestlin.session.RaManifest
-import com.github.alondero.nestlin.session.JvmReadMemoryFn
 import com.github.alondero.nestlin.session.RaStatus
 import com.github.alondero.nestlin.util.Redactor
 import com.sun.jna.Pointer
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
-
-/**
- * Static pre-registered JNA read-memory callback. JNA rejects freshly-built
- * SAM lambdas at set_memory_reader time with
- * `Unsupported argument type NativeRaSmoke$$Lambda@xxx` because the
- * Callback proxy has to be wired at first-call site, not at every
- * invocation. A static instance bypasses the issue: JNA wraps it once
- * at first use and reuses the native trampoline for subsequent calls.
- *
- * Returns zero bytes for every read — the smoke's contract is "the
- * reader was installed successfully and was NOT called on the no-game
- * path" (we never tick evaluate_frame / idle on a bare client).
- */
-private val smokeMemoryReader = JvmReadMemoryFn { _, _, _ -> 0 }
 
 /**
  * Native RetroAchievements smoke runner (issue #273 AC: "Each release

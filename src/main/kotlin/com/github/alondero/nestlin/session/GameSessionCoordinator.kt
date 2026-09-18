@@ -562,6 +562,14 @@ class GameSessionCoordinator(
      * `java.lang.Error: Invalid memory access`, the narrow per-method
      * `UnsatisfiedLinkError` catches miss it, and the JVM exits 1 on
      * every Nestlin quit. The guard makes the second call a true no-op.
+     *
+     * **Exception safety** (PR #316 review N6): the cleanup block is
+     * wrapped in try/catch so a throw from [nestlin.saveBatteryRam] or
+     * either of the `runService` blocks cannot leave the native handle
+     * allocated. We swallow the throw and log — at this point the JVM
+     * is on its way out and there's no caller to recover to. The
+     * previous code's "guard-first" ordering meant a throw before the
+     * `runService` calls would permanently leak the native façade.
      */
     fun shutdown() {
         // Atomic claim — only one concurrent caller proceeds. The second
@@ -570,9 +578,19 @@ class GameSessionCoordinator(
         // cleanly without re-issuing `service.unloadGame` against the
         // already-destroyed handle.
         if (!shutdownCalled.compareAndSet(false, true)) return
-        nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
-        runService { service.unloadGame() }
-        runService { service.shutdown() }
+        try {
+            nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
+            runService { service.unloadGame() }
+            runService { service.shutdown() }
+        } catch (t: Throwable) {
+            // Best-effort cleanup. Battery save may have failed and the
+            // service may be in a half-destroyed state; log and move on.
+            // The JVM is exiting and no recovery path exists from here.
+            System.err.println(
+                "[GAME-SESSION] shutdown cleanup failed: " +
+                    "${t.javaClass.simpleName}: ${t.message}"
+            )
+        }
     }
 
     /**

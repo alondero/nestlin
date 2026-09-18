@@ -24,9 +24,15 @@ import com.sun.jna.Pointer
  * The façade never holds a Java reference past the call that produced it
  * (the C side copies strings into caller-owned arrays and the JNA side
  * reads them out immediately). The only Java-side state held across calls
- * is the [handle] pointer (one pointer per facade instance) and a
- * per-process `ConcurrentHashMap<Pointer, MemoryReader>` for the
- * memory-reader callback lookup.
+ * is the [handle] pointer (one pointer per facade instance) and the
+ * [activeReaderWrapper] strong reference (the JNA callback installed via
+ * `ra_facade_set_memory_reader`).
+ *
+ * The memory reader is routed by closure capture rather than a
+ * per-handle map: `installMemoryReader` builds the JNA wrapper, retains
+ * it in [activeReaderWrapper], and the wrapper closes over the JVM
+ * reader directly. No [ThreadLocal] or [java.util.concurrent.ConcurrentHashMap]
+ * is involved.
  *
  * ## Threading
  *
@@ -475,10 +481,6 @@ internal class NativeRetroAchievementsService private constructor(
     // Memory reader wiring (Nestlin-side)
     // ------------------------------------------------------------------
 
-    // ------------------------------------------------------------------
-    // Memory reader wiring (Nestlin-side)
-    // ------------------------------------------------------------------
-
     /**
      * Strong reference to the active JNA callback wrapper. **Must not be
      * dropped** between `installMemoryReader` and either (a) the next
@@ -496,13 +498,14 @@ internal class NativeRetroAchievementsService private constructor(
     private var activeReaderWrapper: RaReadMemoryFn? = null
 
     /**
-     * Scratch buffer for the per-frame callback. Pre-allocated at
-     * install time so the hot path doesn't allocate a `ByteArray` per
-     * call at 60 FPS. Sized to cover the common rcheevos trigger /
-     * measured / leaderboard read widths (1–8 bytes typical, 32 bytes
-     * for measured-progress counters). Reads larger than the scratch
-     * fall back to a one-shot allocation in [wrapJvmReader] — rare in
-     * practice and acceptable because measured-progress reads dominate.
+     * Scratch buffer for the per-frame callback. Pre-allocated as a
+     * construction-time field initializer so the hot path doesn't
+     * allocate a `ByteArray` per call at 60 FPS. Sized to cover the
+     * common rcheevos trigger / measured / leaderboard read widths
+     * (1–8 bytes typical, 32 bytes for measured-progress counters).
+     * Reads larger than the scratch fall back to a one-shot allocation
+     * in [wrapJvmReader] — rare in practice and acceptable because
+     * measured-progress reads dominate.
      */
     private val readerScratch: ByteArray = ByteArray(64)
 

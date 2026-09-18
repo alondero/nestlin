@@ -475,7 +475,14 @@ fun interface JvmReadMemoryFn {
  * Pinned by `RaReadMemoryFnCallbackRegressionTest`.
  */
 fun interface RaReadMemoryFn : com.sun.jna.Callback {
-    fun read(address: Int, buffer: Pointer, numBytes: Int, userdata: Pointer): Int
+    // `userdata` is `Pointer?` (nullable) rather than `Pointer` because
+    // JNA's `Pointer.NULL` is Java `null`, and Kotlin inserts an
+    // implicit entry null-check on parameters declared as non-nullable
+    // platform types. With `Pointer?` the null-check is skipped and the
+    // lambda body receives `null` cleanly. The C side declares `void*
+    // userdata` which is permitted to be NULL, so this is also a more
+    // accurate Kotlin-level description of the contract.
+    fun read(address: Int, buffer: Pointer, numBytes: Int, userdata: Pointer?): Int
 }
 
 /**
@@ -488,6 +495,15 @@ fun interface RaReadMemoryFn : com.sun.jna.Callback {
  * one-shot [ByteArray] allocation; that's rare in practice
  * (rcheevos trigger / measured / leaderboard reads are typically
  * 1–8 bytes).
+ *
+ * **Defensive `written` clamp (PR #316 review N1):** the JVM reader's
+ * return value is clamped to `[0, numBytes]` before the [Pointer.write]
+ * call. A misbehaving reader returning `numBytes + 100` would otherwise
+ * cause `Pointer.write` to read 100 bytes past the end of the temp
+ * buffer (out-of-bounds read on the Java array → IndexOutOfBoundsException,
+ * or worse, undefined behaviour if JNA's bounds-checking is bypassed).
+ * The production `peekReader` already clamps internally, but the
+ * bridge should not rely on every caller doing so.
  *
  * **Lifetime contract — REGRESSION FIX.** The returned [RaReadMemoryFn]
  * MUST be retained as a strong reference by the caller. JNA tracks
@@ -508,7 +524,7 @@ internal fun wrapJvmReader(jvm: JvmReadMemoryFn, scratch: ByteArray): RaReadMemo
         // a one-shot buffer. The branch is in the hot path so both
         // arms are written for the JIT.
         val tmp: ByteArray = if (numBytes <= scratch.size) scratch else ByteArray(numBytes)
-        val written = jvm.read(address, tmp, numBytes)
+        val written = jvm.read(address, tmp, numBytes).coerceIn(0, numBytes)
         if (written > 0) {
             buffer.write(0, tmp, 0, written)
         }

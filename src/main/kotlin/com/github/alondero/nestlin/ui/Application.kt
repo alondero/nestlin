@@ -246,19 +246,27 @@ class NestlinApplication : FrameListener, Application() {
      * the current sign-in / ROM state, not a snapshot from when it was
      * constructed.
      *
-     * PR #290 review: the controller MUST share the coordinator's
-     * service instance (`sessionCoordinator.service`) — not call
-     * [RetroAchievementsServiceFactory.create] again. The factory
-     * returns a fresh native handle on every call; the previous
-     * implementation constructed a SECOND native service and fed it
-     * to the controller, which then queried an idle handle for
-     * every `achievementListSnapshot()` call (the coordinator's
-     * service is the one that receives `prepareGame`). The result
-     * was a perpetually-unrecognized window plus a leaked native C
-     * handle on shutdown. The lazy accessor here runs AFTER the
-     * `sessionCoordinator` field is initialized (every code path
-     * reaches it through a `loadRom` hook first), so reading the
-     * coordinator's service field is safe.
+     * PR #290 review: the controller MUST share the same service
+     * instance as the coordinator — but NOT by reading
+     * `sessionCoordinator.service` directly. Reading the coordinator's
+     * service field from this initializer forms a `by lazy` cycle with
+     * [sessionCoordinator] (whose own initializer passes this
+     * controller into the [com.github.alondero.nestlin.session.GameSessionCoordinator]
+     * constructor) and stack-overflows at UI startup. The original
+     * implementation took the lazy-accessor workaround — "this runs
+     * AFTER sessionCoordinator is initialized" — but the cycle is
+     * structurally present and re-fires on every code path that touches
+     * [sessionCoordinator] BEFORE a `loadRom` hook. The fix is the
+     * shared [raService] lazy at the top of this class: both
+     * [sessionCoordinator] and this controller depend on it without
+     * depending on each other.
+     *
+     * Why this matters: the original "read sessionCoordinator.service"
+     * pattern leaked a SECOND native service in the previous
+     * implementation (one per call to `RetroAchievementsServiceFactory.create`,
+     * each holding its own rcheevos handle). The shared-service
+     * guarantee still holds — both fields resolve to the same
+     * [raService] instance — but without the cycle.
      */
     private val achievementsControllerLazy: com.github.alondero.nestlin.session.RaAchievementsController by lazy {
         com.github.alondero.nestlin.session.RaAchievementsController(
