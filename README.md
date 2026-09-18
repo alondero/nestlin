@@ -2,7 +2,7 @@
 
 ![Nestlin logo](src/main/resources/images/nestlin-logo.png)
 
-A Nintendo Entertainment System emulator written in Kotlin. Personal learning project: full CPU, PPU, APU emulation, twelve mappers, NTSC + PAL timing, save states, battery-backed save RAM, and a Mesen2-driven state-diff regression suite.
+A Nintendo Entertainment System emulator written in Kotlin. Personal learning project: full CPU, PPU, APU emulation, a broad set of routed mapper IDs, NTSC + PAL timing, save states, battery-backed save RAM, and a Mesen2-driven state-diff regression suite.
 
 > **What it is:** a from-scratch NES emulator — not a wrapper around libretro. Every cycle the PPU renders, the APU mixes, and the CPU executes is implemented in this codebase.
 >
@@ -15,7 +15,7 @@ A Nintendo Entertainment System emulator written in Kotlin. Personal learning pr
 - **6502 CPU** — all 151 documented + unofficial opcodes, validated against `nestest.nes` (`GoldenLogTest`).
 - **2C02 PPU** — background + sprite rendering, sprite-0 hit, 8×8 and 8×16 sprites, A12 edge exposed to mappers.
 - **2A03 APU** — 5 channels (Pulse ×2, Triangle, Noise, DMC), frame counter, NTSC + PAL period tables, host-rate resampling.
-- **12 mappers** — see *Supported mappers* below.
+- **Mapper support** — see [`MAPPER_SUPPORT.md`](MAPPER_SUPPORT.md) for the current compatibility matrix. Mapper 5 is still a stub; the document groups the VRC2/VRC4 family entries where they share an implementation.
 - **NTSC and PAL** — auto-detected from the iNES/NES 2.0 header and the NO-INTRO filename, with a manual `--region=` override.
 - **Save states** (`.nstl`) and **battery-backed save RAM** (`.sav`, FCEUX/Mesen-compatible).
 - **Input** — configurable keyboard and gamepad (via JInput); default keymap written to `~/.config/nestlin/input.json` on first run.
@@ -25,24 +25,11 @@ A Nintendo Entertainment System emulator written in Kotlin. Personal learning pr
 
 ---
 
-## Supported mappers
+## Compatibility
 
-| # | Name | Notes |
-|---|------|-------|
-| 0 | NROM | Donkey Kong, Super Mario Bros. |
-| 1 | MMC1 / SxROM | Tetris, Zelda (PRG-RAM + battery). |
-| 2 | CNROM / UNROM | Castlevania, Contra, Duck Hunt. |
-| 3 | CNROM | Star Soldier, Paperboy. |
-| 4 | MMC3 / TxROM | Mega Man 4-6, Kirby's Adventure (PRG-RAM + A12-IRQ + battery). |
-| 5 | MMC5 | **Stub** — Castlevania III not yet playable. |
-| 7 | AxROM | Marble Madness, Battletoads. |
-| 9 | MMC2 / PxROM | Mike Tyson's Punch-Out!! (CHR latches). |
-| 10 | MMC4 / FxROM | Fire Emblem Gaiden (CHR latches + PRG-RAM + battery). |
-| 11 | Color Dreams | Bible Adventures. |
-| 34 | BNROM / NINA-001 | Deadly Towers. |
-| 69 | Sunsoft FME-7 | Batman: Return of the Joker, Gimmick! (CPU-cycle-clocked IRQ). |
+Nestlin currently routes the mapper IDs listed in `MAPPER_SUPPORT.md` through `GamePak`, including shared VRC2/VRC4 implementations and mapper 5's explicit stub. A routed mapper is a code-coverage statement, not a promise that every game using that board is playable.
 
-For per-mapper game coverage, edge-case notes, and known issues, see **[`MAPPER_SUPPORT.md`](MAPPER_SUPPORT.md)**.
+For per-mapper game coverage, test evidence, edge-case notes, and known issues, see **[`MAPPER_SUPPORT.md`](MAPPER_SUPPORT.md)**. Report a new game result with the [compatibility issue template](.github/ISSUE_TEMPLATE/compatibility_report.md); identify the dump by mapper, region, and checksum instead of uploading a ROM.
 
 ---
 
@@ -76,69 +63,13 @@ Convenience wrapper that builds-then-runs: `./nestlin.sh path/to/rom.nes` (or `n
 
 The runnable fat JAR is at `build/libs/nestlin-all.jar` (built by `shadowJar`; the Gradle `application` plugin also produces `./gradlew installDist` → `build/install/nestlin/bin/nestlin` if you prefer the wrapper-script form).
 
-### Command-line flags
-
-| Flag | Purpose |
-|------|---------|
-| `--debug` | Verbose CPU instruction logging to stdout. |
-| `--region=pal\|ntsc` | Override the ROM's auto-detected region. |
-| `--no-audio` | Disable audio output. |
-| `--screenshot-interval N --screenshot-duration N` | Automated capture mode for validation harnesses. |
-
-### Supported ROM formats
-
-- `.nes` — iNES and NES 2.0 headers (NO-INTRO filenames are recognised for display + region).
-- `.7z` — 7-Zip archives (single-ROM); transparent to the rest of the pipeline.
+For command-line flags, supported ROM formats, first-run behavior, and platform-specific file locations, see the [user guide](docs/USER_GUIDE.md).
 
 ---
 
-## Controls
+## Using Nestlin
 
-### File menu
-
-| Action | Description |
-|--------|-------------|
-| Load Game… | Open a `.nes` or `.7z`. |
-| Load Recent | Quick access to recently played ROMs. |
-| Hard Reset Game | Reload and power-cycle the current ROM. Preserves battery RAM. |
-| Save State… | Snapshot to a chosen `.nstl` file. |
-| Load State… | Restore from a `.nstl` file. |
-| Exit | Flush battery RAM and quit. |
-
-### Settings
-
-| Action | Shortcut | Description |
-|--------|----------|-------------|
-| Speed Throttling (60 FPS) | Ctrl+T | Toggle wall-clock pacing. |
-| Scale | — | 1× / 2× / 3× / 4× / Fit-to-window. |
-| Fullscreen | F11 | Toggle fullscreen. |
-| Pause | Ctrl+P | Pause/resume emulation. |
-
-### Emulation
-
-| Action | Shortcut | Description |
-|--------|----------|-------------|
-| Quick Save State | F5 | Save to `savestates/<rom>.quick.nstl`. |
-| Quick Load State | F8 | Load the matching quick-save slot. |
-| Fast-Forward | hold Tab | Disable throttling while held. |
-| Rewind | hold Backspace | Scrub backward through the last ~10 s at ~3× speed; release to resume. |
-| Screenshot | S | Save the current frame to `screenshots/`. |
-
-### Default keyboard mapping (NES gamepad)
-
-| NES | Keyboard |
-|-----|----------|
-| A | Z |
-| B | X |
-| Select | Space |
-| Start | Enter |
-| D-Pad | Arrow keys |
-
-Edit `~/.config/nestlin/input.json` to remap. The default file is written automatically on first run.
-
-### Gamepad
-
-Any controller JInput recognises works out of the box (Xbox layout by default). Edit the `gamepad` section of `~/.config/nestlin/input.json` for other layouts.
+The [user guide](docs/USER_GUIDE.md) is the source of truth for controls, keyboard/gamepad mapping, save states, battery RAM, screenshots, and RetroAchievements. The [troubleshooting guide](docs/TROUBLESHOOTING.md) covers common launch, input, audio, rendering, and compatibility failures.
 
 ---
 
@@ -150,6 +81,9 @@ Any controller JInput recognises works out of the box (Xbox layout by default). 
 
 # Cross-emulator suite (boots Mesen2 as an oracle; needs MESEN2_PATH)
 ./gradlew testMesenComparison
+
+# Documentation links/structure check
+python tools/docs_lint.py
 ```
 
 The cross-emulator smoke cases use ROMs that are not checked into Git. Set `NESTLIN_TESTROMS` to the directory containing `tetris.nes`, `lolo1.nes`, and `kirby.nes`; missing ROMs are reported as skipped tests.
@@ -162,38 +96,37 @@ The CPU has a single gold-standard regression: **`GoldenLogTest`** runs `nestest
 
 ## Project structure
 
-| Path | What's there |
-|------|--------------|
-| `src/main/kotlin/.../cpu/` | 6502 core + 151 opcodes + addressing modes. |
-| `src/main/kotlin/.../ppu/` | 2C02 rendering pipeline, OAM, palette, register decode. |
-| `src/main/kotlin/.../apu/` | Channels, envelope, sweep, length counter, frame counter, resampler. |
-| `src/main/kotlin/.../gamepak/` | iNES parsing + per-mapper implementations. |
-| `src/main/kotlin/.../ui/` | JavaFX application, menus, scaling, fast-forward. |
-| `src/main/kotlin/.../input/` | Keyboard + JInput gamepad, JSON config. |
-| `src/test/kotlin/.../compare/` | Mesen2 oracle tests (state diff, not pixels). |
-| `docs/` | Strategy + historical design notes. |
-| `testroms/` | `nestest.nes` (the only ROM in git). |
-| `tools/` | Local-only emulators (not in git; see `CLAUDE.local.md`) + `rom_info.py` / `dump_analyzer.py` Python utilities. |
+The current package ownership and runtime flow are maintained in the [architecture guide](docs/ARCHITECTURE.md). Contributors should start with the [development guide](docs/DEVELOPMENT.md) rather than infer support or test policy from directory names.
 
 ---
 
 ## Documentation
 
-- **[`MAPPER_SUPPORT.md`](MAPPER_SUPPORT.md)** — which mappers are working, what games are known to play, and what each one's quirks are.
-- **[`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md)** — the test pyramid and how to add a new regression test the right way.
-- **[`tools/rom_info.py`](tools/rom_info.py)** — decode a ROM header, scan a library, patch a NO-INTRO Namco 108 mislabel, read vectors, do CPU-addr ↔ file-offset math. **Step 0 of any new-mapper task** — before writing a single line of Kotlin, run `python tools/rom_info.py info <rom.nes>` to confirm the mapper / submapper / region you're about to target.
-- **[`tools/dump_analyzer.py`](tools/dump_analyzer.py)** — parse 64KB CPU memory dumps (`.dmp`) from debug sessions and query them by region, register, or address. Useful for post-mortem debugging.
+The [documentation index](docs/README.md) is the starting point for users and contributors:
+
+- **[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)** — installation, launch flags, controls, files, saves, and RetroAchievements.
+- **[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)** — reproducible diagnostics and issue-reporting guidance.
+- **[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)** — architecture, build/test lanes, mapper workflow, and documentation workflow.
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — subsystem ownership and emulator state boundaries.
+- **[`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md)** — the test pyramid and regression-test rules.
+- **[`MAPPER_SUPPORT.md`](MAPPER_SUPPORT.md)** — current mapper/game support and known limits.
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — issue, pull-request, legal, and review expectations.
+
+Developer tools remain documented next to their source: [`tools/rom_info.py`](tools/rom_info.py) decodes headers and [`tools/dump_analyzer.py`](tools/dump_analyzer.py) inspects CPU memory dumps. The [documentation standards](docs/DOCUMENTATION_STANDARDS.md) and `python tools/docs_lint.py` check keep these links from going stale.
 
 ---
 
 ## Contributing
 
-This is a personal learning project, so the bar for "ready to merge" is mostly "the maintainer is happy with it." The minimum bar in practice:
+This is a personal learning project, so review capacity is limited. The minimum bar in practice:
 
 1. **Build is green** (`./gradlew build`).
 2. **Tests are green** (`./gradlew test`); add a failing test first for any bug you find.
-3. **No new `assumeTrue`-skipped tests** (see `docs/TESTING_STRATEGY.md` §2.4 — silent skips false-green CI).
-4. **Prefer state-diff regression tests over pixel-diff ones.**
+3. **Documentation is current** and `python tools/docs_lint.py` passes.
+4. **No new `assumeTrue`-skipped tests** (see `docs/TESTING_STRATEGY.md` §2.4 — silent skips false-green CI).
+5. **Prefer state-diff regression tests over pixel-diff ones.**
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full checklist, issue templates, security reporting, and agent/AI disclosure expectations.
 
 For new mappers, see the "Adding New Mappers" section of `MAPPER_SUPPORT.md`.
 

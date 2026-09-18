@@ -2,6 +2,8 @@
 
 Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 as reference oracle.
 
+**Documentation map:** human-facing entry points live in [`docs/README.md`](docs/README.md), with the user guide, troubleshooting guide, development guide, architecture map, testing strategy, and release guide linked there. [`AGENTS.md`](AGENTS.md) and [`.claude/agents.md`](.claude/agents.md) define agent workflow; this file remains the compact project-context reference for coding sessions.
+
 ## Build / Test / Run
 
 ```bash
@@ -10,6 +12,9 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 
 # Run the unit-test suite (CPU, PPU, APU, mapper, region tests)
 ./gradlew test
+
+# Run the documentation/link/mapper-consistency lint
+./gradlew docsLint
 
 # Run the Mesen2-comparison suite (needs Mesen2 on disk — see CLAUDE.local.md)
 ./gradlew testMesenComparison
@@ -128,7 +133,7 @@ src/main/kotlin/com/github/alondero/nestlin/
 ├── cpu/                    # 6502 core + 151 opcodes + addressing modes
 ├── ppu/                    # 2C02: rendering, OAM, palette, vram address, regs
 ├── apu/                    # channels, envelope, sweep, length, frame counter, resampler
-├── gamepak/                # iNES header + Mapper0..69 dispatch (see MAPPER_SUPPORT.md)
+├── gamepak/                # iNES header + mapper dispatch (see MAPPER_SUPPORT.md)
 ├── input/                  # keyboard + JInput gamepad (config at ~/.config/nestlin/input.json)
 ├── rewind/                 # RewindBuffer ring of per-frame savestates (hold-Backspace scrub, issue #52)
 ├── ui/                     # JavaFX Application (Canvas-based nearest-neighbour scaling), menus, scaling, fast-forward, screenshots
@@ -151,13 +156,13 @@ testroms/                    # nestest.nes is the only ROM in git
 - **Bugs always get a regression test, even pre-existing ones** (per global CLAUDE.md).
 - **Line endings:** Project policy is **CRLF** for `*.kt`, `*.kts`, `*.gradle`, `*.md`, `*.py`, `*.lua`, `*.json`, `*.yml`, `*.yaml`, `*.toml`, and `.github/**`; `*.sh` is LF. Pinned in `.gitattributes` with `text eol=crlf` (and `text eol=lf` for `*.sh`). Windows is the dominant dev platform (see `CLAUDE.local.md`); Linux/macOS contributors will see `^M` in some diff tools but most (IntelliJ, GitHub web) hide them. After updating `.gitattributes`, run `git add --renormalize` to bring the index in sync. `git diff --ignore-cr-at-eol` should be empty for any clean worktree.
 
-## Current Status (2026-06)
+## Current Status (2026-09)
 
 **Working:**
 - CPU: all 151 opcodes including unofficial; `GoldenLogTest` is the regression bar.
 - PPU: full background + sprite rendering, sprite-0 hit, 8x16 sprites, A12 edge to mapper.
 - APU: 5 channels (Pulse×2, Triangle, Noise, DMC), PAL/NTSC tables, mixer.
-- Mappers: **0, 1, 2, 3, 4, 5 (stub), 7, 9, 10, 11, 16, 19, 24, 26, 30, 33, 34, 64, 65, 66, 68, 69, 113, 119, 153, 206, 228.** Details + per-mapper game coverage in `MAPPER_SUPPORT.md`.
+- Mappers: see `MAPPER_SUPPORT.md` for the canonical routed-ID list, per-mapper evidence, and known limits. Mapper 5 remains a stub.
 - RetroAchievements: Native capability via vendored rcheevos v12.4.0 + a small C façade + JNA. Softcore-only, no-network default. Status menu under "RetroAchievements". See `RA_INTEGRATION.md` for design + `native/README.md` for the build.
 - Region: NTSC + PAL auto-detect (iNES header → NO-INTRO filename → user override).
 - Save state (`.nstl`, F5/F8 + menu) and save RAM (`.sav`, FCEUX-compatible).
@@ -186,9 +191,16 @@ The pyramid, top to bottom:
 
 ## Documentation
 
+- `docs/README.md` — documentation index and source-of-truth map.
+- `docs/USER_GUIDE.md` — user-facing setup, controls, files, saves, and optional integrations.
+- `docs/TROUBLESHOOTING.md` — reproducible diagnostics and support-reporting contract.
+- `docs/DEVELOPMENT.md` — architecture, build/test lanes, mapper workflow, and documentation workflow.
+- `docs/ARCHITECTURE.md` — subsystem ownership and state/threading boundaries.
+- `docs/TESTING_STRATEGY.md` — the test pyramid and how to add a regression test.
+- `docs/DOCUMENTATION_STANDARDS.md` — required coverage and the documentation linter.
 - `MAPPER_SUPPORT.md` — per-mapper game coverage and known quirks. Actively maintained.
-- `docs/TESTING_STRATEGY.md` — the test pyramid and how to add a regression test. Actively maintained.
-- `README.md` — build/test/run entry points and the full tooling list.
+- `CONTRIBUTING.md` — issue, PR, legal, release, and agent/AI review expectations.
+- `.github/SECURITY.md` — private vulnerability and credential-reporting policy.
 - `tools/dump_analyzer.py` — parse 64KB CPU memory dumps (`.dmp`) from debug sessions and query them by region, register, or address. Useful for post-mortem debugging.
 - `tools/mesen-trace/` — checked-in, v2.1.1-verified Mesen2 Lua instruments (mapper write-watch, NMI/IRQ-per-frame counter, PPUCTRL transition log, CHR dump). Use these instead of writing fresh Lua; see its README for the invocation and the installed binary's API quirks.
 - `tools/run-diag.ps1` — single-test diagnostic runner (see Build/Test/Run above).

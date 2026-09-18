@@ -1,0 +1,38 @@
+name: documentation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '**/*.md'
+      - '**/*.yml'
+      - '**/*.yaml'
+      - 'tools/docs_lint.py'
+      # Mapper dispatch is enforced by the linter; trigger on changes to
+      # GamePak.kt so a new mapper cannot bypass the docs check by only
+      # touching Kotlin source.
+      - 'src/main/kotlin/com/github/alondero/nestlin/gamepak/GamePak.kt'
+      - 'MAPPER_SUPPORT.md'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - '**/*.yml'
+      - '**/*.yaml'
+      - 'tools/docs_lint.py'
+      - 'src/main/kotlin/com/github/alondero/nestlin/gamepak/GamePak.kt'
+      - 'MAPPER_SUPPORT.md'
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    name: docs lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Validate documentation
+        run: python tools/docs_lint.py

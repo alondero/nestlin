@@ -63,3 +63,12 @@ settings.gradle* text eol=crlf
 
 # GitHub Actions
 .github/**    text eol=crlf
+
+# Git hooks. Extensionless shell hooks under .githooks/ must stay LF so
+# Linux/macOS do not see "#!/usr/bin/env bash\r" and fail with
+# "/usr/bin/env: 'bash\r': No such file or directory" (and so that
+# git diff --check does not flag every line as trailing whitespace).
+# .githooks/*.ps1 stays on the project CRLF default above (PowerShell
+# tolerates LF and the hook is run via Git Bash on Windows / pwsh on POSIX).
+.githooks/pre-commit text eol=lf
+.githooks/commit-msg  text eol=lf

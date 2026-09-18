@@ -1,8 +1,10 @@
 # Nestlin Testing Strategy
 
-**Status:** Proposal for review (2026-05-20). Replaces the de-facto status quo where most cross-emulator verification relies on PNG screenshot comparison against Mesen2.
+**Status:** Active project policy (reviewed 2026-09-14). The migration history below is retained as an implementation backlog; the current rules in this document and `docs/DEVELOPMENT.md` apply now.
 
-**Audience:** Future Adam, future Claude sessions, and anyone touching `src/test/kotlin/.../compare/`.
+**Audience:** Contributors, coding agents, and anyone touching `src/test/kotlin/.../compare/`.
+
+**Current contract:** the fast `test` lane is hermetic and excludes Mesen2, external-ROM, and native-RA tags; Mesen2 comparisons run through `testMesenComparison`; mapper work requires an oracle-free `bootcheck` or explicit documented limitation; structured state and event evidence are preferred over pixels; and skipped optional dependencies must be visible in the test output and handoff.
 
 ---
 
@@ -140,7 +142,7 @@ This is the production pattern, not optional defensive programming. Lua silently
 
 ---
 
-## 4. Proposed test pyramid
+## 4. Current test pyramid
 
 ```
               ┌─────────────────────┐
@@ -168,11 +170,13 @@ This is the production pattern, not optional defensive programming. Lua silently
     └──────────────────────────────────────────┘
 ```
 
-**The base of the pyramid is wide, the top is narrow.** Today the project has it inverted — pixel diffs at the front line.
+**The base of the pyramid is wide, the top is narrow.** New tests should enter at the cheapest layer that can catch the bug; a pixel diff is the last resort, not the default.
 
 ---
 
-## 5. Tactical migration plan
+## 5. Migration backlog and historical notes
+
+The following phases explain why the current policy exists and record unfinished improvements. They are not prerequisites for ordinary contributors unless a change touches the listed area.
 
 ### Phase 0 — Settle one unknown ✅ DONE 2026-05-20
 - [x] Spike confirmed: `Mesen.exe --testRunner --doNotSaveSettings rom.nes script.lua` runs headlessly, `emu.read` works for all NES memory types, `emu.getState()` works, `emu.takeScreenshot()` works (reads PPU framebuffer), `emu.getScriptDataFolder()` works, `emu.stop(code)` exits with that code. Total wall time for a 60-frame state capture: **~0.5s** (vs ~10–30s for the prior GUI invocation). All three Mesen2 runners now use `--testRunner`.
@@ -247,7 +251,9 @@ When adding a regression test for a new bug, pick the cheapest level that catche
 
 ---
 
-## 8. Open questions
+## 8. Known gaps and future work
+
+The questions below are a research backlog, not requirements for every change and not evidence that the current test lanes are invalid. Resolved questions remain here only to preserve the reasoning behind the policy.
 
 1. Does Mesen2 `--testRunner` actually work for `emu.read` in v2? (Phase 0 spike resolves this.)
 2. Are `cpu` and `ppu` sub-fields of `emu.getState()` stable across Mesen2 versions? Pin a Mesen2 commit in `CLAUDE.local.md` or `tools/`?
@@ -258,9 +264,11 @@ When adding a regression test for a new bug, pick the cheapest level that catche
 
 ---
 
-## 9. Definition of done for this strategy
+## 9. Historical migration checklist and future backlog
 
-- [ ] Phase 0 spike result recorded in this doc.
+This checklist records the migration that established the current policy. Unchecked items are future improvements, not a claim that the active test contract is incomplete for ordinary contributions.
+
+- [x] Phase 0 spike result recorded in this doc.
 - [x] No `assumeTrue()`-style silent skip in any `compare/` test (Phase 1). **DONE for the two named silent-Mesen2-error swallow sites (`ScreenshotComparisonTest`, `Mapper64KlaxMesen2ScreenshotTest`) via GH #44; remaining `assumeTrue(mesen2Available)` sites carry a precondition message, so they are loud skips not silent skips.** ROM-missing skips are a separate `Phase 1.2` item.
 - [ ] Mesen2 process starts ≤1× per JUnit suite (Phase 2).
 - [ ] `ScreenshotComparisonTest` retains at most one pixel-diff case; the rest are state diffs (Phase 3).
