@@ -275,6 +275,24 @@ class GameSessionCoordinator(
     private var frameCounter: Long = 0L
 
     /**
+     * Idempotency guard for [shutdown]. Uses [AtomicBoolean.compareAndSet]
+     * rather than a `@Volatile var` because two threads racing into
+     * shutdown (e.g. `Application.handleExit` on the JavaFX Application
+     * Thread and `Application.stop` on the JavaFX Application Thread
+     * after `Platform.exit()`) can both read `false` before either
+     * writes `true`, and both would proceed past a non-atomic guard.
+     * `compareAndSet(false, true)` succeeds for exactly one of the two
+     * racers; the other returns `false` and exits cleanly.
+     *
+     * Without this guard the second call's `service.unloadGame()` hits
+     * the handle the first call's `service.shutdown()` just destroyed,
+     * JNA throws `Invalid memory access`, and the JVM exits with
+     * code 1. See [shutdown] for the full failure mode.
+     */
+    private val shutdownCalled: java.util.concurrent.atomic.AtomicBoolean =
+        java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
      * Install the side-effect-free memory reader (issue #270 AC). Called
      * automatically after every successful [prepareServiceForCurrent] so
      * rcheevos's read_memory callback resolves to [Memory.peek] rather
@@ -533,11 +551,46 @@ class GameSessionCoordinator(
      *
      * The application is responsible for stopping the emulation thread
      * before calling this; the coordinator does not own the thread.
+     *
+     * **Why the early-return matters** (regression pinned by
+     * `GameSessionCoordinatorShutdownIdempotencyTest`): `Application.handleExit`
+     * calls `sessionCoordinator.shutdown()` and then `Platform.exit()`,
+     * which triggers JavaFX's `Application.stop()`, which calls
+     * `sessionCoordinator.shutdown()` again. Without the guard, the
+     * second call's `service.unloadGame()` hits the handle the first
+     * call's `service.shutdown()` just destroyed; JNA then throws
+     * `java.lang.Error: Invalid memory access`, the narrow per-method
+     * `UnsatisfiedLinkError` catches miss it, and the JVM exits 1 on
+     * every Nestlin quit. The guard makes the second call a true no-op.
+     *
+     * **Exception safety** (PR #316 review N6): the cleanup block is
+     * wrapped in try/catch so a throw from [nestlin.saveBatteryRam] or
+     * either of the `runService` blocks cannot leave the native handle
+     * allocated. We swallow the throw and log — at this point the JVM
+     * is on its way out and there's no caller to recover to. The
+     * previous code's "guard-first" ordering meant a throw before the
+     * `runService` calls would permanently leak the native façade.
      */
     fun shutdown() {
-        nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
-        runService { service.unloadGame() }
-        runService { service.shutdown() }
+        // Atomic claim — only one concurrent caller proceeds. The second
+        // (e.g. JavaFX's Application.stop() racing handleExit's
+        // Platform.exit) returns false from compareAndSet and exits
+        // cleanly without re-issuing `service.unloadGame` against the
+        // already-destroyed handle.
+        if (!shutdownCalled.compareAndSet(false, true)) return
+        try {
+            nestlin.loadedRom?.sourcePath?.let { nestlin.saveBatteryRam(it) }
+            runService { service.unloadGame() }
+            runService { service.shutdown() }
+        } catch (t: Throwable) {
+            // Best-effort cleanup. Battery save may have failed and the
+            // service may be in a half-destroyed state; log and move on.
+            // The JVM is exiting and no recovery path exists from here.
+            System.err.println(
+                "[GAME-SESSION] shutdown cleanup failed: " +
+                    "${t.javaClass.simpleName}: ${t.message}"
+            )
+        }
     }
 
     /**

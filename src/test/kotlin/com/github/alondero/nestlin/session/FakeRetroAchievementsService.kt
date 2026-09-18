@@ -92,7 +92,7 @@ class FakeRetroAchievementsService(
         }
     }
 
-    override fun installMemoryReader(reader: RaReadMemoryFn) {
+    override fun installMemoryReader(reader: JvmReadMemoryFn) {
         calls += Call.InstallMemoryReader
     }
 

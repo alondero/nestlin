@@ -434,18 +434,102 @@ internal interface RaFacadeBindings : Library {
 }
 
 /**
+ * The JVM-side memory-reader contract — ergonomic for Kotlin callers
+ * (test fixtures, the production `peekReader` helper). Takes a plain
+ * `ByteArray` because every JVM-side implementation wants to read/
+ * write byte indices directly.
+ *
+ * The JNA-facing counterpart is [RaReadMemoryFn], which takes a
+ * [Pointer]. JNA cannot auto-marshal a `byte[]` callback argument
+ * without a length annotation (it throws `Callback argument class
+ * [B] requires custom type conversion`), so the JNA side uses
+ * [Pointer] + an explicit `numBytes` and copies to/from a temporary
+ * [ByteArray] at the JNA boundary — see [wrapJvmReader].
+ */
+fun interface JvmReadMemoryFn {
+    fun read(address: Int, buffer: ByteArray, numBytes: Int): Int
+}
+
+/**
  * The C-side `ra_facade_read_memory_fn` signature. JNA maps this to a
  * Java `interface` with one method; instances are passed by reference.
  *
- * No userdata parameter — the C shim passes the façade handle as the
- * 4th argument, but JNA's standard callback mapping doesn't expose it
- * cleanly, so the JVM-side uses a [ThreadLocal] handle stack instead
- * (set by `evaluate_frame` before the native call returns). See
- * `NativeRetroAchievementsService.currentHandle`.
+ * Takes [Pointer] rather than `ByteArray` because JNA's callback
+ * marshalling can't determine the buffer length for `byte[]` (it would
+ * throw `Callback argument class [B] requires custom type conversion`).
+ * The companion [JvmReadMemoryFn] is the ergonomic Kotlin-side API;
+ * [wrapJvmReader] bridges the two.
+ *
+ * The trailing [userdata] argument matches the C signature
+ * `uint32_t (*)(uint32_t, uint8_t*, uint32_t, void*)` — required by
+ * the calling convention even though the JVM-side ignores it (per-call
+ * handle routing happens via the closure capture in [wrapJvmReader],
+ * not via the userdata pointer).
+ *
+ * **Must extend [com.sun.jna.Callback]** so JNA wraps Kotlin `fun
+ * interface` lambdas as native function pointers when handed to
+ * `ra_facade_set_memory_reader`. Without the marker, JNA throws
+ * `IllegalArgumentException: Unsupported argument type <Class>$$Lambda/...`
+ * at the call boundary, breaking every `loadRom` (the coordinator
+ * installs the reader inside `prepareServiceForCurrentFromInfo`).
+ * Pinned by `RaReadMemoryFnCallbackRegressionTest`.
  */
-fun interface RaReadMemoryFn {
-    fun read(address: Int, buffer: ByteArray, numBytes: Int): Int
+fun interface RaReadMemoryFn : com.sun.jna.Callback {
+    // `userdata` is `Pointer?` (nullable) rather than `Pointer` because
+    // JNA's `Pointer.NULL` is Java `null`, and Kotlin inserts an
+    // implicit entry null-check on parameters declared as non-nullable
+    // platform types. With `Pointer?` the null-check is skipped and the
+    // lambda body receives `null` cleanly. The C side declares `void*
+    // userdata` which is permitted to be NULL, so this is also a more
+    // accurate Kotlin-level description of the contract.
+    fun read(address: Int, buffer: Pointer, numBytes: Int, userdata: Pointer?): Int
 }
+
+/**
+ * Wrap a [JvmReadMemoryFn] as a JNA [RaReadMemoryFn].
+ *
+ * The bridge writes the JVM reader's output into a pre-allocated
+ * scratch [ByteArray] (so we don't allocate per-call at 60 FPS) and
+ * copies the written prefix back into the native [Pointer] via
+ * [Pointer.write]. Reads larger than the scratch fall back to a
+ * one-shot [ByteArray] allocation; that's rare in practice
+ * (rcheevos trigger / measured / leaderboard reads are typically
+ * 1–8 bytes).
+ *
+ * **Defensive `written` clamp (PR #316 review N1):** the JVM reader's
+ * return value is clamped to `[0, numBytes]` before the [Pointer.write]
+ * call. A misbehaving reader returning `numBytes + 100` would otherwise
+ * cause `Pointer.write` to read 100 bytes past the end of the temp
+ * buffer (out-of-bounds read on the Java array → IndexOutOfBoundsException,
+ * or worse, undefined behaviour if JNA's bounds-checking is bypassed).
+ * The production `peekReader` already clamps internally, but the
+ * bridge should not rely on every caller doing so.
+ *
+ * **Lifetime contract — REGRESSION FIX.** The returned [RaReadMemoryFn]
+ * MUST be retained as a strong reference by the caller. JNA tracks
+ * [Callback] instances via [WeakReference]; if the caller drops the
+ * reference, GC reclaims the wrapper while the C side still owns the
+ * function pointer, and every subsequent native call crashes with a
+ * fatal access violation. `NativeRetroAchievementsService` stores the
+ * wrapper in a field for exactly this reason — see `activeReaderWrapper`.
+ *
+ * The closure captures the JVM reader directly, so there's no need for
+ * a per-handle map or ThreadLocal to route the call — the JNA callback
+ * and its JVM delegate are wired at the same site.
+ */
+internal fun wrapJvmReader(jvm: JvmReadMemoryFn, scratch: ByteArray): RaReadMemoryFn =
+    RaReadMemoryFn { address, buffer, numBytes, _ ->
+        if (numBytes <= 0) return@RaReadMemoryFn 0
+        // Small reads reuse the caller's scratch; large reads allocate
+        // a one-shot buffer. The branch is in the hot path so both
+        // arms are written for the JIT.
+        val tmp: ByteArray = if (numBytes <= scratch.size) scratch else ByteArray(numBytes)
+        val written = jvm.read(address, tmp, numBytes).coerceIn(0, numBytes)
+        if (written > 0) {
+            buffer.write(0, tmp, 0, written)
+        }
+        written
+    }
 
 /**
  * Flat mirror of the C-side `ra_event_t` struct. JNA's
