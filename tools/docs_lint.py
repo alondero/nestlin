@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Small dependency-free checks for Nestlin's maintained documentation surface."""
 
 from __future__ import annotations

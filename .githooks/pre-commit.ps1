@@ -1,4 +1,4 @@
-﻿<#
+<#
 PowerShell equivalent of the opt-in documentation pre-commit hook.
 Git for Windows normally executes .githooks/pre-commit through Git Bash;
 this file is also useful for manual validation and native PowerShell setups.

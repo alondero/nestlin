@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # Run the same documentation lint used by CI when a commit contains staged
 # Markdown, GitHub workflow/template changes, or mapper-dispatch source/doc
 # edits. The hook is opt-in; install it with tools/install-hooks.sh or
