@@ -87,11 +87,12 @@ tasks.register("docsLint") {
     description = "Checks required documentation files, headings, final newlines, and local links"
     doLast {
         val configuredPython = System.getenv("PYTHON")?.takeIf { it.isNotBlank() }
-        val python = configuredPython ?: if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
-            "python"
-        } else {
-            "python3"
-        }
+        // Use the standard Java platform check rather than
+        // org.gradle.internal.os.OperatingSystem.current(); the latter is an
+        // unsupported internal Gradle API that emits warnings and can be relocated
+        // across minor Gradle updates.
+        val isWindows = System.getProperty("os.name").lowercase().contains("windows")
+        val python = configuredPython ?: if (isWindows) "python" else "python3"
         exec {
             commandLine(python, layout.projectDirectory.file("tools/docs_lint.py").asFile.absolutePath)
         }

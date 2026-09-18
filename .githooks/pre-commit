@@ -1,11 +1,21 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # Run the same documentation lint used by CI when a commit contains staged
-# Markdown or GitHub workflow/template changes. The hook is opt-in; install it
-# with tools/install-hooks.sh or tools/install-hooks.ps1.
+# Markdown, GitHub workflow/template changes, or mapper-dispatch source/doc
+# edits. The hook is opt-in; install it with tools/install-hooks.sh or
+# tools/install-hooks.ps1.
 
 set -euo pipefail
 
-if git diff --cached --quiet -- '*.md' '*.yml' '*.yaml'; then
+# Mapper dispatch lives in GamePak.kt and the canonical mapper documentation
+# lives in MAPPER_SUPPORT.md. Touching either should also re-run the linter
+# so the mapper ID consistency check cannot be bypassed by a Kotlin-only
+# commit.
+if git diff --cached --quiet -- \
+    '*.md' \
+    '*.yml' \
+    '*.yaml' \
+    'src/main/kotlin/com/github/alondero/nestlin/gamepak/GamePak.kt' \
+    'MAPPER_SUPPORT.md'; then
     exit 0
 fi
 
@@ -14,7 +24,7 @@ if ! command -v "$python_bin" >/dev/null 2>&1; then
     if command -v python3 >/dev/null 2>&1; then
         python_bin=python3
     else
-        echo "ERROR: documentation changes are staged but Python 3 was not found." >&2
+        echo "ERROR: documentation-relevant changes are staged but Python 3 was not found." >&2
         echo "Install Python 3 or set PYTHON to its executable, then retry the commit." >&2
         exit 1
     fi

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Small dependency-free checks for Nestlin's maintained documentation surface."""
 
 from __future__ import annotations
@@ -9,6 +9,29 @@ from pathlib import Path
 from urllib.parse import unquote
 
 
+# Repo-tree locations that the linter must never walk. These directories
+# hold transient, machine-local, or third-party content that is not part
+# of the published documentation surface. Entries are matched as directory
+# prefixes relative to ROOT.
+EXCLUDED_DIRS = (
+    ".git",
+    ".gradle",
+    "build",
+    "native/rcheevos",
+    # Coding-agent session notes, plans, and scratchpads live under
+    # .claude/commands and .claude/skills; managed worktrees live under
+    # .claude/worktrees. None of these are intended to be documentation.
+    ".claude/commands",
+    ".claude/skills",
+    ".claude/worktrees",
+)
+
+# Canonical mapper dispatch source and the documentation that must agree
+# with it. Keep these in sync with the table in
+# docs/DOCUMENTATION_STANDARDS.md.
+GAMEPAK_PATH = "src/main/kotlin/com/github/alondero/nestlin/gamepak/GamePak.kt"
+MAPPER_DOC_PATH = "MAPPER_SUPPORT.md"
+
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = (
     "README.md",
@@ -18,6 +41,9 @@ REQUIRED = (
     ".claude/agents.md",
     ".github/SECURITY.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/ISSUE_TEMPLATE/bug_report.md",
+    ".github/ISSUE_TEMPLATE/compatibility_report.md",
+    ".github/ISSUE_TEMPLATE/feature_request.md",
     ".github/ISSUE_TEMPLATE/regression_report.md",
     "docs/README.md",
     "docs/USER_GUIDE.md",
@@ -39,14 +65,7 @@ MAPPER_HEADING = re.compile(r"^##\s+Mappers?\s+((?:\d+\s*,\s*)*\d+)", re.MULTILI
 
 
 def markdown_files() -> list[Path]:
-    excluded = {
-        ".git",
-        ".gradle",
-        "build",
-        "native/rcheevos",
-        ".claude/commands",
-        ".claude/skills",
-    }
+    excluded = EXCLUDED_DIRS
     files: list[Path] = []
     for path in ROOT.rglob("*.md"):
         relative = path.relative_to(ROOT).as_posix()
@@ -61,13 +80,24 @@ def markdown_files() -> list[Path]:
 
 
 def headings_outside_fences(text: str) -> int:
-    in_fence = False
+    # Track an explicit stack of {fence_char, fence_len} so nested code
+    # blocks (e.g. a 4-backtick wrapper around a 3-backtick example)
+    # toggle correctly and Markdown's "closing fence must be at least as
+    # long as the opener" rule is honoured.
+    fence_stack: list[tuple[str, int]] = []
     count = 0
     for line in text.splitlines():
-        if line.strip().startswith(("```", "~~~")):
-            in_fence = not in_fence
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            opener = stripped[0]
+            opener_len = len(stripped) - len(stripped.lstrip(opener))
+            if fence_stack and fence_stack[-1][0] == opener and opener_len >= fence_stack[-1][1]:
+                # Closing fence: pop the matching opener.
+                fence_stack.pop()
+            else:
+                fence_stack.append((opener, opener_len))
             continue
-        if not in_fence and H1.match(line):
+        if not fence_stack and H1.match(line):
             count += 1
     return count
 
@@ -104,8 +134,8 @@ def check() -> list[str]:
         if not (ROOT / relative).is_file():
             errors.append(f"missing required documentation file: {relative}")
 
-    gamepak = ROOT / "src/main/kotlin/com/github/alondero/nestlin/gamepak/GamePak.kt"
-    mapper_doc = ROOT / "MAPPER_SUPPORT.md"
+    gamepak = ROOT / GAMEPAK_PATH
+    mapper_doc = ROOT / MAPPER_DOC_PATH
     if gamepak.is_file() and mapper_doc.is_file():
         source_ids = {int(value) for value in MAPPER_DISPATCH.findall(gamepak.read_text(encoding="utf-8"))}
         documented_ids = {

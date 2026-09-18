@@ -25,6 +25,7 @@ Nestlin is a learning-focused NES emulator. This directory separates the informa
 - [Research](research/) — cited comparisons and other time-sensitive investigations.
 - [Historical design notes](PPU_RENDERING_PLAN.md) and [Donkey Kong rendering notes](DONKEY_KONG_RENDERING_PLAN.md) — milestone notes retained for context, not current status.
 - [Native RetroAchievements integration](../RA_INTEGRATION.md) — design, build, and runtime fallback details.
+- [Manual RA acceptance script](MANUAL_RA_ACCEPTANCE.md) — per-OS validation steps for the RetroAchievements integration.
 
 ## Source-of-truth rule
 

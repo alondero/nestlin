@@ -56,6 +56,7 @@ python tools/docs_lint.py
 - every Markdown document has exactly one level-one heading;
 - local Markdown links and images resolve to tracked or present files;
 - Markdown files end with a newline;
-- no link points into ignored build output.
+- no link points into ignored build output;
+- mapper IDs dispatched by GamePak.kt match the mapper headings in MAPPER_SUPPORT.md.
 
 The linter deliberately does not impose a universal line length, prose style, or spelling dictionary. Those checks create noisy churn in technical emulator notes and should be added only with a repository-wide migration plan.
