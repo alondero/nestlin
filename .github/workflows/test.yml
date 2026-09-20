@@ -16,14 +16,43 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v3
       # Mesen2-dependent comparison tests are excluded from `test` by build.gradle.kts;
-      # they run locally via `./gradlew testMesenComparison`.
+      # they run locally via `./gradlew testMesenComparison`. TaskGraphLintTest
+      # (issue #312) is part of this lane and guards the source-text side of the
+      # native RA packaging DAG.
       - run: ./gradlew test
+
+      # Issue #312 -- runtime guard for the native RA packaging DAG. Walks the
+      # resolved TaskContainer and asserts `:jar`, `:test`, and `:shadowJar`
+      # can reach `:writeNativeRaManifest` and `:copyNativeRa` through their
+      # declared (or transitive) dependencies. Cheaper than the `--dry-run`
+      # step below because it does not configure `build` / `shadowJar`.
+      - name: Validate Gradle task graph (issue #312)
+        run: ./gradlew validateTaskGraph
+
+      # Issue #312 -- fail-fast on Gradle 8.5+ implicit-dependency warnings
+      # for the full `build` + `shadowJar` DAG. `--dry-run` resolves every
+      # task in the DAG without executing any actions, so this step costs
+      # seconds and surfaces "uses the output of X without declaring an
+      # explicit or implicit dependency" *before* the actual packaging
+      # step runs. `--warning-mode=fail` converts those warnings into
+      # build failures. PRs #303 and #307 each shipped a fix that this
+      # step would have caught at PR time instead of at release.
+      - name: Resolve build + shadowJar DAG with strict warnings (issue #312)
+        run: ./gradlew build shadowJar --dry-run --warning-mode=fail
+
       # Smoke test for the RA manifest + native library path. The
       # smoke runner exits 0 on full pass and 3 when the native
-      # library is unavailable (no compiler on CI). Either is OK —
+      # library is unavailable (no compiler on CI). Either is OK --
       # the manifest + checksum logic is exercised in either case.
       - name: Compile native library
         run: ./gradlew buildNative writeNativeRaManifest
+      - name: Build fat JAR with strict warnings (issue #312)
+        # --warning-mode=fail re-checks the implicit-dependency contract
+        # at *execution* time, which `--dry-run` above cannot. A failure
+        # here means a real regression in the packaging DAG.
+        run: ./gradlew uberJar --warning-mode=fail
       - name: Run native RA smoke runner
-        run: ./gradlew uberJar && java -jar build/libs/nestlin-all.jar nra-smoke
+        # Tolerate exit 3 (native library unavailable on the CI host).
+        # Real smoke regressions (exit 1) still fail this step.
+        run: java -jar build/libs/nestlin-all.jar nra-smoke
         continue-on-error: true

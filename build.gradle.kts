@@ -753,3 +753,122 @@ tasks.register("verifyTestEnv") {
         println("If a value above looks wrong or a test SKIPs unexpectedly: ./gradlew --stop, then re-run.")
     }
 }
+
+// ---------------------------------------------------------------------------
+// :validateTaskGraph — runtime guard for the native RA packaging DAG.
+//
+// Issue #312. PRs #303 and #307 each landed an "also add the explicit
+// `dependsOn`" fix to silence Gradle 8.5's implicit-dependency validator on
+// `./gradlew build` / `./gradlew shadowJar`. That class of regression
+// (a developer adds a consumer task that reads files written by the native
+// chain but forgets to declare the edge) slipped past `./gradlew test`
+// because the unit-test lane picks up the manifest transitively via
+// `processTestResources`. The packaging tasks don't.
+//
+// `TaskGraphLintTest` (src/test/kotlin/.../testutil/) guards the source
+// text — a reviewer who deletes a `dependsOn` line sees a red CI from
+// `./gradlew test`. This task guards the *resolved* DAG at configuration
+// time: even if the lint test's regex were bypassed (e.g. the `dependsOn`
+// line is rewritten in a form the regex doesn't recognise, or the
+// dependency is wired to the wrong task), a `validateTaskGraph` step in CI
+// still fails the build with a precise edge-by-edge report.
+//
+// Why a separate task and not just `dependsOn` it on `:check`:
+//   - It's cheap (configuration-time resolution + a few Set.contains calls)
+//     but it does require a fully configured project, so we run it as its
+//     own target and let CI opt in. The default `./gradlew test` is
+//     unaffected; CI runs both.
+//   - Failing `:check` would also fail every contributor's pre-push run,
+//     which is desirable — but if a contributor's machine is in a
+//     half-configured state (intellij sync mid-refactor), they get the
+//     failure anyway from this task via the lint test.
+//
+// Required edges (six total — three consumers x two providers; the four
+// originally-broken-in-PRs-#303/#307 edges plus the two `:jar` / `:test`
+// → `:copyNativeRa` edges that round out the manifest guarantee across
+// every consumer of the native RA tree):
+//
+//   :jar           -> :writeNativeRaManifest    (plain JAR includes MANIFEST.json)
+//   :jar           -> :copyNativeRa             (plain JAR includes native-ra/ tree)
+//   :test          -> :writeNativeRaManifest    (test lane sees the merged manifest)
+//   :test          -> :copyNativeRa             (test lane sees the native-ra/ tree)
+//   :shadowJar     -> :writeNativeRaManifest    (fat JAR includes MANIFEST.json)
+//   :shadowJar     -> :copyNativeRa             (fat JAR includes native-ra/ tree)
+//
+// TaskDependency.getDependencies(task) only returns the DIRECT declared
+// dependencies (and direct task providers), not the transitive closure.
+// The first revision of this task leaned on that direct set, which would
+// have falsely passed a refactor that introduces an intermediate aggregator
+// (e.g. `nativeRaResources { dependsOn(writeNativeRaManifest, copyNativeRa) }`
+// followed by `jar.dependsOn(nativeRaResources)`). The contract Gradle 8.5's
+// implicit-dependency validator actually enforces is *transitive reachability*
+// — "can the consumer's execution eventually read the provider's outputs?"
+// — so we walk the DAG recursively. The comment used to claim the API
+// already did this; it doesn't, and that's now reflected in the code below
+// and in the failure messages.
+// ---------------------------------------------------------------------------
+tasks.register("validateTaskGraph") {
+    group = "verification"
+    description = "Runtime guard: asserts the native RA packaging DAG declares the required dependsOn edges (issue #312)"
+
+    doLast {
+        val required: Map<String, List<String>> = linkedMapOf(
+            "jar" to listOf("writeNativeRaManifest", "copyNativeRa"),
+            "test" to listOf("writeNativeRaManifest", "copyNativeRa"),
+            "shadowJar" to listOf("writeNativeRaManifest", "copyNativeRa"),
+        )
+
+        // TaskDependency.getDependencies(task) is direct-only; walk the DAG
+        // ourselves to compute the transitive closure. This mirrors what
+        // Gradle 8.5's implicit-dependency validator checks at execution
+        // time. Cycle-safe via the `visited` set: Gradle's DAG is acyclic
+        // by construction, but the defensive guard keeps us honest if a
+        // future plugin (e.g. an IDE sync helper) introduces a self-loop.
+        fun transitiveDependencies(root: org.gradle.api.Task): Set<String> {
+            val visited = linkedSetOf<org.gradle.api.Task>()
+            val stack = ArrayDeque<org.gradle.api.Task>()
+            stack.addLast(root)
+            while (stack.isNotEmpty()) {
+                val t = stack.removeLast()
+                if (!visited.add(t)) continue
+                for (dep in t.taskDependencies.getDependencies(t)) {
+                    if (dep !in visited) stack.addLast(dep)
+                }
+            }
+            return visited.map { it.name }.toSet()
+        }
+
+        val problems = mutableListOf<String>()
+        for ((consumer, providers) in required) {
+            val consumerTask = tasks.findByName(consumer)
+            if (consumerTask == null) {
+                problems += "  - task ':$consumer' does not exist (has it been renamed?)"
+                continue
+            }
+            val reachable = transitiveDependencies(consumerTask)
+            for (provider in providers) {
+                if (provider !in reachable) {
+                    problems += "  - task ':$consumer' cannot transitively reach ':$provider'; " +
+                        "the consumer must declare an explicit dependsOn (direct or via an " +
+                        "intermediate task) into the native RA chain. Reachable tasks from " +
+                        "':$consumer': " + reachable.sorted().joinToString(", ")
+                }
+            }
+        }
+
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "validateTaskGraph: native RA packaging DAG is missing required edges.\n" +
+                    "Each missing edge is a Gradle 8.5 implicit-dependency warning that will\n" +
+                    "fail `./gradlew build` / `./gradlew shadowJar`. The original regressions\n" +
+                    "were fixed in PRs #303 and #307; see issue #312 for the background.\n" +
+                    "Missing edges:\n" + problems.joinToString("\n")
+            )
+        }
+
+        println("validateTaskGraph: PASS -- ${required.size} consumer tasks x ${required.values.sumOf { it.size }} required edges all reachable through the DAG")
+        for ((consumer, providers) in required) {
+            println("  :$consumer -> ${providers.joinToString(", ") { ":$it" }}")
+        }
+    }
+}

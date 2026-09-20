@@ -16,6 +16,17 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 # Run the documentation/link/mapper-consistency lint
 ./gradlew docsLint
 
+# Validate the Gradle task graph (issue #312) — runtime guard that asserts the
+# native RA packaging DAG (:jar, :test, :shadowJar → :writeNativeRaManifest /
+# :copyNativeRa) is wired correctly. Complements TaskGraphLintTest, which
+# guards the source-text side. CI runs both. Cheap (configuration only).
+./gradlew validateTaskGraph
+
+# Resolve the full build + shadowJar DAG without executing actions; surfaces
+# Gradle 8.5+ implicit-dependency warnings as build failures. The fast
+# pre-flight for any change that touches the packaging chain.
+./gradlew build shadowJar --dry-run --warning-mode=fail
+
 # Run the Mesen2-comparison suite (needs Mesen2 on disk — see CLAUDE.local.md)
 ./gradlew testMesenComparison
 
