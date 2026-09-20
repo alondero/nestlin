@@ -32,9 +32,18 @@ import org.junit.jupiter.api.Test
  * is restored here as the first @Test, with comments and KDoc stripped before
  * matching so the rule's own documentation does not trip it.
  *
+ * Cross-platform note: Konsist 0.13.0's `KoFileDeclaration.path` returns an
+ * OS-native path string (backslashes on Windows, forward slashes elsewhere).
+ * Any rule that wants to compare against a path must normalize first, but the
+ * Konsist ways to express "is this file in package X" — `file.packagee` and
+ * `declaration.resideInPackage(...)` — operate on the Kotlin source's `package`
+ * directive (always dotted, no separator ambiguity) and so are platform-
+ * independent. The leaf-package rule below deliberately uses those instead of
+ * the path string.
+ *
  * Adding a new rule: copy one of the existing `@Test fun`s, pick the Konsist
  * scope you need (`Konsist.scopeFromProject()`, `scopeFromProduction()`, or
- * `scopeFromTest()`), filter to the declaration kind you care about, and assert.
+ * `scopeFromTest()`), filter the declaration kind you care about, and assert.
  * Run `./gradlew test --tests *KonsistArchitectureTest` to iterate quickly.
  */
 class KonsistArchitectureTest {
@@ -51,6 +60,21 @@ class KonsistArchitectureTest {
      * regex walker. The Konsist-specific win is that the file list is the
      * compiler's view of the project, not whatever a `Files.walk` happens to
      * enumerate, so generated/build/config sources stay out of the rule's way.
+     *
+     * Self-tripping caveat (load-bearing assumption): the rule's `additionalMessage`
+     * *contains* the literal substring ".values()". The current implementation
+     * is safe because [stripComments] does not strip string literals and the
+     * `assertFalse` call feeds a stripped view of the file to Konsist — but the
+     * load-bearing fact is that this test file lives in `src/test/kotlin/` and
+     * is therefore excluded from `Konsist.scopeFromProduction()`. If a future
+     * contributor copies this rule into a production source file, or moves
+     * the test into `scopeFromProject()`, the lint will self-fail.
+     *
+     * Nested block comments are also not handled: the [BLOCK_COMMENT_RE] lazy
+     * quantifier stops at the first close-marker, so trailing text remains. In
+     * practice no Kotlin source uses nested block comments; if one ever does,
+     * the stripper will under-strip rather than over-strip (false-positive
+     * biased), which is the safer direction for an architectural lint.
      */
     @Test
     fun `no production code calls Enum values() — use Enum entries instead`() {
@@ -61,67 +85,112 @@ class KonsistArchitectureTest {
                     "(Kotlin 1.9+ EnumEntries, zero allocation). " +
                     "See CLAUDE.md 'Conventions' and SaveState.kt's readEnum helper.",
             ) { file ->
-                // Strip KDoc / block / line comments so the rule's own explanation
-                // doesn't trip it. Strings are left alone — "values()" inside a
-                // string literal is harmless and rare; the false-positive cost
-                // outweighs the rare true-positive inside a message constant.
                 stripComments(file.text).contains(".values()")
             }
     }
 
     /**
-     * Every mapper class lives in the gamepak subpackage. Pairs with
-     * `MapperCoverageLintTest` (which checks GamePak dispatch + MAPPER_SUPPORT.md),
-     * this is the AST-half of the same invariant — the file-system half has to
-     * use a regex because Konsist's `KoScope.files` won't tell us whether the
-     * class is reached from `GamePak.createMapper()`.
+     * Every mapper class (Mapper0..Mapper228) lives in `com.github.alondero.nestlin.gamepak`.
+     *
+     * Pairs with [MapperCoverageLintTest], but each test covers a different
+     * observable. `MapperCoverageLintTest` walks the regex-built 16-byte iNES
+     * header list and the source-tree file names — it verifies (a) `MapperNN.kt`
+     * files exist, (b) the `MapperNN ->` arm appears in `GamePak.createMapper()`,
+     * and (c) `MAPPER_SUPPORT.md` lists the mapper. This rule verifies the
+     * Kotlin declaration's package, which the regex test cannot reach because
+     * there is no way to map a `class MapperNN : Mapper` declaration back to a
+     * file path from outside the Kotlin AST.
+     *
+     * Filter rationale: the regex [MAPPER_CLASS_NAME_RE] anchors on `^Mapper\d+$`
+     * to avoid false-positives like `MapperState` (cpu/InterruptController.kt),
+     * and future helpers that happen to start with "Mapper" — `Mapper1Internal`,
+     * `Mapper42_test`, etc.
      */
     @Test
     fun `Mapper classes reside in the gamepak package`() {
         Konsist.scopeFromProduction()
             .classes()
-            .filter { isMapperClass(it.name) }
+            .filter { it.name.matches(MAPPER_CLASS_NAME_RE) }
             .assertTrue(
-                additionalMessage = "Mapper classes (MapperNN : ...) must live in " +
+                additionalMessage = "Mapper classes (Mapper0..Mapper228) must live in " +
                     "com.github.alondero.nestlin.gamepak — they are dispatched by " +
                     "GamePak.createMapper().",
-            ) { it.resideInPackage("..gamepak..") }
+            ) { it.resideInPackage("com.github.alondero.nestlin.gamepak..") }
     }
 
     /**
-     * Sanity check that the public subsystem packages own no cross-package
-     * dependencies on each other. `ui/` may import anything; `cli/`, `input/`,
-     * `movie/`, `rewind/` are leaves and should not be transitively depending on
-     * each other (they collaborate via Nestlin + SaveState, not direct calls).
+     * The internal subsystem packages (`input/`, `movie/`, `rewind/`) collaborate
+     * via `Nestlin`, `SaveState`, or a small shared interface — they do not
+     * import each other directly. `cli/` is the CLI aggregator and is the one
+     * documented exception; entry-point code wires features together, so direct
+     * imports of `movie.runOneFrame`, `movie.Fm2Format`, etc. are expected.
+     *
+     * Implementation note: the filter uses [KoFileDeclaration.packagee] rather
+     * than `file.path` because the latter is OS-native (backslashes on Windows)
+     * and the rule must work identically on every contributor's machine. The
+     * package directive is always dotted, so no normalization is needed.
+     *
+     * Grandfathering: [LEAF_CROSS_IMPORT_BASELINE] lists one file that
+     * legitimately cross-imports today (input/InputSource.kt -> movie.PendingInputBuffer
+     * for live recording). New violations are bugs; the baseline entry must be
+     * deleted once the offending file is migrated.
      */
     @Test
-    fun `leaf subsystem packages do not cross-import each other`() {
-        val leaves = listOf("cli", "input", "movie", "rewind")
-        Konsist.scopeFromProduction()
-            .files
-            .filter { file -> leaves.any { file.path.contains("/$it/") } }
-            .assertFalse(
-                additionalMessage = "Leaf subsystem packages (cli, input, movie, rewind) " +
-                    "must not import each other directly. Collaborate via Nestlin, " +
-                    "SaveState, or a small shared interface in the parent package.",
-            ) { file ->
-                val origin = leaves.first { file.path.contains("/$it/") }
-                val imports = file.imports.map { it.name }
-                leaves.any { other -> other != origin && imports.any { it.startsWith("com.github.alondero.nestlin.$other.") } }
-            }
-    }
+    fun `internal subsystem packages do not cross-import each other`() {
+        val leafPackages = LEAF_PACKAGES.map { "com.github.alondero.nestlin.$it" }.toSet()
 
-    private fun isMapperClass(name: String): Boolean =
-        name.startsWith("Mapper") &&
-            name.length > 6 &&
-            name[6].isDigit()
+        data class CrossImport(val fileId: String, val importedLeaves: Set<String>)
+
+        val offenders: List<CrossImport> = Konsist.scopeFromProduction()
+            .files
+            .filter { file -> file.packagee?.fullyQualifiedName in leafPackages }
+            .mapNotNull { file ->
+                val pkg = file.packagee?.fullyQualifiedName ?: return@mapNotNull null
+                val fileId = "${pkg.substringAfterLast('.')}/${file.nameWithExtension}"
+                val origin = LEAF_PACKAGES.first { "com.github.alondero.nestlin.$it" == pkg }
+                val importedLeaves = file.imports
+                    .map { it.name }
+                    .filter { it.startsWith("com.github.alondero.nestlin.") }
+                    .mapNotNull { path ->
+                        LEAF_PACKAGES.firstOrNull { other ->
+                            other != origin && path.startsWith("com.github.alondero.nestlin.$other.")
+                        }
+                    }
+                    .toSet()
+                if (importedLeaves.isEmpty()) null else CrossImport(fileId, importedLeaves)
+            }
+            .toList()
+
+        val newOffenders = offenders.filter { it.fileId !in LEAF_CROSS_IMPORT_BASELINE }
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+            newOffenders.isEmpty(),
+            "Internal subsystem packages (input, movie, rewind) must not cross-import " +
+                "each other directly. cli/ is the CLI aggregator and is the documented " +
+                "exception; everything else should collaborate via Nestlin, SaveState, " +
+                "or a small shared interface in the parent package. " +
+                "New offender(s): $newOffenders",
+        )
+
+        // The baseline may only shrink: a baselined file that no longer triggers
+        // the rule has been migrated — delete its entry so the list keeps only the
+        // genuine remaining legacy offenders.
+        val stillOffending = offenders.map { it.fileId }.toSet()
+        val stale = LEAF_CROSS_IMPORT_BASELINE - stillOffending
+        org.junit.jupiter.api.Assertions.assertTrue(
+            stale.isEmpty(),
+            "Baseline entries no longer match the leaf-cross-import rule — remove them " +
+                "from KonsistArchitectureTest.LEAF_CROSS_IMPORT_BASELINE so the list only " +
+                "shrinks: $stale",
+        )
+    }
 
     /**
      * Strip KDoc / block / line comments. Mirrors the comment-stripping the
      * deleted `KotlinIdiomsLintTest` used, kept narrow on purpose: block
      * comments first, then per-line `//`. Doesn't try to be string-literal
-     * aware — `// values()` inside a string literal is content the rule should
-     * flag anyway.
+     * aware — see the rule's own `additionalMessage` caveat for why the test
+     * file staying out of `scopeFromProduction()` is load-bearing.
      */
     private fun stripComments(source: String): String {
         val noBlock = BLOCK_COMMENT_RE.replace(source, "")
@@ -133,5 +202,23 @@ class KonsistArchitectureTest {
 
     companion object {
         private val BLOCK_COMMENT_RE = Regex("""/\*[\s\S]*?\*/""")
+        private val MAPPER_CLASS_NAME_RE = Regex("""^Mapper\d+$""")
+
+        /** Internal subsystem leaves. cli/ is the CLI aggregator and is excluded. */
+        private val LEAF_PACKAGES = listOf("input", "movie", "rewind")
+
+        /**
+         * Grandfathered files that legitimately cross-import across the internal
+         * subsystem leaves. This list must ONLY SHRINK — never add to it.
+         * Migrate the file to use a shared interface or move the dependency, then
+         * delete its entry.
+         */
+        private val LEAF_CROSS_IMPORT_BASELINE = setOf(
+            // [FromPendingBuffer] references [PendingInputBuffer] to plumb live
+            // recording (the keyboard writes into the movie's per-frame buffer).
+            // TODO: expose a small interface in input/ that movie/ implements, then
+            // drop the movie import and delete this baseline entry.
+            "input/InputSource.kt",
+        )
     }
 }
