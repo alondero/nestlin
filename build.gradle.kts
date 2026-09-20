@@ -523,6 +523,15 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
     testImplementation("com.natpryce:hamkrest:1.8.0.1")
+
+    // Konsist — Kotlin AST-based architectural linter (issue #314). Runs as a
+    // JUnit test in the fast lane (`./gradlew test`). Version pinned to 0.13.0
+    // (Oct 2023) so the embedded kotlin-compiler-embeddable stays within the
+    // project's Kotlin 1.9.x toolchain — the latest 0.17.x line bumps the
+    // compiler to 2.0.20, which would conflict with our pinned 1.9.22. We
+    // periodically retest against the latest release; if the API stays
+    // compatible we move forward.
+    testImplementation("com.lemonappdev:konsist:0.13.0")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {

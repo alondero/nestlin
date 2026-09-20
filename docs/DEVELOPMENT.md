@@ -99,6 +99,19 @@ The repository maintainer owns the following small, dependency-light checks and 
 
 Hooks are opt-in and must never be treated as a substitute for CI. The authoritative check is `.github/workflows/docs.yml` plus the `check` dependency on `docsLint`.
 
+## Lint-as-test tooling
+
+Two complementary mechanisms keep Kotlin style and architectural conventions from regressing. Both run as part of `./gradlew test` — there is no separate "lint" task to remember.
+
+| Layer | Tool | Lives in | Catches |
+| --- | --- | --- | --- |
+| AST rules | [Konsist](https://github.com/LemonAppDev/konsist) 0.13.0 | `src/test/kotlin/com/github/alondero/nestlin/testutil/KonsistArchitectureTest.kt` | Architectural and Kotlin-idiom rules: `Enum.entries` over `Enum.values()`, mapper classes in `gamepak/`, leaf-package cross-imports. |
+| Source-text patterns | Plain JUnit + regex | `src/test/kotlin/com/github/alondero/nestlin/testutil/HeaderConstructionLintTest.kt`, `MapperCoverageLintTest.kt`, `TestAssertsLintTest.kt` | Literal-byte rules that the AST does not expose: hand-built iNES headers (`ByteArray(16)`), Mesen2-test lane wiring, `kotlin.test` imports, `Assertions.fail(<string>)` overloads. These files own a shrinking-baseline pattern for grandfathered offenders. |
+
+Why Konsist and not Detekt or ktlint: the project pins Kotlin 1.9.22; the latest Konsist line (0.17.x) embeds Kotlin 2.0.20 and would conflict. 0.13.0 matches the project's Kotlin toolchain, runs in the fast JUnit lane, and expresses rules in Kotlin next to existing tests — no YAML to maintain, no separate Gradle plugin to keep in lock-step. The trade-off is that rules whose signal is in literal source bytes (regex-shaped) stay in the older `*LintTest.kt` files; Konsist can host them via `KoFileDeclaration.text`, but doing so would lose the grandfathered-baseline migration machinery those tests use to shrink one offender at a time.
+
+To add a new AST rule, see the "Static analysis — Konsist" bullet in `CLAUDE.md`. To add a new source-text lint, copy an existing `*LintTest.kt`, define a `RAW_*_PATTERNS` regex, an `EXCLUDED` set of files that legitimately mention the pattern (the builder, the lint itself, doc comments), and a `BASELINE` set of grandfathered offenders that must only shrink.
+
 ## Coding and commit standards
 
 Use Kotlin idioms already present in the codebase and keep changes focused. Conventional Commits are required by the repository hooks, for example:
