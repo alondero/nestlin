@@ -43,6 +43,8 @@ PowerShell users can run `tools/install-hooks.ps1`. The hook only blocks a commi
 | `./gradlew verifyTestEnv` | Print resolved Mesen2, ROM, and strict-mode settings. | No; it reports what is missing. |
 | `./gradlew shadowJar` | Build the runnable fat JAR. | Optional native RA asset. |
 | `./gradlew buildNative` | Build the native RA façade. | A supported C compiler. |
+| `./gradlew validateTaskGraph` | Asserts the native RA packaging DAG (`:jar`, `:test`, `:shadowJar` → `:writeNativeRaManifest` / `:copyNativeRa`) is wired at configuration time. Issue #312. | No. |
+| `./gradlew build shadowJar --dry-run --warning-mode=fail` | Resolves the full `build` + `shadowJar` DAG without executing actions; surfaces Gradle 8.5+ implicit-dependency warnings as build failures. Issue #312. | No. |
 
 The headless JAR commands and exit codes are documented in [`USER_GUIDE.md`](USER_GUIDE.md) and [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). Do not copy machine-local absolute paths into tracked docs.
 
