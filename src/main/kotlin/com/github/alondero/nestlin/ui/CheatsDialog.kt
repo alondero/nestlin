@@ -96,9 +96,7 @@ class CheatsDialog(owner: Window, initial: List<Cheat>) : Dialog<List<Cheat>>() 
                 isSelected = cheat.enabled
                 setOnAction { draft[index] = draft[index].copy(enabled = isSelected) }
             }
-            val decoded = "%04X:%02X".format(code.address, code.value) +
-                (code.compare?.let { " (if %02X)".format(it) } ?: "")
-            val details = Label("${code.format}: $decoded").apply {
+            val details = Label(formatDetails(code)).apply {
                 maxWidth = Double.MAX_VALUE
                 HBox.setHgrow(this, Priority.ALWAYS)
             }
@@ -111,5 +109,11 @@ class CheatsDialog(owner: Window, initial: List<Cheat>) : Dialog<List<Cheat>>() 
             rows.children.add(HBox(8.0, enabled, details, remove))
         }
         if (draft.isEmpty()) rows.children.add(Label("No cheats added."))
+    }
+
+    companion object {
+        internal fun formatDetails(code: CheatCode): String =
+            "${code.format}: " + "%04X:%02X".format(code.address, code.value) +
+                (code.compare?.let { " (if %02X)".format(it) } ?: "")
     }
 }

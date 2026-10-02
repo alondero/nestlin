@@ -187,6 +187,7 @@ class NestlinApplication : FrameListener, Application() {
                         // different slot files.
                         updateSlotMenu()
                         updateDebugMenu()
+                        updateEmulationMenu()
                         // Flash the Memory Editor grid (issue #169) so
                         // the user sees a full-tick highlight on every
                         // visible cell — confirms the new ROM is
@@ -804,6 +805,7 @@ class NestlinApplication : FrameListener, Application() {
             cheatsItem.setOnAction { handleCheats() }
             cheatsMenuItem = cheatsItem
             emulationMenu.items.addAll(pauseItem, cheatsItem)
+            emulationMenu.setOnShowing { updateEmulationMenu() }
             menuBar.menus.add(emulationMenu)
 
             // Movie menu (issue #123). Three actions: toggle recording, load + play a movie,
@@ -1323,6 +1325,7 @@ class NestlinApplication : FrameListener, Application() {
                     updateTitle()
                     updateSlotMenu()
                     updateDebugMenu()
+                    updateEmulationMenu()
                 }
                 startEmulation()
             }
@@ -1507,7 +1510,11 @@ class NestlinApplication : FrameListener, Application() {
     /** Grey out the Debug → Memory Editor item when no ROM is loaded. */
     private fun updateDebugMenu() {
         memoryEditorMenuItem?.isDisable = nestlin.loadedRom == null
-        cheatsMenuItem?.isDisable = nestlin.loadedRom == null
+    }
+
+    /** Refresh Emulation actions after ROM/movie transitions and when the menu opens. */
+    private fun updateEmulationMenu() {
+        cheatsMenuItem?.isDisable = nestlin.loadedRom == null || movieState != MovieState.NONE
     }
 
     private fun handleCheats() {
@@ -2095,6 +2102,7 @@ class NestlinApplication : FrameListener, Application() {
         liveRecorder = recorder
         activeMoviePath = file.toPath()
         movieState = MovieState.RECORDING
+        updateEmulationMenu()
         println("[MOVIE] Recording started (from power-on) → ${file.absolutePath}")
     }
 
@@ -2142,6 +2150,7 @@ class NestlinApplication : FrameListener, Application() {
         // would get committed on the next frame.
         nestlin.getController1().pendingButtons = nestlin.getController1().buttons
         nestlin.getController2().pendingButtons = nestlin.getController2().buttons
+        updateEmulationMenu()
     }
 
     /**
@@ -2207,6 +2216,7 @@ class NestlinApplication : FrameListener, Application() {
         livePlayer = player
         activeMoviePath = file.toPath()
         movieState = MovieState.PLAYING
+        updateEmulationMenu()
         println("[MOVIE] Playing ${movie.inputs.size}-frame movie from power-on → ${file.absolutePath}")
     }
 
@@ -2230,7 +2240,6 @@ class NestlinApplication : FrameListener, Application() {
      * changed), same approach as the fast-forward indicator refresh.
      */
     private fun refreshMovieIndicator() {
-        cheatsMenuItem?.isDisable = nestlin.loadedRom == null || movieState != MovieState.NONE
         // End-of-movie auto-stop: the player reports isFinished once the last row's input
         // has been written. We clean up here (JavaFX thread) rather than from inside the
         // latch hook (emulation thread) so the on-screen indicator and any menu state can

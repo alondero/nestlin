@@ -83,6 +83,9 @@ cheat search are deferred.
 the configured list and indexes enabled substitutions by canonical CPU address.
 It allocates the index only when codes are enabled; reads allocate nothing and
 perform no memory writes. Mutations require a stopped emulation thread.
+The immutable list and completed index are published together through a volatile
+configuration reference. Emulation-menu availability is refreshed on ROM/movie
+transitions and menu opening, independently of Debug and indicator rendering.
 
 `Memory.readBus` holds the shared address decoder for real reads and peeks.
 `Memory.get` reads the original byte exactly once, applies cheats, then updates

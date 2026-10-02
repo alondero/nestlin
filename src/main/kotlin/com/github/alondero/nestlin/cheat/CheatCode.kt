@@ -34,6 +34,10 @@ data class CheatCode(
         private const val GENIE_ALPHABET = "APZLGITYEOXUKSVN"
         private val rawPattern = Regex("([0-9A-F]{4})(?:[:=]([0-9A-F]{2})(?::([0-9A-F]{2}))?|\\?([0-9A-F]{2}):([0-9A-F]{2}))")
         private val hexPattern = Regex("[0-9A-F]{8}")
+        private val geniePattern = Regex(
+            "[$GENIE_ALPHABET]{6}|[$GENIE_ALPHABET]{8}|" +
+                "[$GENIE_ALPHABET]{3}-[$GENIE_ALPHABET]{3}|[$GENIE_ALPHABET]{4}-[$GENIE_ALPHABET]{4}"
+        )
         // Bit positions in the decoded DDCCAAAA Pro Action Rocky payload.
         private val rockyBits = intArrayOf(
             15, 3, 13, 14, 1, 6, 9, 5, 0, 12, 7, 2, 8, 10, 11, 4,
@@ -75,7 +79,7 @@ data class CheatCode(
             }.toList()
 
         private fun decodeGenie(text: String): CheatCode {
-            require(Regex("[APZLGITYEOXUKSVN]{6}|[APZLGITYEOXUKSVN]{8}|[APZLGITYEOXUKSVN]{3}-[APZLGITYEOXUKSVN]{3}|[APZLGITYEOXUKSVN]{4}-[APZLGITYEOXUKSVN]{4}").matches(text)) {
+            require(geniePattern.matches(text)) {
                 "NES Game Genie codes contain six or eight letters from $GENIE_ALPHABET."
             }
             val code = text.replace("-", "")

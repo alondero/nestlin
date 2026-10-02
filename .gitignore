@@ -29,6 +29,9 @@ hs_err_pid*
 .claude/scheduled_tasks.lock
 CLAUDE.local.md
 
+# Codex machine-local settings and session hooks
+/.codex/
+
 # Debug output files
 *.debug.txt
 

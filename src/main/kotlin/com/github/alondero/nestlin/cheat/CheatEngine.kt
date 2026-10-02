@@ -7,9 +7,13 @@ import java.util.Collections
  * Mutate only while emulation is stopped. Reads perform no allocations or writes.
  */
 internal class CheatEngine {
-    var cheats: List<Cheat> = emptyList()
-        private set
-    private var byAddress: Array<List<CheatCode>?>? = null
+    private class Configuration(val cheats: List<Cheat>, val byAddress: Array<List<CheatCode>?>?)
+
+    // Publish the list and its completed index together across UI/emulation threads.
+    @Volatile
+    private var configuration = Configuration(emptyList(), null)
+
+    val cheats: List<Cheat> get() = configuration.cheats
 
     fun replace(cheats: List<Cheat>) {
         val snapshot = Collections.unmodifiableList(cheats.toList())
@@ -17,12 +21,11 @@ internal class CheatEngine {
         val index = if (enabled.isEmpty()) null else arrayOfNulls<List<CheatCode>>(0x10000).also { table ->
             enabled.groupBy { backingAddress(it.address) }.forEach { (address, codes) -> table[address] = codes }
         }
-        this.cheats = snapshot
-        byAddress = index
+        configuration = Configuration(snapshot, index)
     }
 
     fun apply(address: Int, original: Byte): Byte {
-        val table = byAddress ?: return original
+        val table = configuration.byAddress ?: return original
         if (address !in 0..0xFFFF) return original
         val codes = table[backingAddress(address)] ?: return original
         for (code in codes) {
