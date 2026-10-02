@@ -1,6 +1,10 @@
 # Accuracy-preserving performance audit
 
-Audit date: 2026-10-02. Baseline: `1bd6ef3ebd02567a194e9afb81c95a5da7ce0056`.
+For contributors measuring emulator performance: run `./gradlew coreBench` for
+the repeatable rendering workload, then use the evidence and follow-ups below.
+
+Audit date: 2026-10-02. Measurement baseline: `1bd6ef3ebd02567a194e9afb81c95a5da7ce0056`.
+The isolated PR uses current master, `6b3fd58e035a77602042820e146e3fcd3da0c1c7`, as its base.
 
 The first three opportunities below were implemented in this session. They remove
 temporary allocations while retaining the same emulated cycles, bus accesses,
@@ -64,10 +68,16 @@ Lolo (mapper 1), and Kirby (mapper 4), using the available local ROMs with rewin
 enabled, matched the same three fingerprint types for each game. These checks
 exercise real instruction mixes and mapper-driven banking rather than the
 synthetic JMP loop; their timings were not included in the performance table.
-The NTSC rendering scenarios (with/without rewind) shared these fingerprints:
+The same four synthetic scenarios and three real-game checks were repeated
+against the clean PR's master baseline and matched state/frame/audio fingerprints
+within each pair. Master uses save-state version 12, whereas the measurement
+worktree uses version 11; the versions have different serialized-state hashes.
+That format change belongs to master and is not introduced by these optimisations.
+The following fingerprints are the version-12 values reproduced by the PR's
+`coreBench` command. The NTSC rendering scenarios (with/without rewind) share:
 
 ```text
-state 958be09ab0dd007a5fad023930421b4074b53bc32ef6324ff0db1c394703ce06
+state 3949b24927ec62b91a8aadd4bc8cc0134b5f84e8a95110976afb6dbb3c1d6206
 frame 9e5eade7c9318d422f01f6db744fcdd4c8935a8071a841d20a25c7ee5270287d
 audio 1d38748ca38b03760387bbf27d9c1544a22a88fc940578ce293f3c8647cf8da3
 ```
@@ -75,7 +85,7 @@ audio 1d38748ca38b03760387bbf27d9c1544a22a88fc940578ce293f3c8647cf8da3
 PAL rendering fingerprints:
 
 ```text
-state 11956b0c4116021110e8be7f564185bcd2271a07523e3f15f020d226c889c18d
+state ab755e897c2da6295a41dd817e7f6df88a870b16cd85c358abf2cbbcb19eb4e4
 frame 9e5eade7c9318d422f01f6db744fcdd4c8935a8071a841d20a25c7ee5270287d
 audio f069af0a8cc728eb13b67d1751dff898d77b5e88167793cc24078ba1538816c6
 ```
@@ -83,7 +93,7 @@ audio f069af0a8cc728eb13b67d1751dff898d77b5e88167793cc24078ba1538816c6
 NTSC forced-blank fingerprints:
 
 ```text
-state 1fa276d2831dc471427afb736e0cddfca5b974393bb56a0b41861da1c82e19e0
+state 853eb2c369c226aa20233422e173bd3f7ea746ec92962ed6660f879b9cc60eea
 frame bc9dba3196b364a40e65478b534d78b2add4113ce63abe6bb3692ea4803ebaac
 audio 47b9b73167e68c39bb2d317d264cf3e1d19765d1abdb3492465341c6ca38c371
 ```
@@ -109,13 +119,15 @@ The existing nametable, mapper-19 override, A12, sprite selection/overflow and O
 tests also cover the changed routing. No save-state version bump is necessary:
 the serialized fields and their order have not changed.
 
-Independent review of this session's diff found no actionable Standards findings
+Independent review of this session's diff has no unresolved Standards findings
 against `CLAUDE.md`/the test strategy, and no Spec findings against the request for
 ten opportunities, three implemented changes, preserved accuracy and deferred
 GitHub issues.
 
-Final `gradlew.bat build` passed: 1,871 functional tests passed with two existing
+The starting worktree's `gradlew.bat build` passed: 1,871 functional tests passed with two existing
 skips, both isolated allocation checks passed, and repository lint checks passed.
+The clean PR checkout also passed `build` against current master: 1,892 functional
+tests and both isolated allocation checks passed, with two existing skips.
 The full Mesen2 comparison lane was not run; equivalence here is against the
 unchanged baseline implementation, alongside the existing functional suite.
 
