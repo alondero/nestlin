@@ -32,7 +32,7 @@ class A12EdgeRateTest {
 
         // chrReadDelegate routes pattern-table reads through the A12 detector.
         // Returning zero is fine for this test - we only care about address bits.
-        memory.ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = { _ -> 0 }
+        memory.ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = PpuInternalMemory.ChrRead { _ -> 0 }
 
         var risingEdgeCount = 0
         memory.ppuAddressedMemory.ppuInternalMemory.a12EdgeListener = { rising ->
