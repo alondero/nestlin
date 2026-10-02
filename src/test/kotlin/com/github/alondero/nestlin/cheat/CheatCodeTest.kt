@@ -68,6 +68,19 @@ class CheatCodeTest {
     }
 
     @Test
+    fun `Auto requires a format for eight hexadecimal characters including letters only`() {
+        for (text in listOf("aaaaaaaa", "EEEEEEEE", "aEaEaEaE", "15C93C0A", "1234ABCD")) {
+            assertThrowsWithMessage<IllegalArgumentException>("Select NES") { CheatCode.parse(text) }
+        }
+        val genie = CheatCode.parse("AAAAAAAA", CheatFormat.GAME_GENIE)
+        assertThat(genie.address, equalTo(0x8000))
+        assertThat(genie.value, equalTo(0))
+        assertThat(genie.compare, equalTo(0))
+        assertThat(CheatCode.parse("AAAA-AAAA"), equalTo(genie))
+        assertThat(CheatCode.parse("AAAAAA").format, equalTo(CheatFormat.GAME_GENIE))
+    }
+
+    @Test
     fun `batch validation reports the original line number and accepts blank lines`() {
         assertThat(CheatCode.parseLines("\nSXIOPO\r\n\n075A:09\n").size, equalTo(2))
         assertThrowsWithMessage<IllegalArgumentException>("Line 3:") {

@@ -252,7 +252,7 @@ class Nestlin {
         cpu.reset()
         applyRegion()
         // A power-cycle is a fresh timeline; any rewind history predates this boot. Clearing
-        // here also covers the Hard Reset path (resetRomForMovieSession -> load + powerReset).
+        // here also covers the Hard Reset path through GameSessionCoordinator.powerReset.
         rewind.clearBuffer()
     }
 

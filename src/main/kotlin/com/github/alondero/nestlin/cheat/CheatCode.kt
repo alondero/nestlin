@@ -44,18 +44,18 @@ data class CheatCode(
             19, 21, 23, 22, 20, 17, 16, 18, 29, 31, 24, 26, 25, 30, 27, 28,
         )
 
-        /** Strict, case-insensitive parsing. Eight-digit device codes require an explicit format. */
+        /** Strict, case-insensitive parsing. Ungrouped eight-character hex codes require a format. */
         fun parse(input: String, format: CheatFormat = CheatFormat.AUTO): CheatCode {
             val text = input.trim().uppercase(Locale.ROOT)
             require(text.isNotEmpty()) { "Enter a cheat code." }
             val selected = if (format == CheatFormat.AUTO) {
                 when {
                     rawPattern.matches(text) -> CheatFormat.RAW
-                    text.all { it in GENIE_ALPHABET || it == '-' } -> CheatFormat.GAME_GENIE
                     hexPattern.matches(text) -> throw IllegalArgumentException(
-                        "Select NES Pro Action Replay or Pro Action Rocky for an eight-digit code. " +
+                        "Select NES Game Genie, Pro Action Replay or Pro Action Rocky for an eight-character hex code. " +
                             "GameShark codes for other consoles are not NES codes."
                     )
+                    text.all { it in GENIE_ALPHABET || it == '-' } -> CheatFormat.GAME_GENIE
                     else -> throw IllegalArgumentException("Expected a NES Game Genie code or a raw code such as 075A:09.")
                 }
             } else format

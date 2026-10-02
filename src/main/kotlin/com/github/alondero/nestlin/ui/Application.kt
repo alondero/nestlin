@@ -1514,6 +1514,10 @@ class NestlinApplication : FrameListener, Application() {
 
     /** Refresh Emulation actions after ROM/movie transitions and when the menu opens. */
     private fun updateEmulationMenu() {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater { updateEmulationMenu() }
+            return
+        }
         cheatsMenuItem?.isDisable = nestlin.loadedRom == null || movieState != MovieState.NONE
     }
 
@@ -2232,6 +2236,7 @@ class NestlinApplication : FrameListener, Application() {
         livePlayer = null
         movieState = MovieState.NONE
         activeMoviePath = null
+        updateEmulationMenu()
     }
 
     /**

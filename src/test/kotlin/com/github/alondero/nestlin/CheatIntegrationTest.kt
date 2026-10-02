@@ -153,6 +153,41 @@ class CheatIntegrationTest {
     }
 
     @Test
+    fun `coordinator hard reset boots a bytes-only game and preserves its cheats`() {
+        val emu = Nestlin()
+        val session = GameSessionCoordinator(emu, NoOpRetroAchievementsService)
+        session.loadBytes(testRom {
+            prg[0] = 0xA9.toByte() // LDA #$03
+            prg[1] = 3
+            prg[2] = 0x85.toByte() // STA $10
+            prg[3] = 0x10
+            prg[4] = 0x4C // JMP $8004: execute the store only once per boot.
+            prg[5] = 4
+            prg[6] = 0x80.toByte()
+            resetVector(0x8000)
+        }, "bytes-only")
+        val loadedRom = emu.loadedRom
+        assertThat(loadedRom?.sourcePath, equalTo(null))
+        val powerOnRam = emu.peekMemory(0x10)
+        repeat(50) { emu.stepCpuCycle() }
+        assertThat(emu.peekMemory(0x10), equalTo(3.toByte()))
+        val cheats = listOf(cheat("0010:09"))
+        emu.setCheats(cheats)
+        emu.memory[0x10] = 4
+        emu.rewindBuffer.capture(byteArrayOf(1))
+
+        session.powerReset()
+
+        assertThat(emu.loadedRom, equalTo(loadedRom))
+        assertThat(emu.cheats, equalTo(cheats))
+        assertThat(emu.peekMemory(0x10), equalTo(powerOnRam))
+        assertThat(emu.memory[0x10], equalTo(9.toByte()))
+        assertThat(emu.rewindBufferSize(), equalTo(0))
+        repeat(50) { emu.stepCpuCycle() }
+        assertThat(emu.peekMemory(0x10), equalTo(3.toByte()))
+    }
+
+    @Test
     fun `coordinator hard reset preserves cheats for a file-backed game`() {
         val emu = Nestlin()
         val session = GameSessionCoordinator(emu, NoOpRetroAchievementsService)

@@ -23,9 +23,12 @@ unchanged. Blank lines are ignored.
 Letters and hexadecimal digits are case-insensitive. Game Genie optionally
 accepts one grouping hyphen (`GOS-SIP`, `ZEXP-YGLA`). Raw addresses use four hex
 digits and byte values use two. **Auto** recognizes Game Genie and raw codes;
-eight-digit codes require selecting their device, since Replay and Rocky have
-different encodings. GameShark/Action Replay codes for Game Boy, SNES, N64,
-PlayStation, GBA and other consoles are not NES codes and are not supported.
+ungrouped eight-character hexadecimal codes require selecting their format,
+including letter-only codes such as `AAAAAAAA`. For a Game Genie code matching
+that form, select **NES Game Genie** or use its grouping hyphen (`AAAA-AAAA`).
+Replay and Rocky have different encodings. GameShark/Action Replay codes for
+Game Boy, SNES, N64, PlayStation, GBA and other consoles are not NES codes and
+are not supported.
 An unencrypted NES address/value code published under those provider names can
 be entered in the raw format.
 
@@ -66,11 +69,15 @@ Editor's planned freeze/search workflow. Game execution can still change RAM
 and battery saves as a consequence of a cheat.
 
 The list belongs to the current game session. It survives soft and hard reset,
-and loading a save state keeps the currently configured codes. Loading a game
-(including reloading the same file), unloading, or closing Nestlin clears the
-list. Codes are not saved to disk or embedded in `.nstl` files. A changed list
-clears rewind history so snapshots from a different cheat configuration cannot
-be replayed. Applying an unchanged list leaves rewind history intact.
+including hard reset of ROMs loaded from bytes without an on-disk path. Hard
+reset uses the game-session coordinator to boot the current ROM while preserving
+cheats; file-backed ROMs are reloaded, and byte-loaded ROMs use their current
+cartridge image. Loading a save state keeps the currently configured codes.
+Loading a game (including reloading the same file), unloading, or closing
+Nestlin clears the list. Codes are not saved to disk or embedded in `.nstl` files.
+A changed list clears rewind history so snapshots from a different cheat
+configuration cannot be replayed. Applying an unchanged list leaves rewind
+history intact.
 
 The editor pauses the emulation thread until it closes. It is unavailable during
 movie recording/playback; starting a movie loads a fresh game without cheats.

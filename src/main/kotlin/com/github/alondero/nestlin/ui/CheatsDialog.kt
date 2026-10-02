@@ -53,7 +53,7 @@ class CheatsDialog(owner: Window, initial: List<Cheat>) : Dialog<List<Cheat>>() 
         }
         val help = Label(
             "Game Genie: SXIOPO or ZEXPYGLA. Raw: 075A:09 or 94A7?03:02.\n" +
-                "Select a device format for eight-digit Replay / Rocky codes.\n" +
+                "Select a format for eight-character hex codes (Replay / Rocky or Game Genie).\n" +
                 "Use NES/Famicom codes; GameShark codes for other consoles cannot be used here.\n" +
                 "Cheats last until another game is loaded or Nestlin closes."
         ).apply { isWrapText = true }

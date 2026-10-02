@@ -85,6 +85,10 @@ when a game is loaded or Nestlin closes. They are not saved to disk or embedded
 in save states. Changing codes clears rewind history. The editor pauses
 emulation while open and is disabled during movie recording/playback.
 
+**Hard Reset** boots the current game again and preserves its cheats. It also
+works for ROMs loaded from bytes without an on-disk file. File-backed games are
+reloaded from disk; byte-loaded games use the current cartridge image.
+
 ## RetroAchievements
 
 RetroAchievements is optional, softcore-only, and disabled when its native capability is unavailable. The default build does not require a network connection; sign-in and achievement services are described in [`RA_INTEGRATION.md`](../RA_INTEGRATION.md). The native library may be built locally or fetched as a release asset when building an `uberJar`. The emulator falls back to a no-op service when that library is absent.
