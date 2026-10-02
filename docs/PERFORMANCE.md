@@ -138,24 +138,31 @@ Run the repeatable benchmark, including fingerprints:
 so wall-clock performance remains a manual measurement. The `performance` tag
 runs in its own JVM through `testPerformance`, also required by `check`/`build`:
 unrelated test call sites otherwise change JIT profiles and invalidate the
-allocation budget. JVMs without thread allocation measurement explicitly skip
-this check.
+allocation budget. The task requires JVM thread-allocation measurement and
+fails explicitly if `com.sun.management.ThreadMXBean` is unavailable or does
+not support it; this lane must not pass with the allocation guard skipped.
 
-The nametable tests exercise reads and writes throughout `$3000-$3EFF` under every
-mirroring mode. Mapper-19 override, A12, sprite selection/overflow and OAM tests
-also cover the changed routing. CI runs `testPerformance --warning-mode=fail`,
+The mirroring tests cover horizontal, vertical, four-screen, and both one-screen
+table selections through the optimized `$2000-$2FFF` lookup. The `$3000-$3EFF`
+case adds coverage for the existing recursive mirror path; that path does not
+call the changed lookup, so this case is supplemental rather than a regression
+test for the optimization. Mapper-19 override, A12, sprite selection/overflow
+and OAM tests also cover the changed routing. CI runs `testPerformance --warning-mode=fail`,
 validates all four issue #312 task-graph consumers, resolves the strict
 `build shadowJar --dry-run` lane, and executes `uberJar` with strict warnings.
 No save-state version bump is necessary:
 the serialized fields and their order have not changed.
 
 Review follow-up corrected stale helper/UI names, added explicit coverage for the
-full nametable mirror range, and included the isolated `testPerformance` lane in
-the source/runtime task-graph guards and PR CI.
+full nametable mirror range and both one-screen table selections, and included
+the isolated `testPerformance` lane in the source/runtime task-graph guards and
+PR CI. It also documents the fast lookup's address precondition, makes missing
+allocation measurement fail loudly, and drains audio during measured frames to
+match the benchmark's steady state.
 
 The full clean PR checkout build against current master passed before the review
 follow-up: 1,892 functional tests and both isolated allocation checks passed,
-with two existing skips. Post-follow-up checks passed: all 14
+with two existing skips. Post-follow-up checks passed: all 15
 `NametableMirroringTest` cases, all eight `TaskGraphLintTest` cases, both isolated
 allocation checks, the four-consumer/eight-edge runtime validator, the strict
 `build shadowJar --dry-run` lane, and documentation lint (36 Markdown files).

@@ -13,6 +13,12 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 # Run the unit-test suite (CPU, PPU, APU, mapper, region tests)
 ./gradlew test
 
+# Run the isolated PPU allocation guard (also required by check/build)
+./gradlew testPerformance
+
+# Run the reproducible headless core benchmark and accuracy fingerprints
+./gradlew coreBench
+
 # Run the documentation/link/mapper-consistency lint
 ./gradlew docsLint
 
@@ -41,8 +47,9 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 # absent, so a green `test` proves nothing about a real game. (A Stop hook blocks ending a session
 # that edited gamepak/Mapper*.kt without a PASS/WARN here. MapperCoverageLintTest fails the build
 # if a mapper lacks a GamePak arm / MAPPER_SUPPORT section, or if a Mapper*RegressionTest isn't in
-# the tag-driven 'mesen' lane. Test lanes are @Tag-based now, not hand-listed: @Tag("mesen") +
-# @Tag("externalRom") are excluded from `test`; testMesenComparison runs @Tag("mesen").)
+# the tag-driven 'mesen' lane. Test lanes are @Tag-based now, not hand-listed: @Tag("mesen"),
+# @Tag("externalRom"), @Tag("nativeRa"), and @Tag("performance") are excluded from `test`;
+# testMesenComparison runs @Tag("mesen"), and testPerformance runs @Tag("performance").)
 ./gradlew bootcheck -Prom=X:/src/nestlin/testroms/kirby.nes -Pframes=120
 
 # Print test-environment diagnostics (MESEN2_PATH resolution, ROM availability,

@@ -92,6 +92,7 @@ class PpuInternalMemory {
         FOUR_SCREEN
     }
 
+    /** [addr] must already be in the nametable range `$2000-$2FFF`. */
     private fun nametable(addr: Int): ByteArray {
         val tableIndex = when (mirroring) {
             Mirroring.HORIZONTAL -> {
