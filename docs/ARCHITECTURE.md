@@ -27,6 +27,7 @@ ROM path
 | --- | --- | --- | --- |
 | CPU | `cpu/` | 6502 registers, opcodes, addressing, interrupt consumption | PPU timing policy or UI state |
 | CPU bus | `Memory.kt` | `$0000-$FFFF` dispatch, RAM, PPU/APU/controller/mapper routing, DMA requests | Mapper bank policy |
+| Cheats | `cheat/` | Code validation/decoding and session read substitutions indexed by CPU address | ROM/RAM storage, I/O writes, save-state data |
 | PPU | `ppu/` | 2C02 timing, VRAM/OAM/palette, rendering, NMI source | CPU instruction dispatch |
 | APU | `apu/`, `Apu.kt` | Five base channels, frame counter, mixer, resampler | Host-device lifecycle |
 | Cartridge | `gamepak/` | iNES/NES 2.0 parsing, PRG/CHR storage, mirroring, mapper registers and IRQ/audio hooks | ROM acquisition or UI presentation |
@@ -39,6 +40,7 @@ ROM path
 - CPU, PPU, APU, mapper, controller, and session state must have explicit save/load ownership. `SaveState` orchestrates serialization; callers should not reach into a subsystem's private fields.
 - The emulation thread is the owner of live machine mutation. UI actions that save or load state must use the pause/coordination path in `Application.kt`.
 - `peek` is side-effect-free and is used by inspection tools. `poke` is a real write with intentionally blacklisted dangerous operations such as OAM DMA and controller strobe.
+- Cheat substitution wraps real CPU-bus reads after RAM/mapper dispatch and before the data-bus latch and observer update. Comparisons use the original byte; RAM mirrors share a substitution. Inspection peeks bypass cheats. `Nestlin.setCheats` changes configuration while emulation is stopped and clears rewind history; game loads/unload clear codes, and reset preserves them. See [the cheat guide](CHEATS.md) for formats and lifetime.
 - `InterruptController` is the seam between PPU/APU/mapper interrupt producers and the CPU consumer. Preserve NMI latency, NMI-over-IRQ ordering, and I-flag gating when changing it.
 - A mapper clocks IRQ logic either from PPU A12 edges or CPU cycles, according to the board. Do not add both clocks without a hardware reason and a regression test.
 

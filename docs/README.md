@@ -5,6 +5,7 @@ Nestlin is a learning-focused NES emulator. This directory separates the informa
 ## Start here
 
 - [User guide](USER_GUIDE.md) — install, launch, controls, configuration, ROM formats, saves, and RetroAchievements.
+- [Cheat codes](CHEATS.md) — code entry, supported NES/Famicom formats, application and session lifetime.
 - [Troubleshooting](TROUBLESHOOTING.md) — common launch, input, audio, rendering, mapper, and test-environment failures.
 - [Mapper support](../MAPPER_SUPPORT.md) — the compatibility matrix, known quirks, and the new-mapper checklist.
 
