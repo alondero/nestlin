@@ -552,13 +552,13 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 //   @Tag("performance")  - allocation budgets need an isolated JVM so unrelated test
 //                          call sites do not change JIT profiles; run by testPerformance/check.
 //
-// ./gradlew test               -> everything EXCEPT those two tags (fast, hermetic, ROM-free)
+// ./gradlew test               -> everything EXCEPT those four tags (fast, hermetic, ROM-free)
 // ./gradlew testMesenComparison -> only @Tag("mesen")
 // MapperCoverageLintTest fails the build if a compare/Mapper*RegressionTest is not in the mesen
 // lane, so "forgot to wire it up" is a red build, not a silent skip.
 
 tasks.test {
-    // Fast suite: no Mesen2, no external ROMs, no native RA library.
+    // Fast suite: no Mesen2, no external ROMs, no native RA library, no performance tests.
     // Tags do the exclusion - no class list to maintain. @Tag("nativeRa")
     // skips because the native façade may not be compiled on every host.
     useJUnitPlatform {

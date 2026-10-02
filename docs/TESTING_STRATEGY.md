@@ -4,7 +4,7 @@
 
 **Audience:** Contributors, coding agents, and anyone touching `src/test/kotlin/.../compare/`.
 
-**Current contract:** the fast `test` lane is hermetic and excludes Mesen2, external-ROM, and native-RA tags; Mesen2 comparisons run through `testMesenComparison`; mapper work requires an oracle-free `bootcheck` or explicit documented limitation; structured state and event evidence are preferred over pixels; and skipped optional dependencies must be visible in the test output and handoff.
+**Current contract:** the fast `test` lane is hermetic and excludes `mesen`, `externalRom`, `nativeRa`, and `performance` tags. Mesen2 comparisons run through `testMesenComparison`; native RetroAchievements contracts run through the opt-in `testNativeRa`; the isolated allocation guard runs through `testPerformance` and is also required by `check`/`build`. Mapper work requires an oracle-free `bootcheck` or explicit documented limitation; structured state and event evidence are preferred over pixels; skipped optional dependencies must be visible in the test output and handoff.
 
 ---
 

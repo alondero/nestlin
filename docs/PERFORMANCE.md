@@ -89,8 +89,9 @@ small heap constrain the JVM; they do not reproduce a particular slower CPU.
 
 All twelve measured scenario pairs produced identical SHA-256 fingerprints for
 the complete serialized state, concatenated rendered RGB frames, and PCM samples.
-Additional 600-frame baseline/candidate runs of Tetris (mapper 0), Adventures of
-Lolo (mapper 1), and Kirby (mapper 4), using the available local ROMs with rewind
+**One-time manual real-game validation (not reproducible from the checked-in
+commands):** 600-frame baseline/candidate runs of Tetris (mapper 0), Adventures
+of Lolo (mapper 1), and Kirby (mapper 4), using available local ROMs with rewind
 enabled, matched the same three fingerprint types for each game. These checks
 exercise real instruction mixes and mapper-driven banking rather than the
 synthetic JMP loop; their timings were not included in the performance table.
