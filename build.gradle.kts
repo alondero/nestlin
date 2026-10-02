@@ -549,6 +549,8 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 //                          mapper regression test inherits it for free.
 //   @Tag("externalRom")  - needs a ROM not in git (kirby.nes etc.) or is a debug/investigation
 //                          test that can hang; excluded from the fast suite, no dedicated task.
+//   @Tag("performance")  - allocation budgets need an isolated JVM so unrelated test
+//                          call sites do not change JIT profiles; run by testPerformance/check.
 //
 // ./gradlew test               -> everything EXCEPT those two tags (fast, hermetic, ROM-free)
 // ./gradlew testMesenComparison -> only @Tag("mesen")
@@ -560,9 +562,21 @@ tasks.test {
     // Tags do the exclusion - no class list to maintain. @Tag("nativeRa")
     // skips because the native façade may not be compiled on every host.
     useJUnitPlatform {
-        excludeTags("mesen", "externalRom", "nativeRa")
+        excludeTags("mesen", "externalRom", "nativeRa", "performance")
     }
 }
+
+val testPerformance = tasks.register<Test>("testPerformance") {
+    group = "verification"
+    description = "Checks rendering allocation budgets in an isolated JVM"
+    dependsOn(copyNativeRa, writeNativeRaManifest)
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform { includeTags("performance") }
+    jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
+}
+
+tasks.named("check") { dependsOn(testPerformance) }
 
 // Separate task to run native-RA contract tests. These tests load JNA +
 // the rcheevos_facade shared library; the library is built by :buildNative
@@ -664,6 +678,19 @@ tasks.register<JavaExec>("diverge") {
     if (mesen2Path != null) {
         environment("MESEN2_PATH", mesen2Path)
     }
+}
+
+// Full-core rendering workload with state/frame/audio fingerprints. Uses only the bundled ROM.
+// Usage: ./gradlew coreBench [-Pframes=600] [-Pwarmup=300]. See docs/PERFORMANCE.md.
+tasks.register<JavaExec>("coreBench") {
+    group = "verification"
+    description = "Measures full-core frame latency, allocation and deterministic state/frame/audio hashes"
+    dependsOn("testClasses")
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.perf.CoreBenchmark")
+    jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
+    args((project.findProperty("frames") ?: "600").toString(),
+         (project.findProperty("warmup") ?: "300").toString())
 }
 
 // RA performance benchmark (issue #273 AC: "A repeatable benchmark

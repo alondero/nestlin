@@ -406,8 +406,9 @@ class Ppu(var memory: Memory) {
 
         for (n in 0 until 64) {
             val i = (startIndex + n) and 0x3F
-            val s = oam.getSprite(i)
-            val y = s.y
+            // Most sprites miss this scanline. Read Y before creating the immutable
+            // snapshot, so only the eight selected sprites allocate SpriteData.
+            val y = oam[i * 4].toUnsignedInt()
             // NES Y semantics: sprite at Y appears at scanlines Y+1 through Y+spriteHeight
             if (target > y && target <= y + spriteHeight) {
                 if (secondaryOam.size >= 8) {
@@ -421,6 +422,7 @@ class Ppu(var memory: Memory) {
                         memory.ppuAddressedMemory.status.register.setBit(5)
                     break
                 }
+                val s = oam.getSprite(i)
                 val tileYOffset = target - y - 1
                 val tileY = if (s.verticalFlip) (spriteHeight - 1) - tileYOffset else tileYOffset
                 secondaryOam.add(SecondaryOamEntry(s, tileY))

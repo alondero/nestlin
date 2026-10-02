@@ -6,6 +6,12 @@ import java.io.DataOutput
 
 class PpuInternalMemory {
 
+    // Primitive SAM signatures avoid boxing an Int address on every PPU bus access.
+    fun interface ChrRead { operator fun invoke(address: Int): Byte }
+    fun interface ChrWrite { operator fun invoke(address: Int, value: Byte) }
+    fun interface NametableRead { operator fun invoke(address: Int): Byte? }
+    fun interface NametableWrite { operator fun invoke(address: Int, value: Byte): Boolean }
+
     private val patternTable0 = ByteArray(0x1000)
     private val patternTable1 = ByteArray(0x1000)
     private val nameTable0 = ByteArray(0x400)
@@ -20,8 +26,8 @@ class PpuInternalMemory {
     var mirroring = Mirroring.HORIZONTAL
 
     // Delegate functions for dynamic CHR banking (set by mapper)
-    var chrReadDelegate: ((Int) -> Byte)? = null
-    var chrWriteDelegate: ((Int, Byte) -> Unit)? = null
+    var chrReadDelegate: ChrRead? = null
+    var chrWriteDelegate: ChrWrite? = null
 
     // Optional nametable override ($2000-$2FFF). When a mapper (e.g. Mapper 19
     // CHR-as-nametable mode) wants to redirect a nametable read/write to its own
@@ -38,8 +44,8 @@ class PpuInternalMemory {
     // "I don't own this address" by returning null — the caller's `?: run {...}`
     // then falls through to the standard CIRAM mirroring. A non-null Byte is
     // the mapper's authoritative read result.
-    var nametableReadDelegate: ((Int) -> Byte?)? = null
-    var nametableWriteDelegate: ((Int, Byte) -> Boolean)? = null
+    var nametableReadDelegate: NametableRead? = null
+    var nametableWriteDelegate: NametableWrite? = null
 
     // A12 edge detection for MMC3 scanline IRQ
     private var lastA12High: Boolean = false
@@ -86,32 +92,29 @@ class PpuInternalMemory {
         FOUR_SCREEN
     }
 
-    private fun mapNametableAddress(addr: Int): Pair<ByteArray, Int> {
-        val normalizedAddr = (addr - 0x2000) % 0x1000
+    private fun nametable(addr: Int): ByteArray {
         val tableIndex = when (mirroring) {
             Mirroring.HORIZONTAL -> {
                 // Horizontal mirroring: $2000/$2400 -> NT0, $2800/$2C00 -> NT1
-                // Check bit 11 of normalized address (the 0x800 bit)
-                if ((normalizedAddr and 0x800) != 0) 1 else 0
+                (addr ushr 11) and 1
             }
             Mirroring.VERTICAL -> {
-                // Vertical mirroring: $2000/$2400 -> NT0, $2800/$2C00 -> NT1
-                // This means CIRAM A10 = PPU A10
-                (normalizedAddr / 0x400) % 2
+                // Vertical mirroring: $2000/$2800 -> NT0, $2400/$2C00 -> NT1.
+                // CIRAM A10 = PPU A10.
+                (addr ushr 10) and 1
             }
             Mirroring.ONE_SCREEN_LOWER -> 0
             Mirroring.ONE_SCREEN_UPPER -> 1
             // Four-screen: each 1 KB window maps to its own distinct table, so
             // $2000->NT0, $2400->NT1, $2800->NT2, $2C00->NT3 with no aliasing.
-            Mirroring.FOUR_SCREEN -> normalizedAddr / 0x400
+            Mirroring.FOUR_SCREEN -> (addr ushr 10) and 3
         }
-        val table = when (tableIndex) {
+        return when (tableIndex) {
             0 -> nameTable0
             1 -> nameTable1
             2 -> nameTable2
             else -> nameTable3
         }
-        return Pair(table, addr % 0x400)
     }
 
     operator fun get(addr: Int): Byte = when (addr) {
@@ -129,8 +132,7 @@ class PpuInternalMemory {
             // (e.g. Mapper 19's CHR-as-NT mode) return non-null to claim the
             // read. See `Mapper.readNametableOverride`.
             nametableReadDelegate?.invoke(addr) ?: run {
-                val (table, offset) = mapNametableAddress(addr)
-                table[offset]
+                nametable(addr)[addr and 0x3FF]
             }
         }
         in 0x3000..0x3EFF -> this[addr - 0x1000] // Mirror of 0x2000 - 0x2EFF
@@ -155,8 +157,7 @@ class PpuInternalMemory {
                 // fall-through to the standard CIRAM mirroring); `false` (or a
                 // null delegate) lets the standard table/offset write happen.
                 if (nametableWriteDelegate?.invoke(addr, value) != true) {
-                    val (table, offset) = mapNametableAddress(addr)
-                    table[offset] = value
+                    nametable(addr)[addr and 0x3FF] = value
                 }
             }
             in 0x3000..0x3EFF -> this[addr - 0x1000] = value // Mirror of 0x2000 - 0x2EFF
