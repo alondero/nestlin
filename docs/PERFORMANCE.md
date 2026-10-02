@@ -59,6 +59,11 @@ small heap constrain the JVM; they do not reproduce a particular slower CPU.
 
 All twelve measured scenario pairs produced identical SHA-256 fingerprints for
 the complete serialized state, concatenated rendered RGB frames, and PCM samples.
+Additional 600-frame baseline/candidate runs of Tetris (mapper 0), Adventures of
+Lolo (mapper 1), and Kirby (mapper 4), using the available local ROMs with rewind
+enabled, matched the same three fingerprint types for each game. These checks
+exercise real instruction mixes and mapper-driven banking rather than the
+synthetic JMP loop; their timings were not included in the performance table.
 The NTSC rendering scenarios (with/without rewind) shared these fingerprints:
 
 ```text
@@ -103,6 +108,11 @@ this check.
 The existing nametable, mapper-19 override, A12, sprite selection/overflow and OAM
 tests also cover the changed routing. No save-state version bump is necessary:
 the serialized fields and their order have not changed.
+
+Independent review of this session's diff found no actionable Standards findings
+against `CLAUDE.md`/the test strategy, and no Spec findings against the request for
+ten opportunities, three implemented changes, preserved accuracy and deferred
+GitHub issues.
 
 Suggested next session: implement #322 first, remove redundant rewind copies with
 explicit snapshot ownership, and compare `coreBench` state/frame/audio hashes and
