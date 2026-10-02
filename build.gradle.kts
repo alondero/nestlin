@@ -813,21 +813,20 @@ tasks.register("verifyTestEnv") {
 //   - It's cheap (configuration-time resolution + a few Set.contains calls)
 //     but it does require a fully configured project, so we run it as its
 //     own target and let CI opt in. The default `./gradlew test` is
-//     unaffected; CI runs both.
+//     unaffected; CI runs `test`, `testPerformance`, and this validator.
 //   - Failing `:check` would also fail every contributor's pre-push run,
 //     which is desirable — but if a contributor's machine is in a
 //     half-configured state (intellij sync mid-refactor), they get the
 //     failure anyway from this task via the lint test.
 //
-// Required edges (six total — three consumers x two providers; the four
-// originally-broken-in-PRs-#303/#307 edges plus the two `:jar` / `:test`
-// → `:copyNativeRa` edges that round out the manifest guarantee across
-// every consumer of the native RA tree):
+// Required edges (eight total — four consumers x two providers):
 //
 //   :jar           -> :writeNativeRaManifest    (plain JAR includes MANIFEST.json)
 //   :jar           -> :copyNativeRa             (plain JAR includes native-ra/ tree)
 //   :test          -> :writeNativeRaManifest    (test lane sees the merged manifest)
 //   :test          -> :copyNativeRa             (test lane sees the native-ra/ tree)
+//   :testPerformance -> :writeNativeRaManifest   (isolated test lane sees the manifest)
+//   :testPerformance -> :copyNativeRa            (isolated test lane sees the native-ra/ tree)
 //   :shadowJar     -> :writeNativeRaManifest    (fat JAR includes MANIFEST.json)
 //   :shadowJar     -> :copyNativeRa             (fat JAR includes native-ra/ tree)
 //
@@ -851,6 +850,7 @@ tasks.register("validateTaskGraph") {
         val required: Map<String, List<String>> = linkedMapOf(
             "jar" to listOf("writeNativeRaManifest", "copyNativeRa"),
             "test" to listOf("writeNativeRaManifest", "copyNativeRa"),
+            "testPerformance" to listOf("writeNativeRaManifest", "copyNativeRa"),
             "shadowJar" to listOf("writeNativeRaManifest", "copyNativeRa"),
         )
 

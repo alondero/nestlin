@@ -573,7 +573,7 @@ class Mapper19Test {
     // installs (`ppuInternalMemory.nametableReadDelegate = ...` +
     // `nametableWriteDelegate = ...`). Going through `PpuInternalMemory` (not
     // calling Mapper19 directly) catches bugs that a direct-call test would
-    // miss — e.g. an off-by-one in `mapNametableAddress`, a typo in the
+    // miss — e.g. an off-by-one in the CIRAM address mapping, a typo in the
     // delegate lambda, or the fallback path incorrectly skipping the override.
     //
     // The "usage trace" framing: a game running N163's CHR-as-NT mode reads
@@ -619,7 +619,7 @@ class Mapper19Test {
         ppuMem.nametableWriteDelegate = PpuInternalMemory.NametableWrite { addr, v -> mapper.writeNametableOverride(addr, v) }
         mapper.cpuWrite(0xC000, 0x05.toSignedByte())   // bank 8 → plain CHR bank (not NT)
 
-        // With no override, writes go to nameTable0 (via mapNametableAddress).
+        // With no override, writes go to nameTable0 via the default CIRAM mapping.
         ppuMem[0x2000] = 0x42.toSignedByte()
         // Re-read through the delegate path: should still be 0x42 (came
         // from CIRAM, not extended CHR-RAM, so the mapper.readNametableOverride

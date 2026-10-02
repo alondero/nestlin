@@ -125,6 +125,25 @@ class NametableMirroringTest {
         assertThat(memory[0x2C00], equalTo(0x20.toByte()))
     }
 
+    @Test
+    fun `0x3000-0x3EFF mirror range reads and writes CIRAM addresses in every mode`() {
+        for (mirroring in PpuInternalMemory.Mirroring.entries) {
+            val memory = PpuInternalMemory().apply { this.mirroring = mirroring }
+
+            for (address in 0x3000..0x3EFF) {
+                val mirroredAddress = address - 0x1000
+                val value = address.toByte()
+                memory[address] = value
+                assertThat(memory[mirroredAddress], equalTo(value))
+                assertThat(memory[address], equalTo(value))
+
+                val lowerWrite = (value.toInt() xor 0xFF).toByte()
+                memory[mirroredAddress] = lowerWrite
+                assertThat(memory[address], equalTo(lowerWrite))
+            }
+        }
+    }
+
     // Four-screen mirroring tests (used by DRROM Gauntlet / Mapper 206, GH #105).
     // With 4-screen VRAM there is NO mirroring: each of the four 1 KB windows
     // ($2000/$2400/$2800/$2C00) is its own independent nametable.

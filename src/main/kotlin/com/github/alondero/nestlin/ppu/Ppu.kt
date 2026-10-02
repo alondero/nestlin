@@ -110,10 +110,10 @@ class Ppu(var memory: Memory) {
     private var spriteTileHighLatch: Byte = 0
     private var spritePatternAddrLatch: Int = 0
 
-    // Multicast frame listeners. The renderer (Application.frameUpdated) is one entry; the movie
-    // replayer is another. Listeners are fired in registration order at end-of-frame, so a later
-    // listener (e.g. a latch hook) can see the frame the renderer has already observed. Multicast
-    // was chosen over a dedicated movie hook so the PPU stays ignorant of input semantics.
+    // Multicast frame listeners. The renderer (NestlinApplication.frameUpdated) is one entry;
+    // the movie replayer is another. Listeners are fired in registration order at end-of-frame,
+    // so a later listener (e.g. a latch hook) can see the frame the renderer has already observed.
+    // Multicast was chosen over a dedicated movie hook so the PPU stays ignorant of input semantics.
     //
     // CopyOnWriteArrayList: the emulation thread iterates these at end-of-frame while the
     // JavaFX thread may concurrently add/remove (when a movie session starts/stops). A regular

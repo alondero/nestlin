@@ -3,8 +3,11 @@
 For contributors measuring emulator performance: run `./gradlew coreBench` for
 the repeatable rendering workload, then use the evidence and follow-ups below.
 
-Audit date: 2026-10-02. Measurement baseline: `1bd6ef3ebd02567a194e9afb81c95a5da7ce0056`.
-The isolated PR uses current master, `6b3fd58e035a77602042820e146e3fcd3da0c1c7`, as its base.
+Audit date: 2026-10-02. Performance measurements compare the PR code tree at
+`6254aa70e6a0c382024a2a19f5c7643a0892c468` with its exact master base,
+`6b3fd58e035a77602042820e146e3fcd3da0c1c7`. Later review commits update
+documentation/build guards and add nametable mirror coverage; they do not change
+the measured emulator hot path.
 
 The first three opportunities below were implemented in this session. They remove
 temporary allocations while retaining the same emulated cycles, bus accesses,
@@ -14,10 +17,10 @@ are candidates requiring measurement in their own production paths.
 | Rank | Opportunity and evidence | Accuracy constraints | Status |
 | --- | --- | --- | --- |
 | 1 | Give PPU CHR/nametable callbacks primitive method signatures. Generic Kotlin function callbacks boxed addresses on each read; allocation stacks point to `PpuInternalMemory.get` during background and sprite fetches. | Preserve callback ordering, CHR read updates to the CPU data bus, nullable nametable fall-through, and A12 detection. | Implemented: primitive functional interfaces in `PpuInternalMemory`, wired by `Memory`. |
-| 2 | Remove temporary nametable address pairs and boxed offsets. `mapNametableAddress` boxed offsets even where the JVM eliminated the pair itself. | Resolve current mirroring on every access, retain all five modes, `$3000` mirrors, and mapper overrides. | Implemented: select the backing array directly and use the low ten address bits as its offset. |
+| 2 | Remove temporary nametable address pairs and boxed offsets. The previous mapping helper returned a `Pair<ByteArray, Int>`; allocation samples showed boxed offsets even where the JVM eliminated the pair itself. | Resolve current mirroring on every access, retain all five modes, the full `$3000-$3EFF` mirror range, and mapper overrides. | Implemented: select the backing array directly and use the low ten address bits as its offset. |
 | 3 | Check sprite Y before constructing a complete sprite record. `getSprite` ran for up to 64 candidates on every rendering scanline. | Retain rotated OAMADDR order, the eight-sprite limit, ninth-sprite overflow, height/flips, and immutable evaluation-time snapshots. | Implemented: construct `SpriteData` only after selecting a sprite. |
 | 4 | Reuse selected-sprite scratch slots and remove per-pixel list iterators and scanline `addAll` copies. Allocation samples still include `ActiveSprite`, `SecondaryOamEntry`, list iterators and backing arrays. | Preserve shift-register updates, fetch order/dummy reads, A12 edges, sprite-zero hits, and mid-scanline saves. | [Issue #323](https://github.com/alondero/nestlin/issues/323). |
-| 5 | Use primitive loops or a measured packed-pixel path for UI RGB conversion. `Application.frameUpdated` uses nested `withIndex().forEach` on primitive pixel rows. | Preserve exact RGB output, screenshots and buffer ownership. Measure JavaFX allocations first: the headless benchmark excludes this path. | [Issue #321](https://github.com/alondero/nestlin/issues/321). |
+| 5 | Use primitive loops or a measured packed-pixel path for UI RGB conversion. `NestlinApplication.frameUpdated` uses nested `withIndex().forEach` on primitive pixel rows. | Preserve exact RGB output, screenshots and buffer ownership. Measure JavaFX allocations first: the headless benchmark excludes this path. | [Issue #321](https://github.com/alondero/nestlin/issues/321). |
 | 6 | Remove redundant rewind serialization copies and reuse scratch streams. `Nestlin` produces a copied blob, then `RewindStateMachine` copies it through another stream. Rewind adds about 75 KB/frame in this fixture. | Retain an immutable snapshot every frame, save-file compatibility, failure handling, and the paired RetroAchievements progress trailer. | [Issue #322](https://github.com/alondero/nestlin/issues/322). |
 | 7 | Drain audio into consumer-owned reusable arrays under one lock, with bulk ring copies. `getAudioSamples` allocates arrays and queries availability under a separate lock; buffer reads wrap one sample at a time. Resampler wrap arithmetic is another candidate in this path. | Preserve all PCM samples, configured capacities, drop-oldest overflow, resampler phase, concurrent access and endian conversion. | [Issue #324](https://github.com/alondero/nestlin/issues/324), related to the audible-dropout investigation in [#31](https://github.com/alondero/nestlin/issues/31). |
 | 8 | Upload/draw the display when a new frame or geometry change requires it, and reduce contention on the shared frame lock. `AnimationTimer` currently uploads/draws on every UI pulse. | Keep input/overlay polling responsive, preserve pause/resize/ROM-load redraws, and prevent buffer reuse from tearing frames. All PPU cycles still run. | [Issue #321](https://github.com/alondero/nestlin/issues/321). |
@@ -38,23 +41,46 @@ runs through the production `Nestlin.stepCpuCycle` and frame-completion paths.
 Rewind capture runs normally when enabled. Audio drains and output hashing occur
 outside the measured section.
 
-Three sequential baseline/candidate pairs ran from the same compiled baseline
-and candidate with identical JVM settings. The table gives the median of each
+Three sequential baseline/candidate pairs ran with identical JVM settings. Both
+trees used the PR's benchmark harness and Gradle task. For the baseline, a
+detached worktree at the measured PR tree had the five emulator and SAM-callsite
+files below restored from the exact master base; this keeps the harness identical
+while measuring the base implementation. The table gives the median of each
 run's statistic; the baseline allocation range reflects JIT escape-analysis
 variation between processes. No compilation or test suite ran concurrently with
-these paired measurements.
+the measured JavaExec tasks.
+
+Recreate the baseline worktree from the repository root in PowerShell, then run
+the candidate command from the current PR checkout:
+
+```powershell
+git worktree add --detach ..\nestlin-perf-baseline 6254aa70e6a0c382024a2a19f5c7643a0892c468
+git -C ..\nestlin-perf-baseline restore --source=6b3fd58e035a77602042820e146e3fcd3da0c1c7 -- `
+  src/main/kotlin/com/github/alondero/nestlin/Memory.kt `
+  src/main/kotlin/com/github/alondero/nestlin/ppu/Ppu.kt `
+  src/main/kotlin/com/github/alondero/nestlin/ppu/PpuInternalMemory.kt `
+  src/test/kotlin/com/github/alondero/nestlin/gamepak/Mapper19Test.kt `
+  src/test/kotlin/com/github/alondero/nestlin/ppu/A12EdgeRateTest.kt
+Push-Location ..\nestlin-perf-baseline
+./gradlew.bat coreBench -Pframes=600 -Pwarmup=300 --no-daemon
+Pop-Location
+./gradlew.bat coreBench -Pframes=600 -Pwarmup=300 --no-daemon
+```
 
 | Scenario | Median frame time, before / after | p95, before / after | Core bytes/frame, before / after |
 | --- | --- | --- | --- |
-| NTSC, rendering + rewind | 3.089 / 2.520 ms | 4.526 / 3.821 ms | 1,593,097–2,078,953 / 126,153 |
-| NTSC, rendering | 3.031 / 2.665 ms | 4.291 / 3.912 ms | 1,518,366–2,004,222 / 51,422 |
-| PAL, rendering + rewind | 3.350 / 2.982 ms | 4.786 / 4.337 ms | 1,593,801–2,079,657 / 126,857 |
-| NTSC, forced blank | 1.707 / 1.586 ms | 2.278 / 2.227 ms | 4,264 / 4,264 |
+| NTSC, rendering + rewind | 4.128 / 3.576 ms | 5.206 / 4.801 ms | 1,593,097–2,102,089 / 126,153 |
+| NTSC, rendering | 3.418 / 3.080 ms | 4.795 / 4.379 ms | 1,518,366–2,027,358 / 51,422 |
+| PAL, rendering + rewind | 4.076 / 3.908 ms | 5.485 / 5.107 ms | 1,593,801–2,102,793 / 126,857 |
+| NTSC, forced blank | 1.980 / 1.774 ms | 2.714 / 2.471 ms | 4,264 / 4,264 |
 
 Rendering allocation fell by about 92–97%; median rendering frame times fell by
-about 11–18%, and p95 by about 9–16% in these runs. The blank path is an unchanged
-control: its timing variation illustrates host/JIT noise. This is evidence for
-reduced garbage-collection pressure, not a guarantee of hitch-free playback.
+about 4–13%, and p95 by about 7–9% in these runs. The second pair had substantial
+host noise (including p95 and maximum spikes), so the small three-run timing
+sample should be read as directional. The blank path is an unchanged control; its
+timing variation also shows host/JIT noise. Allocation is the more stable result.
+This is evidence for reduced garbage-collection pressure, not a guarantee of
+hitch-free playback.
 These measurements exclude JavaFX, device playback, real-game instruction mixes,
 bank switching and native achievement evaluation. Two visible processors and a
 small heap constrain the JVM; they do not reproduce a particular slower CPU.
@@ -115,19 +141,24 @@ unrelated test call sites otherwise change JIT profiles and invalidate the
 allocation budget. JVMs without thread allocation measurement explicitly skip
 this check.
 
-The existing nametable, mapper-19 override, A12, sprite selection/overflow and OAM
-tests also cover the changed routing. No save-state version bump is necessary:
+The nametable tests exercise reads and writes throughout `$3000-$3EFF` under every
+mirroring mode. Mapper-19 override, A12, sprite selection/overflow and OAM tests
+also cover the changed routing. CI runs `testPerformance --warning-mode=fail`,
+validates all four issue #312 task-graph consumers, resolves the strict
+`build shadowJar --dry-run` lane, and executes `uberJar` with strict warnings.
+No save-state version bump is necessary:
 the serialized fields and their order have not changed.
 
-Independent review of this session's diff has no unresolved Standards findings
-against `CLAUDE.md`/the test strategy, and no Spec findings against the request for
-ten opportunities, three implemented changes, preserved accuracy and deferred
-GitHub issues.
+Review follow-up corrected stale helper/UI names, added explicit coverage for the
+full nametable mirror range, and included the isolated `testPerformance` lane in
+the source/runtime task-graph guards and PR CI.
 
-The starting worktree's `gradlew.bat build` passed: 1,871 functional tests passed with two existing
-skips, both isolated allocation checks passed, and repository lint checks passed.
-The clean PR checkout also passed `build` against current master: 1,892 functional
-tests and both isolated allocation checks passed, with two existing skips.
+The full clean PR checkout build against current master passed before the review
+follow-up: 1,892 functional tests and both isolated allocation checks passed,
+with two existing skips. Post-follow-up checks passed: all 14
+`NametableMirroringTest` cases, all eight `TaskGraphLintTest` cases, both isolated
+allocation checks, the four-consumer/eight-edge runtime validator, the strict
+`build shadowJar --dry-run` lane, and documentation lint (36 Markdown files).
 The full Mesen2 comparison lane was not run; equivalence here is against the
 unchanged baseline implementation, alongside the existing functional suite.
 

@@ -35,7 +35,7 @@ PowerShell users can run `tools/install-hooks.ps1`. The hook only blocks a commi
 | --- | --- | --- |
 | `./gradlew build` | Compile and run the hermetic suite, documentation lint and isolated allocation checks. | No Mesen2 or external ROM. |
 | `./gradlew test` | Fast JUnit lane; excludes `mesen`, `externalRom`, `nativeRa`, and `performance` tags. | No. |
-| `./gradlew testPerformance` | Run warmed rendering allocation budgets in a separate JVM; also required by `check`/`build`. | No. |
+| `./gradlew testPerformance` | Run warmed rendering allocation budgets in a separate JVM; CI runs this lane with strict task warnings. Also required by `check`/`build`. | No. |
 | `./gradlew coreBench [-Pframes=600] [-Pwarmup=300]` | Report full-core frame latency, allocated bytes and state/frame/audio hashes. | No; uses the bundled fixture. |
 | `./gradlew testMesenComparison` | Run Mesen2-tagged structured comparisons. | Mesen2 and configured ROMs where a test requires them. |
 | `./gradlew testNativeRa` | Run the native RA contract tests. | Local C-built native library. |
