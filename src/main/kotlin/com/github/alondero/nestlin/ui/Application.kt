@@ -187,6 +187,7 @@ class NestlinApplication : FrameListener, Application() {
                         // different slot files.
                         updateSlotMenu()
                         updateDebugMenu()
+                        updateEmulationMenu()
                         // Flash the Memory Editor grid (issue #169) so
                         // the user sees a full-tick highlight on every
                         // visible cell — confirms the new ROM is
@@ -584,6 +585,7 @@ class NestlinApplication : FrameListener, Application() {
     // it peeks through the long-lived Nestlin.memory instance.
     private var memoryEditorMenuItem: MenuItem? = null
     private var memoryEditorWindow: MemoryEditorWindow? = null
+    private var cheatsMenuItem: MenuItem? = null
 
     // RetroAchievements status item (issue #267). The label is updated on
     // every refresh; the item is disabled because the menu's only job
@@ -798,7 +800,12 @@ class NestlinApplication : FrameListener, Application() {
             }
             pauseMenuItem = pauseItem
 
-            emulationMenu.items.add(pauseItem)
+            val cheatsItem = MenuItem("Cheats...")
+            cheatsItem.isDisable = nestlin.loadedRom == null
+            cheatsItem.setOnAction { handleCheats() }
+            cheatsMenuItem = cheatsItem
+            emulationMenu.items.addAll(pauseItem, cheatsItem)
+            emulationMenu.setOnShowing { updateEmulationMenu() }
             menuBar.menus.add(emulationMenu)
 
             // Movie menu (issue #123). Three actions: toggle recording, load + play a movie,
@@ -1318,6 +1325,7 @@ class NestlinApplication : FrameListener, Application() {
                     updateTitle()
                     updateSlotMenu()
                     updateDebugMenu()
+                    updateEmulationMenu()
                 }
                 startEmulation()
             }
@@ -1502,6 +1510,25 @@ class NestlinApplication : FrameListener, Application() {
     /** Grey out the Debug → Memory Editor item when no ROM is loaded. */
     private fun updateDebugMenu() {
         memoryEditorMenuItem?.isDisable = nestlin.loadedRom == null
+    }
+
+    /** Refresh Emulation actions after ROM/movie transitions and when the menu opens. */
+    private fun updateEmulationMenu() {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater { updateEmulationMenu() }
+            return
+        }
+        cheatsMenuItem?.isDisable = nestlin.loadedRom == null || movieState != MovieState.NONE
+    }
+
+    private fun handleCheats() {
+        if (nestlin.loadedRom == null || movieState != MovieState.NONE) return
+        performWithEmulationPaused {
+            CheatsDialog(stage, nestlin.cheats).showAndWait().ifPresent { cheats ->
+                nestlin.setCheats(cheats)
+                showToast("${cheats.count { it.enabled }} cheats enabled")
+            }
+        }
     }
 
     /**
@@ -2079,6 +2106,7 @@ class NestlinApplication : FrameListener, Application() {
         liveRecorder = recorder
         activeMoviePath = file.toPath()
         movieState = MovieState.RECORDING
+        updateEmulationMenu()
         println("[MOVIE] Recording started (from power-on) → ${file.absolutePath}")
     }
 
@@ -2126,6 +2154,7 @@ class NestlinApplication : FrameListener, Application() {
         // would get committed on the next frame.
         nestlin.getController1().pendingButtons = nestlin.getController1().buttons
         nestlin.getController2().pendingButtons = nestlin.getController2().buttons
+        updateEmulationMenu()
     }
 
     /**
@@ -2191,6 +2220,7 @@ class NestlinApplication : FrameListener, Application() {
         livePlayer = player
         activeMoviePath = file.toPath()
         movieState = MovieState.PLAYING
+        updateEmulationMenu()
         println("[MOVIE] Playing ${movie.inputs.size}-frame movie from power-on → ${file.absolutePath}")
     }
 
@@ -2206,6 +2236,7 @@ class NestlinApplication : FrameListener, Application() {
         livePlayer = null
         movieState = MovieState.NONE
         activeMoviePath = null
+        updateEmulationMenu()
     }
 
     /**
@@ -2377,14 +2408,6 @@ class NestlinApplication : FrameListener, Application() {
             alert.showAndWait()
             return
         }
-        val path = nestlin.loadedRom!!.sourcePath ?: run {
-            val alert = javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR)
-            alert.title = "No ROM File"
-            alert.contentText = "Hard-reset needs to re-load the ROM from disk; " +
-                "the current ROM has no on-disk path."
-            alert.showAndWait()
-            return
-        }
         // Hard reset = same ROM, but a fresh boot. Drop any active movie
         // session so playback doesn't get out of sync with the new boot
         // state. Issue #266: the coordinator's onBeforeRomChange hook
@@ -2393,7 +2416,7 @@ class NestlinApplication : FrameListener, Application() {
         // stop the thread"); it's idempotent.
         cancelMovieSession()
         stopEmulation()
-        resetRomForMovieSession(path)
+        sessionCoordinator.powerReset()
         // Pause-clear must run SYNCHRONOUSLY before startEmulation;
         // see the comment on sessionCoordinator above.
         clearPauseState()

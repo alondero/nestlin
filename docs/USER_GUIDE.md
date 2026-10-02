@@ -71,6 +71,24 @@ Keyboard and gamepad bindings are stored in `~/.config/nestlin/input.json` and t
 
 Save states are emulator snapshots, not interchangeable with another emulator's save-state format. Battery-backed `.sav` behavior is intended to be compatible with common NES emulator layouts, but a backup is recommended before testing an unfamiliar dump.
 
+## Cheats
+
+After loading a game, open **Emulation > Cheats...**, paste one code per line,
+and click **Apply**. Enable checkboxes and Remove controls manage the list;
+Cancel discards edits. Nestlin accepts NES Game Genie, raw NES address/value,
+Famicom Pro Action Rocky and the explicitly labelled legacy FCEUX NES Pro Action
+Replay format. GameShark/Action Replay encodings for other consoles are unsupported.
+The [cheat-code guide](CHEATS.md) lists exact formats and limitations.
+
+Cheats are kept for the current game session, survive resets, and are cleared
+when a game is loaded or Nestlin closes. They are not saved to disk or embedded
+in save states. Changing codes clears rewind history. The editor pauses
+emulation while open and is disabled during movie recording/playback.
+
+**Hard Reset** boots the current game again and preserves its cheats. It also
+works for ROMs loaded from bytes without an on-disk file. File-backed games are
+reloaded from disk; byte-loaded games use the current cartridge image.
+
 ## RetroAchievements
 
 RetroAchievements is optional, softcore-only, and disabled when its native capability is unavailable. The default build does not require a network connection; sign-in and achievement services are described in [`RA_INTEGRATION.md`](../RA_INTEGRATION.md). The native library may be built locally or fetched as a release asset when building an `uberJar`. The emulator falls back to a no-op service when that library is absent.

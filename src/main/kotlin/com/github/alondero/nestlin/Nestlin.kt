@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.cpu.Cpu
+import com.github.alondero.nestlin.cheat.Cheat
 import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.ppu.Ppu
@@ -164,6 +165,7 @@ class Nestlin {
         // cpu.currentGame is the canonical mapper-install sentinel (SaveState, mapper.load).
         // Keep it in sync with loadedRom; the path lives only in loadedRom from this point on.
         cpu.currentGame = gamePak
+        memory.cheatEngine.replace(emptyList())
         applyRegion()
         // Rewind history is per-ROM: a snapshot made against ROM A can't be loaded into ROM B
         // (the savestate ROM/mapper guard would reject it). Drop it on every ROM swap.
@@ -184,6 +186,7 @@ class Nestlin {
         val gamePak = GamePak(romData, displayName)
         loadedRom = LoadedRom(gamePak, /* path = */ null)
         cpu.currentGame = gamePak
+        memory.cheatEngine.replace(emptyList())
         applyRegion()
         rewind.clearBuffer()
     }
@@ -234,11 +237,22 @@ class Nestlin {
      */
     fun pokeMemory(address: Int, value: Byte) = memory.poke(address, value)
 
+    /** Current session's codes; debugger peeks and save states retain original storage. */
+    val cheats: List<Cheat> get() = memory.cheatEngine.cheats
+
+    /** Replace the complete list while emulation is stopped; a change starts a fresh rewind timeline. */
+    fun setCheats(cheats: List<Cheat>) {
+        check(loadedRom != null) { "Load a game before applying cheats." }
+        if (cheats == this.cheats) return
+        memory.cheatEngine.replace(cheats)
+        rewind.clearBuffer()
+    }
+
     fun powerReset() {
         cpu.reset()
         applyRegion()
         // A power-cycle is a fresh timeline; any rewind history predates this boot. Clearing
-        // here also covers the Hard Reset path (resetRomForMovieSession -> load + powerReset).
+        // here also covers the Hard Reset path through GameSessionCoordinator.powerReset.
         rewind.clearBuffer()
     }
 
@@ -257,6 +271,7 @@ class Nestlin {
      */
     fun unload() {
         if (loadedRom == null) return
+        memory.cheatEngine.replace(emptyList())
         // Engine reset FIRST so the next loaded ROM doesn't see stale RAM,
         // a phantom controller press, or a wedged IRQ source from the
         // previous game. cpu.reset() (the same primitive powerReset uses)

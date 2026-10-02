@@ -1,6 +1,7 @@
 package com.github.alondero.nestlin
 
 import com.github.alondero.nestlin.cpu.StallSource
+import com.github.alondero.nestlin.cheat.CheatEngine
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.gamepak.Mapper
 import com.github.alondero.nestlin.input.InputDevice
@@ -29,6 +30,7 @@ class Memory : DmaPort {
     var cpuBusObserver: ((CpuBusAccess) -> Unit)? = null
 
     private val internalRam = ByteArray(0x800)
+    internal val cheatEngine = CheatEngine()
     val ppuAddressedMemory = PpuAddressedMemory()
 
     /**
@@ -318,35 +320,34 @@ class Memory : DmaPort {
     }
 
     override operator fun get(address: Int): Byte {
-        val result: Byte = when (address) {
-            in 0x0000..0x1FFF -> internalRam[address % 0x800]
-            in 0x2000..0x3FFF -> ppuAddressedMemory[address % 8]
-            0x4016 -> port1.read()
-            0x4017 -> port2.read()
-            in 0x4000..0x401F -> apu.handleRegisterRead(address - 0x4000)
-            in 0x4020..0xFFFF -> {
-                // Push the current data-bus value into the mapper BEFORE
-                // calling `cpuRead`, so mappers that opt into open-bus
-                // reads can return the correct value. The default Mapper
-                // property is no-op, so mappers that don't override it
-                // see dataBus=0 and fall back to the old 0-on-open-bus
-                // behaviour. This is the minimum-blast-radius fix: only
-                // mappers that EXPLICITLY want open-bus reads get them.
-                mapper?.dataBus = dataBus
-                mapper?.cpuRead(address) ?: 0
-            }
-            else -> 0
-        }
-        // Track the result on the data bus for the next access.
+        val result = cheatEngine.apply(address, readBus(address, peek = false))
+        // Observers and open-bus reads see the byte delivered to the CPU, including cheats.
         dataBus = result
         cpuBusObserver?.invoke(CpuBusAccess(CpuBusOperation.READ, address and 0xFFFF, result))
         return result
     }
 
+    /** One address decoder for real reads and inspection; cheats wrap only real reads. */
+    private fun readBus(address: Int, peek: Boolean): Byte = when (address) {
+        in 0x0000..0x1FFF -> internalRam[address % 0x800]
+        in 0x2000..0x3FFF -> if (peek) ppuAddressedMemory.peek(address % 8) else ppuAddressedMemory[address % 8]
+        0x4016 -> if (peek) port1.peek() else port1.read()
+        0x4017 -> if (peek) port2.peek() else port2.read()
+        in 0x4000..0x401F -> if (peek) apu.peekRegisterRead(address - 0x4000) else apu.handleRegisterRead(address - 0x4000)
+        in 0x4020..0xFFFF -> {
+            // Only real reads publish the current bus latch to open-bus mappers.
+            if (peek) mapper?.cpuPeek(address) ?: 0 else {
+                mapper?.dataBus = dataBus
+                mapper?.cpuRead(address) ?: 0
+            }
+        }
+        else -> 0
+    }
+
     /**
      * Side-effect-free read of any CPU bus address (issue #168, Memory Editor).
      *
-     * Returns the value [get] would return for ordinary backed storage, but
+     * Returns the original backing value, before cheat substitution, and
      * triggers NONE of the read side effects that make [get] unsafe to call from a
      * debug viewer:
      *  - PPU `$2002`/`$2007`: no vblank clear, no write-toggle reset, no VRAM increment;
@@ -366,15 +367,7 @@ class Memory : DmaPort {
      * `ByteArray` element reads are atomic per the JVM spec; a cosmetic torn read
      * across two bytes is acceptable for a human-facing display (see ADR-0001).
      */
-    fun peek(address: Int): Byte = when (address) {
-        in 0x0000..0x1FFF -> internalRam[address % 0x800]
-        in 0x2000..0x3FFF -> ppuAddressedMemory.peek(address % 8)
-        0x4016 -> port1.peek()
-        0x4017 -> port2.peek()
-        in 0x4000..0x401F -> apu.peekRegisterRead(address - 0x4000)
-        in 0x4020..0xFFFF -> mapper?.cpuPeek(address) ?: 0
-        else -> 0
-    }
+    fun peek(address: Int): Byte = readBus(address, peek = true)
 
     /**
      * Write a byte to any CPU bus address from the Memory Editor (issue #170).

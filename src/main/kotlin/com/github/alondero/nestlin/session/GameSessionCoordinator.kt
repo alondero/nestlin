@@ -486,6 +486,7 @@ class GameSessionCoordinator(
      */
     fun powerReset() {
         val rom = nestlin.loadedRom ?: return
+        val cheats = nestlin.cheats
         val path = rom.sourcePath
         if (path != null) {
             hooks.onBeforeRomChange()
@@ -495,6 +496,7 @@ class GameSessionCoordinator(
             runService { service.unloadGame() }
             val content = RomContentExtractor.extract(path, romHasher)
             nestlin.load(path)
+            nestlin.setCheats(cheats)
             nestlin.powerReset()
             nestlin.loadBatteryRam(path)
             prepareServiceForCurrent(content)
