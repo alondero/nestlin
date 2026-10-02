@@ -114,6 +114,11 @@ against `CLAUDE.md`/the test strategy, and no Spec findings against the request 
 ten opportunities, three implemented changes, preserved accuracy and deferred
 GitHub issues.
 
+Final `gradlew.bat build` passed: 1,871 functional tests passed with two existing
+skips, both isolated allocation checks passed, and repository lint checks passed.
+The full Mesen2 comparison lane was not run; equivalence here is against the
+unchanged baseline implementation, alongside the existing functional suite.
+
 Suggested next session: implement #322 first, remove redundant rewind copies with
 explicit snapshot ownership, and compare `coreBench` state/frame/audio hashes and
 allocation before/after. Then profile the production UI for #321.
