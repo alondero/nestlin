@@ -8,6 +8,7 @@ import com.github.alondero.nestlin.input.InputDevice
 import com.github.alondero.nestlin.input.NoDevice
 import com.github.alondero.nestlin.input.StandardGamepad
 import com.github.alondero.nestlin.ppu.PpuAddressedMemory
+import com.github.alondero.nestlin.ppu.PpuInternalMemory
 import com.github.alondero.nestlin.apu.DmaPort
 import java.io.DataInput
 import java.io.DataOutput
@@ -230,12 +231,12 @@ class Memory : DmaPort {
         // last CPU access was, not the PPU's last CHR byte — diverging
         // from real hardware. Klax specifically relies on this for its
         // boot sequence.
-        ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = { addr ->
+        ppuAddressedMemory.ppuInternalMemory.chrReadDelegate = PpuInternalMemory.ChrRead { addr ->
             val result = m.ppuRead(addr)
             dataBus = result
             result
         }
-        ppuAddressedMemory.ppuInternalMemory.chrWriteDelegate = { addr, v -> m.ppuWrite(addr, v) }
+        ppuAddressedMemory.ppuInternalMemory.chrWriteDelegate = PpuInternalMemory.ChrWrite { addr, v -> m.ppuWrite(addr, v) }
 
         // Nametable override: PPU reads/writes at $2000-$2FFF consult the
         // mapper first, so mappers that own part of the nametable area
@@ -244,10 +245,10 @@ class Memory : DmaPort {
         // through to PpuInternalMemory's standard CIRAM mirroring. This is
         // the second half of the CHR/namespacing plumbing — the first half
         // is `chrReadDelegate` above for the $0000-$1FFF CHR range.
-        ppuAddressedMemory.ppuInternalMemory.nametableReadDelegate = { addr ->
+        ppuAddressedMemory.ppuInternalMemory.nametableReadDelegate = PpuInternalMemory.NametableRead { addr ->
             m.readNametableOverride(addr)
         }
-        ppuAddressedMemory.ppuInternalMemory.nametableWriteDelegate = { addr, v ->
+        ppuAddressedMemory.ppuInternalMemory.nametableWriteDelegate = PpuInternalMemory.NametableWrite { addr, v ->
             m.writeNametableOverride(addr, v)
         }
 

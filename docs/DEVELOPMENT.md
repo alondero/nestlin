@@ -33,8 +33,10 @@ PowerShell users can run `tools/install-hooks.ps1`. The hook only blocks a commi
 
 | Command | Purpose | Needs external assets |
 | --- | --- | --- |
-| `./gradlew build` | Compile and run the hermetic test suite. | No Mesen2 or external ROM. |
-| `./gradlew test` | Fast JUnit lane; excludes `mesen`, `externalRom`, and `nativeRa` tags. | No. |
+| `./gradlew build` | Compile and run the hermetic suite, documentation lint and isolated allocation checks. | No Mesen2 or external ROM. |
+| `./gradlew test` | Fast JUnit lane; excludes `mesen`, `externalRom`, `nativeRa`, and `performance` tags. | No. |
+| `./gradlew testPerformance` | Run warmed rendering allocation budgets in a separate JVM; CI runs this lane with strict task warnings. Also required by `check`/`build`. | No. |
+| `./gradlew coreBench [-Pframes=600] [-Pwarmup=300]` | Report full-core frame latency, allocated bytes and state/frame/audio hashes. | No; uses the bundled fixture. |
 | `./gradlew testMesenComparison` | Run Mesen2-tagged structured comparisons. | Mesen2 and configured ROMs where a test requires them. |
 | `./gradlew testNativeRa` | Run the native RA contract tests. | Local C-built native library. |
 | `./gradlew docsLint` | Validate documentation links and structure. | Python 3. |
@@ -73,6 +75,14 @@ Then follow the checklist in `.claude/skills/new-mapper/SKILL.md` and update [`M
 The default suite intentionally excludes tests that require unavailable external tools. A green `test` result therefore does not prove that a real game boots. Use `verifyTestEnv`, `bootcheck`, and `testMesenComparison` when the change touches a mapper, timing, rendering, or input path. Never replace an unavailable oracle with a silent `assumeTrue` skip.
 
 Tests use `TestRomBuilder`; do not hand-roll new 16-byte iNES headers. Prefer state diffs over pixel diffs. See [`TESTING_STRATEGY.md`](TESTING_STRATEGY.md) for the detailed rules and lint-enforced anti-patterns.
+
+For performance work, use [`coreBench` and the measured audit](PERFORMANCE.md).
+The `performance` lane runs separately so earlier functional-test call sites do
+not alter the measured JIT profile. It asserts allocations rather than frame
+latency; wall-clock results remain a manual measurement. The benchmark prints
+median/p95/p99/maximum frame times, bytes per frame when supported, and SHA-256
+fingerprints. It uses Gradle's normal success/failure exit status and does not
+enforce a latency threshold.
 
 ## Documentation workflow
 

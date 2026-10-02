@@ -11,9 +11,9 @@ import java.nio.file.Paths
  * Gradle 8.5's implicit-dependency validator stops failing the packaging DAG.
  *
  * Background: PRs #303 and #307 each landed a fix that patched the same
- * pre-existing build-script breakage -- `:jar`, `:test`, and `:shadowJar`
- * read files written by `:writeNativeRaManifest` / `:copyNativeRa` without
- * declaring an explicit dependency. `./gradlew test` happened to paper over
+ * pre-existing build-script breakage -- `:jar`, `:test`, `:testPerformance`,
+ * and `:shadowJar` read files written by `:writeNativeRaManifest` / `:copyNativeRa`
+ * without declaring an explicit dependency. `./gradlew test` happened to paper over
  * the gap (because the unit-test lane transitively pulls the manifest via
  * `processTestResources`), but `./gradlew build` and `./gradlew shadowJar`
  * failed Gradle 8.5's strict mode. Issue #312.
@@ -67,6 +67,16 @@ class TaskGraphLintTest {
     }
 
     @Test
+    fun `testPerformance depends on writeNativeRaManifest so its isolated classpath is complete`() {
+        assertHasDependency("testPerformance", "writeNativeRaManifest", REQUIRED_REASON)
+    }
+
+    @Test
+    fun `testPerformance depends on copyNativeRa so its isolated classpath is complete`() {
+        assertHasDependency("testPerformance", "copyNativeRa", REQUIRED_REASON)
+    }
+
+    @Test
     fun `shadowJar depends on writeNativeRaManifest so the fat JAR ships MANIFEST dot json`() {
         assertHasDependency("shadowJar", "writeNativeRaManifest", REQUIRED_REASON)
     }
@@ -79,9 +89,8 @@ class TaskGraphLintTest {
     /**
      * Validates that `build.gradle.kts` contains an explicit
      * `dependsOn(<provider>)` line inside a `tasks.named("<consumer>") { ... }`
-     * (or `tasks.named<...>("<consumer>") { ... }`) block. Looks for the
-     * consumer block first, then asserts the provider appears as a
-     * `dependsOn(...)` argument inside it.
+     * or `tasks.register<...>("<consumer>") { ... }` block. Looks for the
+     * consumer block first, then asserts the provider appears in `dependsOn(...)`.
      *
      * This tolerates redundant re-declarations across multiple `tasks.named`
      * blocks for the same consumer (we already have two for `:jar` and two
@@ -93,14 +102,14 @@ class TaskGraphLintTest {
         val consumerBlocks = consumerBlocks(source, consumer)
         assertTrue(
             consumerBlocks.isNotEmpty(),
-            "Could not find any `tasks.named(\"$consumer\")` block in build.gradle.kts. " +
+            "Could not find a `tasks.named` or `tasks.register` block for `:$consumer` in build.gradle.kts. " +
                 "Has the task been renamed? $reason",
         )
         val providesEdge = consumerBlocks.any { block -> providesEdgeIn(block, provider) }
         assertTrue(
             providesEdge,
             "build.gradle.kts must declare an explicit `dependsOn($provider)` " +
-                "inside at least one `tasks.named(\"$consumer\") { ... }` block. " +
+                "inside the `tasks.named` or `tasks.register` block for `:$consumer`. " +
                 "Without it, Gradle 8.5's implicit-dependency validator fails " +
                 "`./gradlew build` / `./gradlew shadowJar`. $reason",
         )
@@ -241,14 +250,15 @@ class TaskGraphLintTest {
 
     /**
      * Returns the substring of [source] for each `tasks.named("<consumer>") { ... }`
-     * (or generic-typed variant) block, scoped to the consumer's matching
+     * or `tasks.register<...>("<consumer>") { ... }` block, scoped to the
+     * consumer's matching
      * brace pair. Brace counting is depth-based and string-aware: an opening
      * `{` inside `"..."` or inside `"${...}"` interpolation is skipped so a
      * URL or description string with braces does not unbalance the counter.
      */
     private fun consumerBlocks(source: String, consumer: String): List<String> {
         val regex = Regex(
-            """tasks\.named\s*(?:<[^>]*>)?\s*\(\s*"${Regex.escape(consumer)}"\s*\)\s*\{"""
+            """tasks\.(?:named|register)\s*(?:<[^>]*>)?\s*\(\s*"${Regex.escape(consumer)}"\s*\)\s*\{"""
         )
         val out = mutableListOf<String>()
         for (match in regex.findAll(source)) {

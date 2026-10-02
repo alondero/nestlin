@@ -125,6 +125,58 @@ class NametableMirroringTest {
         assertThat(memory[0x2C00], equalTo(0x20.toByte()))
     }
 
+    @Test
+    fun `0x3000-0x3EFF mirror range reads and writes CIRAM addresses in every mode`() {
+        for (mirroring in PpuInternalMemory.Mirroring.entries) {
+            val memory = PpuInternalMemory().apply { this.mirroring = mirroring }
+
+            for (address in 0x3000..0x3EFF) {
+                val mirroredAddress = address - 0x1000
+                val value = address.toByte()
+                memory[address] = value
+                assertThat(memory[mirroredAddress], equalTo(value))
+                assertThat(memory[address], equalTo(value))
+
+                val lowerWrite = (value.toInt() xor 0xFF).toByte()
+                memory[mirroredAddress] = lowerWrite
+                assertThat(memory[address], equalTo(lowerWrite))
+            }
+        }
+    }
+
+    @Test
+    fun `one-screen mirroring maps all four windows to the selected table`() {
+        val windows = listOf(0x2000, 0x2400, 0x2800, 0x2C00)
+        val cases = listOf(
+            Triple(PpuInternalMemory.Mirroring.ONE_SCREEN_LOWER,
+                PpuInternalMemory.Mirroring.ONE_SCREEN_UPPER, 0x31.toByte()),
+            Triple(PpuInternalMemory.Mirroring.ONE_SCREEN_UPPER,
+                PpuInternalMemory.Mirroring.ONE_SCREEN_LOWER, 0x72.toByte())
+        )
+
+        for ((mirroring, otherMode, marker) in cases) {
+            val memory = PpuInternalMemory().apply { this.mirroring = mirroring }
+            memory[0x2017] = marker
+
+            for (window in windows) {
+                assertThat(memory[window + 0x17], equalTo(marker))
+            }
+
+            val otherMarker = (marker.toInt() xor 0xFF).toByte()
+            memory.mirroring = otherMode
+            assertThat(memory[0x2017], equalTo(0.toByte()))
+            memory[0x2C17] = otherMarker
+            for (window in windows) {
+                assertThat(memory[window + 0x17], equalTo(otherMarker))
+            }
+
+            memory.mirroring = mirroring
+            for (window in windows) {
+                assertThat(memory[window + 0x17], equalTo(marker))
+            }
+        }
+    }
+
     // Four-screen mirroring tests (used by DRROM Gauntlet / Mapper 206, GH #105).
     // With 4-screen VRAM there is NO mirroring: each of the four 1 KB windows
     // ($2000/$2400/$2800/$2C00) is its own independent nametable.

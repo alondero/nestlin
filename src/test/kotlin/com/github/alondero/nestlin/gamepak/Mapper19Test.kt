@@ -573,7 +573,7 @@ class Mapper19Test {
     // installs (`ppuInternalMemory.nametableReadDelegate = ...` +
     // `nametableWriteDelegate = ...`). Going through `PpuInternalMemory` (not
     // calling Mapper19 directly) catches bugs that a direct-call test would
-    // miss — e.g. an off-by-one in `mapNametableAddress`, a typo in the
+    // miss — e.g. an off-by-one in the CIRAM address mapping, a typo in the
     // delegate lambda, or the fallback path incorrectly skipping the override.
     //
     // The "usage trace" framing: a game running N163's CHR-as-NT mode reads
@@ -589,8 +589,8 @@ class Mapper19Test {
         // PPU stack — overkill for a delegate round-trip test.
         val mapper = newN163(prgKb = 128, chrKb = 0)
         val ppuMem = PpuInternalMemory()
-        ppuMem.nametableReadDelegate = { addr -> mapper.readNametableOverride(addr) }
-        ppuMem.nametableWriteDelegate = { addr, v -> mapper.writeNametableOverride(addr, v) }
+        ppuMem.nametableReadDelegate = PpuInternalMemory.NametableRead { addr -> mapper.readNametableOverride(addr) }
+        ppuMem.nametableWriteDelegate = PpuInternalMemory.NametableWrite { addr, v -> mapper.writeNametableOverride(addr, v) }
         mapper.cpuWrite(0xC000, 0xE0.toSignedByte())   // bank 8 → NT A
 
         // CPU-side path: PPUDATA write via $2007. PpuInternalMemory.set is
@@ -615,11 +615,11 @@ class Mapper19Test {
         // returns a value.
         val mapper = newN163(prgKb = 128, chrKb = 0)
         val ppuMem = PpuInternalMemory()
-        ppuMem.nametableReadDelegate = { addr -> mapper.readNametableOverride(addr) }
-        ppuMem.nametableWriteDelegate = { addr, v -> mapper.writeNametableOverride(addr, v) }
+        ppuMem.nametableReadDelegate = PpuInternalMemory.NametableRead { addr -> mapper.readNametableOverride(addr) }
+        ppuMem.nametableWriteDelegate = PpuInternalMemory.NametableWrite { addr, v -> mapper.writeNametableOverride(addr, v) }
         mapper.cpuWrite(0xC000, 0x05.toSignedByte())   // bank 8 → plain CHR bank (not NT)
 
-        // With no override, writes go to nameTable0 (via mapNametableAddress).
+        // With no override, writes go to nameTable0 via the default CIRAM mapping.
         ppuMem[0x2000] = 0x42.toSignedByte()
         // Re-read through the delegate path: should still be 0x42 (came
         // from CIRAM, not extended CHR-RAM, so the mapper.readNametableOverride
@@ -639,8 +639,8 @@ class Mapper19Test {
         // the same NT A slot. This is the headline test for issue #234.
         val mapper = newN163(prgKb = 128, chrKb = 0)
         val ppuMem = PpuInternalMemory()
-        ppuMem.nametableReadDelegate = { addr -> mapper.readNametableOverride(addr) }
-        ppuMem.nametableWriteDelegate = { addr, v -> mapper.writeNametableOverride(addr, v) }
+        ppuMem.nametableReadDelegate = PpuInternalMemory.NametableRead { addr -> mapper.readNametableOverride(addr) }
+        ppuMem.nametableWriteDelegate = PpuInternalMemory.NametableWrite { addr, v -> mapper.writeNametableOverride(addr, v) }
         mapper.cpuWrite(0x8000, 0xE0.toSignedByte())   // bank 0 → NT A
         mapper.cpuWrite(0xC000, 0xE0.toSignedByte())   // bank 8 → NT A
 
@@ -664,8 +664,8 @@ class Mapper19Test {
         // 4-screen arrangement actually give 4 distinct screens of RAM.
         val mapper = newN163(prgKb = 128, chrKb = 0)
         val ppuMem = PpuInternalMemory()
-        ppuMem.nametableReadDelegate = { addr -> mapper.readNametableOverride(addr) }
-        ppuMem.nametableWriteDelegate = { addr, v -> mapper.writeNametableOverride(addr, v) }
+        ppuMem.nametableReadDelegate = PpuInternalMemory.NametableRead { addr -> mapper.readNametableOverride(addr) }
+        ppuMem.nametableWriteDelegate = PpuInternalMemory.NametableWrite { addr, v -> mapper.writeNametableOverride(addr, v) }
         mapper.cpuWrite(0xC000, 0xE0.toSignedByte())   // bank 8 ($2000) → NT A
         mapper.cpuWrite(0xC800, 0xE1.toSignedByte())   // bank 9 ($2400) → NT B
 

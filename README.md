@@ -80,6 +80,12 @@ The [user guide](docs/USER_GUIDE.md) is the source of truth for controls, keyboa
 # Fast suite (CPU/PPU/APU/mapper unit tests; ~minutes)
 ./gradlew test
 
+# Isolated rendering-allocation guard (also part of `check` and `build`)
+./gradlew testPerformance
+
+# Reproducible headless performance benchmark and state/frame/audio fingerprints
+./gradlew coreBench
+
 # Cross-emulator suite (boots Mesen2 as an oracle; needs MESEN2_PATH)
 ./gradlew testMesenComparison
 
@@ -90,6 +96,8 @@ python tools/docs_lint.py
 The cross-emulator smoke cases use ROMs that are not checked into Git. Set `NESTLIN_TESTROMS` to the directory containing `tetris.nes`, `lolo1.nes`, and `kirby.nes`; missing ROMs are reported as skipped tests.
 
 The test strategy prefers **structured state diffs** (CPU regs, OAM, palette, mapper banks, CHR window) over pixel diffs. Pixels are a downstream, lossy view; a byte-equal state is a much stronger claim. Full reasoning lives in **[`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md)**.
+
+The isolated allocation budget and benchmark procedure are documented in **[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)**. The allocation lane requires JVM thread-allocation measurement and fails if the capability is unavailable.
 
 The CPU has a single gold-standard regression: **`GoldenLogTest`** runs `nestest.nes` in automation mode and byte-compares the trace against `src/test/resources/nestest.log`. New CPU work that breaks this test isn't ready to merge.
 

@@ -18,11 +18,17 @@ jobs:
       # Mesen2-dependent comparison tests are excluded from `test` by build.gradle.kts;
       # they run locally via `./gradlew testMesenComparison`. TaskGraphLintTest
       # (issue #312) is part of this lane and guards the source-text side of the
-      # native RA packaging DAG.
+      # native RA packaging DAG, including both test tasks.
       - run: ./gradlew test
 
+      # `testPerformance` is excluded from the functional lane because it needs
+      # an isolated JVM. Execute it in CI and fail on implicit task-output
+      # dependency warnings (issue #312).
+      - name: Run isolated performance checks (issue #312)
+        run: ./gradlew testPerformance --warning-mode=fail
+
       # Issue #312 -- runtime guard for the native RA packaging DAG. Walks the
-      # resolved TaskContainer and asserts `:jar`, `:test`, and `:shadowJar`
+      # resolved TaskContainer and asserts `:jar`, `:test`, `:testPerformance`, and `:shadowJar`
       # can reach `:writeNativeRaManifest` and `:copyNativeRa` through their
       # declared (or transitive) dependencies. Cheaper than the `--dry-run`
       # step below because it does not configure `build` / `shadowJar`.

@@ -549,20 +549,34 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 //                          mapper regression test inherits it for free.
 //   @Tag("externalRom")  - needs a ROM not in git (kirby.nes etc.) or is a debug/investigation
 //                          test that can hang; excluded from the fast suite, no dedicated task.
+//   @Tag("performance")  - allocation budgets need an isolated JVM so unrelated test
+//                          call sites do not change JIT profiles; run by testPerformance/check.
 //
-// ./gradlew test               -> everything EXCEPT those two tags (fast, hermetic, ROM-free)
+// ./gradlew test               -> everything EXCEPT those four tags (fast, hermetic, ROM-free)
 // ./gradlew testMesenComparison -> only @Tag("mesen")
 // MapperCoverageLintTest fails the build if a compare/Mapper*RegressionTest is not in the mesen
 // lane, so "forgot to wire it up" is a red build, not a silent skip.
 
 tasks.test {
-    // Fast suite: no Mesen2, no external ROMs, no native RA library.
+    // Fast suite: no Mesen2, no external ROMs, no native RA library, no performance tests.
     // Tags do the exclusion - no class list to maintain. @Tag("nativeRa")
     // skips because the native façade may not be compiled on every host.
     useJUnitPlatform {
-        excludeTags("mesen", "externalRom", "nativeRa")
+        excludeTags("mesen", "externalRom", "nativeRa", "performance")
     }
 }
+
+val testPerformance = tasks.register<Test>("testPerformance") {
+    group = "verification"
+    description = "Checks rendering allocation budgets in an isolated JVM"
+    dependsOn(copyNativeRa, writeNativeRaManifest)
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform { includeTags("performance") }
+    jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
+}
+
+tasks.named("check") { dependsOn(testPerformance) }
 
 // Separate task to run native-RA contract tests. These tests load JNA +
 // the rcheevos_facade shared library; the library is built by :buildNative
@@ -664,6 +678,19 @@ tasks.register<JavaExec>("diverge") {
     if (mesen2Path != null) {
         environment("MESEN2_PATH", mesen2Path)
     }
+}
+
+// Full-core rendering workload with state/frame/audio fingerprints. Uses only the bundled ROM.
+// Usage: ./gradlew coreBench [-Pframes=600] [-Pwarmup=300]. See docs/PERFORMANCE.md.
+tasks.register<JavaExec>("coreBench") {
+    group = "verification"
+    description = "Measures full-core frame latency, allocation and deterministic state/frame/audio hashes"
+    dependsOn("testClasses")
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.perf.CoreBenchmark")
+    jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
+    args((project.findProperty("frames") ?: "600").toString(),
+         (project.findProperty("warmup") ?: "300").toString())
 }
 
 // RA performance benchmark (issue #273 AC: "A repeatable benchmark
@@ -786,21 +813,20 @@ tasks.register("verifyTestEnv") {
 //   - It's cheap (configuration-time resolution + a few Set.contains calls)
 //     but it does require a fully configured project, so we run it as its
 //     own target and let CI opt in. The default `./gradlew test` is
-//     unaffected; CI runs both.
+//     unaffected; CI runs `test`, `testPerformance`, and this validator.
 //   - Failing `:check` would also fail every contributor's pre-push run,
 //     which is desirable — but if a contributor's machine is in a
 //     half-configured state (intellij sync mid-refactor), they get the
 //     failure anyway from this task via the lint test.
 //
-// Required edges (six total — three consumers x two providers; the four
-// originally-broken-in-PRs-#303/#307 edges plus the two `:jar` / `:test`
-// → `:copyNativeRa` edges that round out the manifest guarantee across
-// every consumer of the native RA tree):
+// Required edges (eight total — four consumers x two providers):
 //
 //   :jar           -> :writeNativeRaManifest    (plain JAR includes MANIFEST.json)
 //   :jar           -> :copyNativeRa             (plain JAR includes native-ra/ tree)
 //   :test          -> :writeNativeRaManifest    (test lane sees the merged manifest)
 //   :test          -> :copyNativeRa             (test lane sees the native-ra/ tree)
+//   :testPerformance -> :writeNativeRaManifest   (isolated test lane sees the manifest)
+//   :testPerformance -> :copyNativeRa            (isolated test lane sees the native-ra/ tree)
 //   :shadowJar     -> :writeNativeRaManifest    (fat JAR includes MANIFEST.json)
 //   :shadowJar     -> :copyNativeRa             (fat JAR includes native-ra/ tree)
 //
@@ -824,6 +850,7 @@ tasks.register("validateTaskGraph") {
         val required: Map<String, List<String>> = linkedMapOf(
             "jar" to listOf("writeNativeRaManifest", "copyNativeRa"),
             "test" to listOf("writeNativeRaManifest", "copyNativeRa"),
+            "testPerformance" to listOf("writeNativeRaManifest", "copyNativeRa"),
             "shadowJar" to listOf("writeNativeRaManifest", "copyNativeRa"),
         )
 
