@@ -693,6 +693,19 @@ tasks.register<JavaExec>("coreBench") {
          (project.findProperty("warmup") ?: "300").toString())
 }
 
+// Mixed-opcode dispatch timing/allocation and per-cycle correctness fingerprints (issue #325).
+tasks.register<JavaExec>("opcodeBench") {
+    group = "verification"
+    description = "Compares map/indexed opcode lookup and measures nestest CPU execution with correctness hashes"
+    dependsOn("testClasses")
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.perf.OpcodeBenchmark")
+    // Match coreBench's constrained JVM settings for comparable local runs.
+    jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
+    args((project.findProperty("samples") ?: "600").toString(),
+         (project.findProperty("warmup") ?: "300").toString())
+}
+
 // RA performance benchmark (issue #273 AC: "A repeatable benchmark
 // uses a real-sized achievement set and records p95 evaluation latency
 // and audio health"). Boots a ROM headless, ticks N frames through

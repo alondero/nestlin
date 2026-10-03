@@ -6,18 +6,12 @@ import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toUnsignedInt
 
 /**
- * New sealed-class dispatch table for all 6502 opcodes (issue #192).
- *
- * **Phase 1 of the refactor.** This class sits alongside the existing
- * `com.github.alondero.nestlin.cpu.Opcodes` for cross-validation. The
- * existing `Cpu` continues to use the old dispatcher; this new
- * `OpcodesRefactor` is unused at runtime but is exercised by
- * `OpcodeCrossValidationTest` (Phase 2).
- *
- * **Phase 3** swaps `Cpu`'s `private val opcodes = Opcodes()` to
- * `OpcodesRefactor()` and deletes the old class + `AddressingMode.kt`.
+ * Shared sealed-class opcode definitions (issue #192), indexed by byte for CPU
+ * dispatch and in-flight instruction restore (issue #325). The map remains the
+ * canonical definition set for diagnostics and cross-validation; both lookups
+ * return the same stateless opcode instances.
  */
-object OpcodesRefactor {
+object Opcodes {
 
     /**
      * The dispatch table: 252 mapped opcodes (4 unmapped: 0x0B, 0x2B,
@@ -352,11 +346,14 @@ object OpcodesRefactor {
         put(0x6B, Arr())
 
         // ===== KIL (13) ===================================================
-        // KIL doesn't actually halt (quirk preserved).
+        // KIL sets cpu.idle; the CPU parks until an interrupt resumes it.
         listOf(0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xB2, 0xC3, 0xD2, 0xF2)
             .forEach { put(it, Kil()) }
     }
 
-    /** Look up an opcode by its byte value (null for the 6 unmapped bytes). */
-    operator fun get(code: Int): Opcode? = map[code]
+    // Built once from the definitions: no per-instruction hashing or boxed keys.
+    private val table: Array<Opcode?> = Array(256) { map[it] }
+
+    /** Null for the four unmapped bytes and out-of-range inputs, as with [map]. */
+    operator fun get(code: Int): Opcode? = table.getOrNull(code)
 }

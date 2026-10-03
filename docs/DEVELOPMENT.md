@@ -37,6 +37,7 @@ PowerShell users can run `tools/install-hooks.ps1`. The hook only blocks a commi
 | `./gradlew test` | Fast JUnit lane; excludes `mesen`, `externalRom`, `nativeRa`, and `performance` tags. | No. |
 | `./gradlew testPerformance` | Run warmed full-core and sprite-scratch allocation budgets in a separate JVM; CI runs this lane with strict task warnings. Also required by `check`/`build`. | No. |
 | `./gradlew coreBench [-Pframes=600] [-Pwarmup=300]` | Report full-core frame latency, allocated bytes and state/frame/audio hashes, plus PPU-only sprite latency/allocation. | No; uses the bundled fixture. |
+| `./gradlew opcodeBench [-Psamples=600] [-Pwarmup=300]` | Compare map/indexed opcode lookup, measure nestest CPU time/allocation, and print state/bus/frame/audio hashes. | No; uses the bundled ROM and trace. |
 | `./gradlew testMesenComparison` | Run Mesen2-tagged structured comparisons. | Mesen2 and configured ROMs where a test requires them. |
 | `./gradlew testNativeRa` | Run the native RA contract tests. | Local C-built native library. |
 | `./gradlew docsLint` | Validate documentation links and structure. | Python 3. |
@@ -83,6 +84,12 @@ latency; wall-clock results remain a manual measurement. The benchmark prints
 median/p95/p99/maximum frame times, bytes per frame when supported, and SHA-256
 fingerprints. It uses Gradle's normal success/failure exit status and does not
 enforce a latency threshold.
+
+For CPU dispatch work, `opcodeBench` uses the bundled nestest instruction mix,
+including unofficial operations. It compares lookup implementations in the same
+JVM, then measures the production CPU one bus cycle at a time. Run it on both the
+baseline and candidate to compare CPU execution and correctness fingerprints;
+see [`PERFORMANCE.md`](PERFORMANCE.md) for the measurement contract and limits.
 
 The PPU-only sprite scenarios step the same sparse-sprite fixture without CPU/APU
 or rewind work. They include frame-completion housekeeping in their allocation
