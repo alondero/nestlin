@@ -3,6 +3,8 @@ package com.github.alondero.nestlin.cpu
 import com.github.alondero.nestlin.cpu.opcode.OpcodesRefactor
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 
 /**
@@ -10,7 +12,7 @@ import org.junit.jupiter.api.Test
  *
  * Locks down the byte set currently in [OpcodesRefactor.map] so that a
  * refactor that drops or adds entries fails loudly at build/test time. The
- * current set covers 250 of 256 possible opcodes; the 6 unmapped bytes are
+ * current set covers 252 of 256 possible opcodes; the 4 unmapped bytes are
  * validated explicitly so any "is this byte really unmapped?" question has
  * a documented answer.
  *
@@ -20,6 +22,20 @@ import org.junit.jupiter.api.Test
  * exercises). This test fails the build if the byte set drifts.
  */
 class OpcodeDispatchCompletenessTest {
+
+    @Test
+    fun `indexed dispatch preserves every original opcode object and null slot`() {
+        for (code in 0..0xFF) {
+            assertSame(OpcodesRefactor.map[code], OpcodesRefactor[code], "opcode 0x%02X".format(code))
+        }
+    }
+
+    @Test
+    fun `out of byte range lookup remains unmapped without wrapping`() {
+        for (code in listOf(Int.MIN_VALUE, -256, -1, 256, 511, Int.MAX_VALUE)) {
+            assertNull(OpcodesRefactor[code], "opcode $code")
+        }
+    }
 
     @Test
     fun `dispatch table covers exactly the 252 currently-mapped opcodes`() {
