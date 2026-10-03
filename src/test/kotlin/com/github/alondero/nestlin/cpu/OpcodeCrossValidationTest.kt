@@ -1,17 +1,14 @@
 package com.github.alondero.nestlin.cpu
 
-import com.github.alondero.nestlin.cpu.opcode.OpcodesRefactor
+import com.github.alondero.nestlin.cpu.opcode.Opcodes
 import com.natpryce.hamkrest.assertion.assertThat
 import com.natpryce.hamkrest.equalTo
 import org.junit.jupiter.api.Test
 
 /**
- * Phase 2 of issue #192 — now a smoke test against the new dispatcher.
+ * Smoke tests for the shared opcode definitions introduced in issue #192.
  *
- * Originally this test cross-validated the OLD [com.github.alondero.nestlin.cpu.Opcodes]
- * against the NEW [OpcodesRefactor]. After Phase 3 deleted the old
- * dispatcher, that comparison became moot — there's only one dispatcher
- * now. This test was rewritten to validate the new dispatcher's API
+ * These tests validate the dispatcher's API
  * surface: byte-set coverage, sanity bounds on cycle counts, and that
  * every mapped opcode has the required polymorphic `evaluate` method.
  *
@@ -29,7 +26,7 @@ class OpcodeCrossValidationTest {
         // locked in by OpcodeDispatchCompletenessTest. Issue #207
         // registered SHY (0x9C) and SHX (0x9E), bringing the count from
         // 250 to 252.
-        assertThat(OpcodesRefactor.map.size, equalTo(252))
+        assertThat(Opcodes.map.size, equalTo(252))
     }
 
     @Test
@@ -40,10 +37,10 @@ class OpcodeCrossValidationTest {
         // is if a subclass was added without an `evaluate` override (a
         // compile error). The test exists as a documented check that the
         // dispatcher's byte coverage maps to a polymorphic Opcode.
-        val count = OpcodesRefactor.map.values.count { it != null }
+        val count = Opcodes.map.values.count { it != null }
         assertThat(
             "every mapped byte must have a non-null Opcode instance",
-            count, equalTo(OpcodesRefactor.map.size),
+            count, equalTo(Opcodes.map.size),
         )
     }
 
@@ -52,7 +49,7 @@ class OpcodeCrossValidationTest {
         // Real-6502 base cycles for any addressing mode range from 2
         // (implied/imm) to 8 (rare RMW combinations). We use a slightly
         // wider bound (10) to catch obvious errors like a 0 or 100.
-        val outOfRange = OpcodesRefactor.map.entries.filter { (_, op) ->
+        val outOfRange = Opcodes.map.entries.filter { (_, op) ->
             op.cycles < 1 || op.cycles > 10
         }.map { (byte, op) -> "0x%02X=%d".format(byte, op.cycles) }
         assertThat(

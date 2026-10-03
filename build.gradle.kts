@@ -700,6 +700,7 @@ tasks.register<JavaExec>("opcodeBench") {
     dependsOn("testClasses")
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("com.github.alondero.nestlin.perf.OpcodeBenchmark")
+    // Match coreBench's constrained JVM settings for comparable local runs.
     jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
     args((project.findProperty("samples") ?: "600").toString(),
          (project.findProperty("warmup") ?: "300").toString())

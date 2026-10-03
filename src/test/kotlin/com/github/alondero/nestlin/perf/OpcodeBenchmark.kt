@@ -3,8 +3,7 @@ package com.github.alondero.nestlin.perf
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Region
 import com.github.alondero.nestlin.cpu.opcode.Opcode
-import com.github.alondero.nestlin.cpu.opcode.OpcodesRefactor
-import com.github.alondero.nestlin.cpu.opcode.Kil
+import com.github.alondero.nestlin.cpu.opcode.Opcodes
 import com.github.alondero.nestlin.testutil.TestRoms
 import com.sun.management.ThreadMXBean
 import java.io.ByteArrayInputStream
@@ -30,9 +29,9 @@ object OpcodeBenchmark {
         println("nestest instructions=${trace.size} distinct=${trace.toSet().size} " +
             "unofficial=${lines.count { '*' in it }} high-byte=${trace.count { it >= 128 }}")
         val counters = Counters()
-        val map = OpcodesRefactor.map
+        val map = Opcodes.map
         val table = Array<Opcode?>(256) { map[it] }
-        for (code in 0..255) check(map[code] === table[code] && map[code] === OpcodesRefactor[code])
+        for (code in 0..255) check(map[code] === table[code] && map[code] === Opcodes[code])
         val lookupCount = trace.size.toLong() * LOOKUP_REPEATS
         val mapTimes = LongArray(samples)
         val arrayTimes = LongArray(samples)
@@ -40,10 +39,10 @@ object OpcodeBenchmark {
         val arrayCpuTimes = LongArray(samples)
         val mapBytes = LongArray(samples)
         val arrayBytes = LongArray(samples)
+        fun measureMap() = counters.measure { lookupMap(trace, map) }
+        fun measureArray() = counters.measure { lookupArray(trace, table) }
         // Alternate order to avoid always giving one lookup the warmer host/JIT.
         repeat(warmup + samples) { i ->
-            fun measureMap() = counters.measure { lookupMap(trace, map) }
-            fun measureArray() = counters.measure { lookupArray(trace, table) }
             val first = if (i % 2 == 0) measureMap() else measureArray()
             val second = if (i % 2 == 0) measureArray() else measureMap()
             check(first.checksum == second.checksum)
@@ -64,18 +63,20 @@ object OpcodeBenchmark {
         val emu = nestest()
         val initial = save(emu)
         val recorded = emu.cpu.enableInstructionTrace(trace.size)
-        // The current dispatcher intentionally maps $C3 to KIL, so the ROM cannot
-        // execute the complete reference log. Measure its actual executable prefix.
-        while (!emu.cpu.idle || emu.cpu.executionInFlight) {
+        // Capture at most the reference trace's instruction count, or stop on CPU
+        // idle. Finish the last instruction's bus cycles without pinning an opcode mapping.
+        while ((!emu.cpu.idle || emu.cpu.executionInFlight) &&
+            (emu.cpu.getInstructionCount() < trace.size || emu.cpu.executionInFlight)) {
             check(emu.cpu.cycleCount < 100_000) {
                 "nestest did not finish: instructions=${emu.cpu.getInstructionCount()} " +
                     "PC=${emu.cpu.getCurrentPc()} idle=${emu.cpu.idle} last=${recorded.takeLast(5)}"
             }
             emu.cpu.tick()
         }
-        check(recorded.last().second == 0xC3 && OpcodesRefactor[0xC3] is Kil) { "unexpected nestest halt" }
+        check(recorded.isNotEmpty()) { "nestest did not dispatch an instruction" }
         val executed = recorded.size
-        println("cpu-nestest instructions=$executed distinct=${recorded.map { it.second }.toSet().size} stop=KIL-C3")
+        val stop = if (emu.cpu.idle) "idle" else "instruction-limit"
+        println("cpu-nestest instructions=$executed distinct=${recorded.map { it.second }.toSet().size} stop=$stop")
         val cycles = emu.cpu.cycleCount
         emu.cpu.disableInstructionTrace()
         val times = LongArray(samples)
@@ -228,6 +229,7 @@ object OpcodeBenchmark {
     private data class Measurement(val nanos: Long, val cpuNanos: Long, val bytes: Long, val checksum: Long)
 
     private fun report(name: String, times: LongArray, cpuTimes: LongArray, bytes: LongArray, operations: Long, counters: Counters) {
+        // Only wall-clock quantiles need sorting; CPU time and allocation use arithmetic means.
         times.sort()
         val allocation = if (counters.allocation) String.format(Locale.ROOT, "%.3f", bytes.sum().toDouble() / times.size / operations) else "unavailable"
         // Aggregate CPU time: Windows thread CPU counters can quantize individual short samples to zero.

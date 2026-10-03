@@ -181,8 +181,8 @@ trace (no external assets):
 
 `opcodeBench` is owned by the CPU/performance test harness. Positive `samples`
 and non-negative `warmup` control measurement batches, not emulated frames.
-The task follows Gradle's normal success/failure exit status; failed trace or
-mapping checks fail the task. It has no timing threshold and does not run as a
+The task follows Gradle's normal success/failure exit status; failed capture or
+lookup-equivalence checks fail the task. It has no timing threshold and does not run as a
 JUnit test or CI allocation guard.
 
 The 8,991-instruction nestest trace includes 225 distinct opcode bytes, 197
@@ -198,15 +198,34 @@ counters can quantize a short batch to zero.
 
 The CPU measurement resets the same serialized starting state outside each timed
 section and executes the nestest ROM via `Cpu.tick`, one call per bus cycle.
-It first captures the current dispatcher's executable prefix, including unofficial
-operations, and requires it to stop at the existing `$C3` KIL mapping. The golden
-log treats that byte as DCP, so the complete reference trace is used only for
-lookup measurement. This benchmark preserves the current mapping rather than
-changing CPU compatibility. PPU/APU clocks, tracing, save/load, and hashing are
-excluded from isolated CPU timing. This is a validation-ROM mix, not a
-commercial-game performance claim; allocations are measured rather than inferred
-from boxing. `GoldenLogTest` independently passes its supported logging prefix;
-the logger throws for unsupported mnemonics before reaching `$C3`.
+Capture stops when the CPU becomes idle or completes as many instructions as the
+reference trace contains; it finishes the last instruction's bus cycles and
+does not assert any particular halt opcode. In the measured revision, an
+incorrect `$C3` KIL registration truncates execution to 5,823 actual instructions.
+The bundled oracle identifies `$C3` as DCP `(indirect,X)`; the separate mapping fix
+is tracked in [#333](https://github.com/alondero/nestlin/issues/333). The benchmark
+will capture a longer run when that bug is fixed, without enforcing the erroneous
+mapping. PPU/APU clocks, tracing, save/load, and hashing are excluded from isolated
+CPU timing. These CPU-only timings exclude the production loop's PPU/APU work.
+Allocations are measured rather than inferred from boxing.
+
+**Existing oracle coverage gap:** `GoldenLogTest` validates only 5,003 of the
+8,991 bundled reference rows (55.6%). `Logger.opcodeLog` lacks unofficial-opcode
+formatters and throws at row 5,004 (`$04`, NOP zero-page). The test catches this
+exception and bounds comparison by `currLog.size`, so a truncated log passes.
+The remaining 3,988 rows (44.4%), including every unofficial-opcode case, have no
+end-to-end assertion against this oracle. `opcodeBench` executes part of that
+segment, but its hashes compare with the original implementation and can preserve
+existing wrong behavior; lookup-only replay of all 8,991 bytes does not assert
+their semantics. [#334](https://github.com/alondero/nestlin/issues/334) tracks full
+oracle coverage and truncation failures. See the
+[testing strategy](TESTING_STRATEGY.md#cpu-oracle-coverage) for the current limits.
+
+Opcode fixes currently need coordinated updates to the canonical `Opcodes`
+definitions, the independent `Logger.opcodeLog` formatters, and
+`OpcodeCycleTableTest`. The dispatcher and logger can silently disagree;
+an implemented opcode can still terminate golden logging. The indexed lookup
+introduces no additional definition site and does not fix that existing drift.
 
 Separately, the harness prints SHA-256 fingerprints for nestest through
 `Nestlin.stepCpuCycle`, and 120 rendering frames in both NTSC and PAL with a
@@ -221,12 +240,19 @@ between trees; no emulated cycles are batched or skipped.
 
 ### Dispatch measurements and equivalence
 
-Measured 2026-10-03 on Windows, JDK 21.0.10, AMD Ryzen 9 3900X, 256 MB maximum
+Measured revision: `c4eb675`. Measured 2026-10-03 on Windows, JDK 21.0.10, AMD Ryzen 9 3900X, 256 MB maximum
 heap and two JVM-visible processors. Three baseline processes ran before three
 candidate processes, each with 300 warm-up and 600 measured samples. The baseline
 used the opcode implementation from `4b426fa56213aeec178affb62a096904a5068056`;
 the identical harness then measured the indexed candidate in the same worktree.
 No test suite or compilation ran concurrently with a benchmark JVM.
+`-XX:ActiveProcessorCount=2` matches `coreBench`'s constrained JVM configuration
+for comparable local runs, limiting GC/JIT parallelism along with the small heap.
+It also limits compiler threads during warm-up and can increase timing variance;
+it does not simulate a particular two-core CPU. These settings are symmetric
+between baseline and candidate. The retained `getOrNull` bounds check also runs
+on each indexed lookup despite dispatch inputs already being bytes; its cost is
+included in the measurement and preserves the accessor's invalid-input behavior.
 
 The table reports the median of each process's reported statistic. Lookup rows
 use all six processes (both lookups run in each JVM); CPU rows use the three
@@ -245,7 +271,7 @@ instruction; allocations are bytes per instruction.
 | Executed CPU allocation | 10.315 | 0.250 |
 
 The actual ROM prefix dispatches 5,823 instructions (184 distinct bytes) in
-16,648 cycles before the existing KIL halt. Indexed dispatch removes about
+16,648 cycles before the incorrect `$C3` halt in that revision. Indexed dispatch removes about
 10 bytes of allocation per instruction in this mix, reducing measured CPU
 allocation by 97.6%. Lookup costs consistently favour the array within the same
 JVM. CPU timing is directional: host noise was substantial, including a baseline
@@ -291,6 +317,11 @@ To reproduce the baseline using the candidate's harness in a separate checkout:
 git worktree add --detach ..\nestlin-opcode-baseline HEAD
 git -C ..\nestlin-opcode-baseline restore --source=4b426fa56213aeec178affb62a096904a5068056 -- `
   src/main/kotlin/com/github/alondero/nestlin/cpu/opcode/Opcodes.kt
+# Adapt the original type name to the completed rename; retain its map lookup.
+$opcodeBaseline = (Resolve-Path ..\nestlin-opcode-baseline\src\main\kotlin\com\github\alondero\nestlin\cpu\opcode\Opcodes.kt).Path
+$opcodeOriginal = [System.IO.File]::ReadAllText($opcodeBaseline)
+$opcodeUtf8 = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($opcodeBaseline, $opcodeOriginal.Replace('OpcodesRefactor', 'Opcodes'), $opcodeUtf8)
 Push-Location ..\nestlin-opcode-baseline
 ./gradlew.bat opcodeBench -Psamples=600 -Pwarmup=300 --console=plain
 Pop-Location
@@ -303,8 +334,9 @@ and Star Soldier); both isolated rendering allocation checks; documentation lint
 and `git diff --check`. The full command was
 `./gradlew.bat test testPerformance docsLint --warning-mode=fail`.
 Mesen2 and commercial-ROM comparisons were not run; equivalence here is against
-the original implementation using bundled fixtures. Independent standards/spec
-reviews found no blocking issues.
+the original implementation using bundled fixtures. This passing suite does not
+establish correctness of the unofficial portion omitted by `GoldenLogTest`.
+PR review exposed the mapping and oracle-coverage bugs tracked above.
 
 Suggested next session: implement #322 first, remove redundant rewind copies with
 explicit snapshot ownership, and compare `coreBench` state/frame/audio hashes and

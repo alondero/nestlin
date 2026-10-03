@@ -11,7 +11,7 @@ import com.github.alondero.nestlin.toUnsignedInt
  * canonical definition set for diagnostics and cross-validation; both lookups
  * return the same stateless opcode instances.
  */
-object OpcodesRefactor {
+object Opcodes {
 
     /**
      * The dispatch table: 252 mapped opcodes (4 unmapped: 0x0B, 0x2B,
@@ -346,7 +346,7 @@ object OpcodesRefactor {
         put(0x6B, Arr())
 
         // ===== KIL (13) ===================================================
-        // KIL doesn't actually halt (quirk preserved).
+        // KIL sets cpu.idle; the CPU parks until an interrupt resumes it.
         listOf(0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xB2, 0xC3, 0xD2, 0xF2)
             .forEach { put(it, Kil()) }
     }
