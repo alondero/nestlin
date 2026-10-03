@@ -35,8 +35,8 @@ PowerShell users can run `tools/install-hooks.ps1`. The hook only blocks a commi
 | --- | --- | --- |
 | `./gradlew build` | Compile and run the hermetic suite, documentation lint and isolated allocation checks. | No Mesen2 or external ROM. |
 | `./gradlew test` | Fast JUnit lane; excludes `mesen`, `externalRom`, `nativeRa`, and `performance` tags. | No. |
-| `./gradlew testPerformance` | Run warmed rendering allocation budgets in a separate JVM; CI runs this lane with strict task warnings. Also required by `check`/`build`. | No. |
-| `./gradlew coreBench [-Pframes=600] [-Pwarmup=300]` | Report full-core frame latency, allocated bytes and state/frame/audio hashes. | No; uses the bundled fixture. |
+| `./gradlew testPerformance` | Run warmed full-core and sprite-scratch allocation budgets in a separate JVM; CI runs this lane with strict task warnings. Also required by `check`/`build`. | No. |
+| `./gradlew coreBench [-Pframes=600] [-Pwarmup=300]` | Report full-core frame latency, allocated bytes and state/frame/audio hashes, plus PPU-only sprite latency/allocation. | No; uses the bundled fixture. |
 | `./gradlew testMesenComparison` | Run Mesen2-tagged structured comparisons. | Mesen2 and configured ROMs where a test requires them. |
 | `./gradlew testNativeRa` | Run the native RA contract tests. | Local C-built native library. |
 | `./gradlew docsLint` | Validate documentation links and structure. | Python 3. |
@@ -83,6 +83,16 @@ latency; wall-clock results remain a manual measurement. The benchmark prints
 median/p95/p99/maximum frame times, bytes per frame when supported, and SHA-256
 fingerprints. It uses Gradle's normal success/failure exit status and does not
 enforce a latency threshold.
+
+The PPU-only sprite scenarios step the same sparse-sprite fixture without CPU/APU
+or rewind work. They include frame-completion housekeeping in their allocation
+totals. `SpriteScratchAllocationTest` checks NTSC/PAL and 8x8/8x16 sprites against
+a 1 KiB/frame PPU budget after warm-up. `PpuSpriteScratchTest` separately pins
+serialized state, bus reads, A12 edges, per-dot status and RGB output against the
+original implementation, and checks mid-scanline save/load into reused buffers.
+Run `coreBench` in a separate invocation from test lanes: the existing benchmark
+task does not declare the native-resource copy dependency needed when `test` and
+`coreBench` share a task graph ([issue #330](https://github.com/alondero/nestlin/issues/330)).
 
 ## Documentation workflow
 
