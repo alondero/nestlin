@@ -1,12 +1,12 @@
 package com.github.alondero.nestlin.perf
 
+import com.github.alondero.nestlin.testutil.AudioTestFixture
 import com.github.alondero.nestlin.Region
 import com.github.alondero.nestlin.apu.AudioBuffer
-import com.github.alondero.nestlin.apu.MixerTables
 import com.sun.management.ThreadMXBean
 import java.lang.management.ManagementFactory
 import java.util.Locale
-import java.util.concurrent.locks.ReentrantLock
+import com.github.alondero.nestlin.testutil.OriginalAudioBuffer
 
 /** Manual timings, never test assertions. Keep drains outside the producer measurement. */
 object AudioBenchmark {
@@ -18,7 +18,7 @@ object AudioBenchmark {
         bean.isThreadCpuTimeEnabled = true
         val id = Thread.currentThread().threadId()
         val ring = AudioBuffer(bufferSize = 8192)
-        val output = ShortArray(8192)
+        val output = ShortArray(ring.capacity)
         val original = OriginalAudioBuffer(bufferSize = 8192)
         for (legacy in booleanArrayOf(true, false)) {
             var writeCpu = 0L
@@ -44,7 +44,7 @@ object AudioBenchmark {
         }
         measureMixer()
         for (region in Region.entries) {
-            val apu = AudioWorkload.create(region, 1.0f)
+            val apu = AudioTestFixture.create(region, 1.0f)
             val cycles = (region.cpuFrequencyHz / 60).toInt()
             var tickCpu = 0L
             var pollCpu = 0L
@@ -83,7 +83,7 @@ object AudioBenchmark {
                 val noise = (i ushr 7) and 15
                 val dmc = i and 127
                 if (table) {
-                    sum += (MixerTables.pulse(pulse) + MixerTables.tnd(triangle, noise, dmc)) * 0.9
+                    sum += (ExperimentalMixerTables.pulse(pulse) + ExperimentalMixerTables.tnd(triangle, noise, dmc)) * 0.9
                 } else {
                     val p = if (pulse > 0) 95.88 / ((8128.0 / pulse) + 100.0) else 0.0
                     val tnd = (triangle / 8227.0) + (noise / 12241.0) + (dmc / 22638.0)
@@ -105,69 +105,7 @@ object AudioBenchmark {
         }
         formula.sort()
         table.sort()
-        println(String.format(Locale.ROOT, "mixer formula=%.2fns/sample exactTable=%.2fns/sample tablePayloadBytes=262392",
+        println(String.format(Locale.ROOT, "mixer formula=%.2fns/sample experimentalTable=%.2fns/sample tablePayloadBytes=262392",
             formula[3] / 5000000.0, table[3] / 5000000.0))
-    }
-}
-
-// Frozen baseline ring for same-process timings; retain its original locking and modulo loop.
-private class OriginalAudioBuffer(val sampleRate: Int = 44100, bufferSize: Int = 4096) {
-    private val buffer = ShortArray(bufferSize)
-    private var writePos = 0
-    private var readPos = 0
-    private var available = 0
-    private val lock = ReentrantLock()
-
-    fun write(sample: Short) {
-        lock.lock()
-        try {
-            if (available < buffer.size) {
-                buffer[writePos] = sample
-                writePos = (writePos + 1) % buffer.size
-                available++
-            } else {
-                // Buffer overrun - drop oldest sample
-                readPos = (readPos + 1) % buffer.size
-                buffer[writePos] = sample
-                writePos = (writePos + 1) % buffer.size
-            }
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    fun read(output: ShortArray, length: Int): Int {
-        lock.lock()
-        try {
-            val toRead = minOf(length, available)
-            for (i in 0 until toRead) {
-                output[i] = buffer[readPos]
-                readPos = (readPos + 1) % buffer.size
-            }
-            available -= toRead
-            return toRead
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    fun availableSamples(): Int {
-        lock.lock()
-        try {
-            return available
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    fun clear() {
-        lock.lock()
-        try {
-            readPos = 0
-            writePos = 0
-            available = 0
-        } finally {
-            lock.unlock()
-        }
     }
 }

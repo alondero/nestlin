@@ -25,7 +25,7 @@ are candidates requiring measurement in their own production paths.
 | 7 | Drain audio into consumer-owned reusable arrays under one lock, with bulk ring copies. `getAudioSamples` allocates arrays and queries availability under a separate lock; buffer reads wrap one sample at a time. Resampler wrap arithmetic is another candidate in this path. | Preserve all PCM samples, configured capacities, drop-oldest overflow, resampler phase, concurrent access and endian conversion. | Implemented below in [the audio pipeline measurements](#audio-pipeline-issue-324); related to the audible-dropout investigation in [#31](https://github.com/alondero/nestlin/issues/31). |
 | 8 | Upload/draw the display when a new frame or geometry change requires it, and reduce contention on the shared frame lock. `AnimationTimer` currently uploads/draws on every UI pulse. | Keep input/overlay polling responsive, preserve pause/resize/ROM-load redraws, and prevent buffer reuse from tearing frames. All PPU cycles still run. | [Issue #321](https://github.com/alondero/nestlin/issues/321). |
 | 9 | Benchmark a 256-slot opcode lookup array. `OpcodesRefactor.get` currently uses an integer-keyed map for each instruction; real instruction mixes may incur boxed keys and hashing. | Keep the same opcode objects, missing entries, unofficial opcodes, KIL, bus microcode, interrupts and in-flight restore. The JMP fixture does not establish its benefit. | [Issue #325](https://github.com/alondero/nestlin/issues/325). |
-| 10 | Precompute exact pulse and full triangle/noise/DMC mixer tables. `Apu.mixAndBuffer` repeats divisions at each output sample. | Build entries with the current expressions/evaluation order; preserve expansion mixing, filter history, clipping and PCM bytes. Avoid approximate TND-index formulas. | Implemented below in [the audio pipeline measurements](#audio-pipeline-issue-324). |
+| 10 | Precompute exact pulse and full triangle/noise/DMC mixer tables. `Apu.mixAndBuffer` repeats divisions at each output sample. | Build entries with the current expressions/evaluation order; preserve expansion mixing, filter history, clipping and PCM bytes. Avoid approximate TND-index formulas. | Evaluated in a test-only benchmark below; production retains the original formulas. [Issue #324](https://github.com/alondero/nestlin/issues/324) remains open for target-hardware evidence. |
 
 An initial candidate was caching `FrameCounter.Result` objects. Allocation
 profiling showed that the JVM already eliminates most of these after warm-up in
@@ -176,30 +176,57 @@ allocation before/after. Then profile the production UI for #321.
 
 ## Audio pipeline (issue #324)
 
-Measured 2026-10-03 against `4b426fa56213aeec178affb62a096904a5068056`,
-using JDK 21 on Windows and a Ryzen 9 3900X. This is desktop evidence;
-**slower-hardware and actual device-underrun acceptance remains pending**.
-These measurements do not establish a fix for the audible dropouts in #31.
+This PR contributes the verified allocation/ring-buffer improvement to
+[#324](https://github.com/alondero/nestlin/issues/324). It does not close that
+issue. Its scope is reusable drains, equivalent bulk ring copies and bounded
+resampler wrapping; production retains the original mixer division formulas.
+It makes no claim of fewer audible dropouts or actual device underruns.
+[#31](https://github.com/alondero/nestlin/issues/31) remains open for dropouts.
+Slower-hardware and calibrated device telemetry are follow-up evidence for the
+remaining issue scope, rather than a merge gate claimed satisfied by this PR.
 
-Playback now supplies one reusable 8192-sample input array. The ring drains a
-bounded prefix under one lock, using at most two contiguous copies. Empty drains
-return zero without allocation, and unused destination storage is untouched.
-The allocating convenience API remains for existing callers and shares its empty
-array. Overflow still drops the oldest sample, and capacities are unrestricted
-by power-of-two assumptions. Producer writes retain their per-sample lock.
+Measured 2026-10-03 against `4b426fa56213aeec178affb62a096904a5068056`,
+using JDK 21 on Windows and a Ryzen 9 3900X. This is desktop evidence.
+
+Playback supplies one reusable input array sized from `AudioBuffer.capacity`,
+the backing ring's actual size (currently 8192 samples). `Apu` and `Nestlin`
+expose that metadata without repeating the configured literal. The allocation
+guard uses the same capacity seam. The ring drains a bounded prefix under one
+lock, using at most two contiguous copies. Empty drains return zero without
+allocation, and unused destination storage is untouched. The allocating API
+remains for existing callers and shares its empty array. Overflow still drops
+the oldest sample, without a power-of-two capacity assumption.
 
 The resampler accepts a valid prefix length, so stale contents in reused storage
-never reach interpolation. Only its known nonnegative head/tail increments use
+never reach interpolation. Only known nonnegative head/tail increments use
 conditional wrap; signed-offset lookup, discard, negative-position recovery and
 rounding retain the original behavior. PCM conversion is shared by playback and
 the device probe, retaining both 16-bit byte orders and the existing 8-bit fallback.
 
-The exact mixer uses 31 pulse entries plus every 16 * 16 * 128 TND tuple. Both
-arrays are initialized once and shared across APUs, with 262,392 bytes of Double
-payload (about 256 KiB), plus array/object headers. Initialization retains the
-original expression order and zero cases. Expansion mixing, analog filters,
-clipping, mute behavior, sample accumulation, cycle timing and serialized fields
-are unchanged.
+### Mixer decision and robustness
+
+The exact table experiment has 31 pulse entries plus all 16 * 16 * 128 TND
+combinations: 262,392 bytes of Double payload (about 256 KiB), plus headers.
+It lives entirely under test `perf/`, initializes only in the benchmark/test JVM,
+and checks input domains before indexing or packing. Out-of-range inputs fail
+with a named precondition exception; they cannot alias a neighboring tuple.
+Exhaustive valid-domain checks retain the original expression order and zero cases.
+
+The initial unchecked experiment measured 9.14-9.60 ns/sample for the formula
+and 2.22-6.15 for tables in two warmed runs. After adding required domain checks,
+the candidate measured 9.11 versus 8.81 ns/sample for the formula in the review
+run. It showed no benefit on this host and adds a large table; it is not enabled
+in production. Target-hardware profiling is required before reconsidering it.
+
+Review found that the first production-table version relied on ranges that
+channel deserialization does not validate. A public save/load reproducer
+confirmed an amplitude of 128 caused a pulse-table bounds exception and silently
+aliased noise/DMC onto other TND tuples. Restoring the original mixer formulas
+removes that new worker-thread failure and preserves the previous finite/clipped
+result for such amplitudes. This is not general corrupt-save recovery: broader
+save-state validation and worker-failure reporting remain outside this change.
+Expansion mixing, analog filter history, clipping, mute behavior, accumulation,
+cycle timing and serialized fields are unchanged.
 
 ### Measurements and reproduction
 
@@ -219,78 +246,85 @@ compilation exhausted its default heap. Benchmark JVMs use `-Xmx256m` and
 slower hardware. Allocation/CPU measurement requires a JVM exposing
 `com.sun.management.ThreadMXBean`; the allocation test fails if unsupported.
 
-| Measurement | Original | Optimized | Interpretation |
+| Measurement | Original | Reusable/bulk drain | Interpretation |
 | --- | --- | --- | --- |
-| Nonempty APU drain allocation (roughly 735 samples/poll) | 1,488 bytes/poll | 0 bytes/poll | Repeated empty and nonempty drains also pass the isolated allocation guard. |
-| Ring drain elapsed time, same-process frozen baseline, 735 samples | 4.19 ns/sample | 0.19 ns/sample | 10,000 measured batches after 2,000 warmup batches; excludes producer work. |
-| Ring drain CPU time in that run | 2.13 ns/sample | 2.13 ns/sample | Windows thread CPU clock is too coarse to resolve this short operation reliably; use elapsed time for the drain comparison. |
-| DAC-only mixer elapsed time, two warmed runs | 9.14-9.60 ns/sample | 2.22-6.15 ns/sample | Median of seven 5-million-sample rounds; formula and table sum checks match exactly. The absolute gain is small at 44.1 kHz. |
-| NTSC producer tick + mix CPU time | 722.80 ns/output sample | 552.73-722.80 ns/output sample | Includes channel clocks and per-sample ring writes; scheduling/JIT variation prevents attributing the full difference to tables. |
-| PAL producer tick + mix CPU time | 680.27 ns/output sample | 531.46-616.50 ns/output sample | Same limitation; 1,000 measured batches after 500 warmup batches. |
+| Nonempty APU drain allocation (roughly 735 samples/poll) | 1,488 bytes/poll | 0 bytes/poll | Repeated empty and nonempty drains pass the isolated allocation guard. |
+| Ring drain elapsed time, same-process frozen baseline, 735 samples, initial run | 4.19 ns/sample | 0.19 ns/sample | 10,000 measured batches after 2,000 warmup batches; excludes producer work. |
+| Ring drain elapsed time, review run | 3.68 ns/sample | 0.20 ns/sample | Same fixture, now retaining production mixer formulas. |
+| Ring drain CPU time, initial run | 2.13 ns/sample | 2.13 ns/sample | Windows CPU clock cannot reliably resolve these short phases; no CPU reduction claim. |
+| Ring drain CPU time, review run | 8.50 ns/sample | 2.13 ns/sample | Coarse phase attribution is unstable; use elapsed time for drain comparison. |
+| NTSC producer tick + mix CPU time | 722.80 ns/output sample | 616.51 ns/output sample | Formulas are unchanged; includes channel clocks and ring writes. Scheduling/JIT variation prevents attributing the difference to this change. |
+| PAL producer tick + mix CPU time | 680.27 ns/output sample | 573.98 ns/output sample | Same limitation; 1,000 measured batches after 500 warmup batches. |
 
-Ring writes, including the unchanged lock and wrap, measured 10.6-19.1 ns/sample
-in the same-process run. This is an uncontended cost measurement, not a
-contention profile; no batching or producer/consumer redesign is justified by
-it. A future redesign requires a production contention profile first. The APU
-poll CPU measurements printed zero on this host because they were below the
-thread CPU clock's resolution; zero does not mean zero cost.
+Producer writes retain their per-sample lock. The initial same-process run
+measured 10.6-19.1 ns/sample including the lock and wrap. That is uncontended
+cost, not a contention profile. Per-sample producer locking versus per-drain
+consumer locking is the remaining scalability limit to investigate; any future
+batching or producer/consumer redesign requires a production contention profile.
+The APU poll CPU measurements printed zero on this host because they were below
+the thread CPU clock's resolution; zero does not mean zero cost.
 
-`coreBench` state, frame and audio hashes matched before/after for all four
-workloads. Rendering allocation was unchanged, as expected: its measured section
-excludes audio drains. Frame medians varied substantially between runs on this
-shared host, so no full-core speedup is claimed from these short measurements.
+All four `coreBench` state/frame/audio fingerprint lines match the unchanged
+base, including the final formula-based revision. Rendering allocation is
+unchanged: its measured section excludes audio drains. Frame medians varied
+substantially on this shared host, so no full-core speedup is claimed.
 
-### Device evidence and remaining gate
+### Device observations and follow-up
 
-`audioDeviceBench` runs the rendering/rewind fixture at the selected region's
-refresh rate on a producer thread. Its consumer uses the same reusable drain,
-resampler and encoder as playback. It requests an 8192-byte mono 44.1 kHz line,
-reports the actual opened buffer size, excludes a one-second startup interval and
-shutdown, and prints empty/idle polls separately from device queue starvation
-and Java Sound STOP events. It plays sound and needs a working audio output.
+`audioDeviceBench` runs the rendering/rewind fixture at the region's refresh
+rate on a producer thread. The consumer uses the same drain, resampler and
+encoder as playback. It requests an 8192-byte mono 44.1 kHz line, reports the
+opened buffer size, excludes one-second startup and shutdown, and reports
+empty/idle polls separately from device queue starvation and STOP events.
+It plays sound and requires a working audio output.
 
 Java Sound documents STOP events when source-line output underflows; see the
 [SourceDataLine contract](https://docs.oracle.com/en/java/javase/21/docs/api/java.desktop/javax/sound/sampled/SourceDataLine.html).
-A forced consumer stall checks whether the selected backend actually reports
-those events. Zero events from an uncalibrated backend cannot establish zero
-actual device underruns. Device queue starvation counts transitions to an empty
-host line buffer, sampled before writes, and is a lower-bound observation rather
-than a hardware-driver underrun count.
+A forced stall checks whether the backend actually reports those events. Zero
+events from an uncalibrated backend cannot establish zero actual underruns.
+Queue starvation counts sampled transitions to an empty host-line buffer and
+is a lower-bound observation, not a hardware-driver underrun count.
 
-A five-second unstalled desktop run observed no STOP events in either region.
-PAL nevertheless recorded 2,901 empty/idle polls with at least 5,782 queued bytes;
-NTSC's minimum queued bytes was 5,894. Empty producer polls did not imply device
-starvation. The 300 ms calibration run observed one queue-starvation episode per region
-(minimum queued bytes zero), but no STOP events. This backend therefore failed
-STOP-event calibration, and actual device-underrun measurement is unavailable.
+The initial five-second unstalled run observed no STOP events. PAL recorded
+2,901 empty/idle polls with at least 5,782 queued bytes; NTSC's minimum was 5,894.
+The 300 ms calibration run observed one queue-starvation episode per region
+(minimum queued bytes zero) but no STOP events. This backend failed calibration;
+actual device-underrun measurement is unavailable. No dropout benefit is claimed.
 
-Before merging, run longer unstalled and calibrated device measurements on the
-slower target hardware, record the JVM/device/region/buffer settings and counts,
-and compare against the unchanged base using the same fixture. If forced stalls
-produce no STOP events, use backend-specific device telemetry for actual
-underruns. No actual hardware-driver count or dropout improvement is claimed here.
+The remaining #324/#31 work needs longer baseline/candidate measurements on
+slower target hardware, with JVM/device/region/buffer settings and calibrated
+counts. Use backend-specific telemetry if forced stalls produce no STOP events.
+Do not treat this PR's allocation evidence as completion of that work.
 
-### Equivalence coverage
+### Equivalence coverage and fixture ownership
 
-- Exhaustive raw Double-bit checks cover all pulse sums and all 32,768 TND tuples.
-- Six PCM/state SHA-256 fixtures were captured before production edits. NTSC/PAL
-  scripts exercise active DMC DMA, expansion contributions, filter history,
-  clipping, mute/unmute, save/load and a backlog exceeding ring capacity.
-- Random ring operations match a FIFO for capacities 1, 3, 7 and 100, including
-  overflow, clear, wrap, empty/zero-length and destination-bounded reads.
-- A simultaneous producer/consumer test checks ordered lossless wraps with
-  reusable destination storage; the APU drain test compares small repeated
-  drains against the allocating API and checks untouched tails.
-- The frozen resampler implementation is a differential oracle across capacities
-  1, 3, 7 and 17 and output rates 22.05, 44.1, 48 and 96 kHz, including partial
-  pushes, overflow, negative positions, clear and chunked/empty output.
-- PCM encoding matches all 65,536 signed values in both byte orders; the 8-bit
-  fallback and unused destination tail are checked separately.
+- Exact-table raw Double-bit checks cover all pulse sums and 32,768 TND tuples;
+  boundary tests reject negative, one-past-maximum and extreme Int inputs.
+- Public save/load tests mutate serialized channel amplitude fields and compare
+  pulse/noise/DMC PCM against the prior mixer for values 16, 31, 128, -1 and both
+  Int extremes. They reproduced the bounds/aliasing regression before the fix.
+- Six pre-edit PCM/state SHA-256 goldens cover NTSC/PAL, active DMC DMA, expansion,
+  filter history, clipping, mute/unmute, save/load and an oversized backlog.
+- `testutil/AudioTestFixture` owns the fixed register script, 701-cycle expansion
+  period and capture timeline. Fast correctness tests use it directly; `perf/`
+  owns timing loops and fingerprint reporting. Benchmark tuning cannot change
+  the correctness stimulus by editing the benchmark driver.
+- Random FIFO tests cover capacities 1, 3, 7 and 100, metadata, overflow, clear,
+  wrap, empty/zero-length and destination-bounded reads; simultaneous threads
+  check lossless concurrent wraps and untouched destination tails.
+- Frozen original ring/resampler implementations live in `testutil/`. The
+  resampler differential test covers capacities 1, 3, 7 and 17 and output rates
+  22.05, 44.1, 48 and 96 kHz, partial pushes, overflow, negative positions and clear.
+- PCM encoding checks all 65,536 signed values in both byte orders, the 8-bit
+  fallback and unused destination tail.
 
-Verification passed: the full fast suite ran 1,924 tests with two existing skips;
-all three isolated rendering/drain allocation checks passed, as did documentation
-lint (37 Markdown files), `validateTaskGraph`, and the strict
-`build shadowJar --dry-run --warning-mode=fail` task resolution. The final review
-follow-up was checked with the audio suite plus `KonsistArchitectureTest` and
-documentation lint. Mesen2/native contract lanes were not run; this change's
-accuracy evidence is equivalence to the unchanged PCM/state baseline.
+### Final verification (review revision)
+
+The formula-based revision passed `test`, `testPerformance`, `docsLint` and
+`validateTaskGraph`: 1,929 fast-suite cases (1,927 passed, two existing skips),
+all three isolated allocation guards, 37 Markdown files and all required native
+packaging dependency edges. The focused APU/architecture run passed 101 cases;
+the audio/core benchmarks retained all six PCM/state and four core fingerprint
+lines. A final focused rerun passed all six corrupt-save and table-boundary cases
+against the committed sources. `git diff --check` is clean. Mesen2/native
+contract lanes were not run; target-hardware/device evidence remains open.

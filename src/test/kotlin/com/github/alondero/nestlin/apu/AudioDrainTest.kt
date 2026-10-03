@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin.apu
 
 import com.github.alondero.nestlin.Region
-import com.github.alondero.nestlin.perf.AudioWorkload
+import com.github.alondero.nestlin.testutil.AudioTestFixture
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.util.ArrayDeque
@@ -15,6 +15,7 @@ class AudioDrainTest {
     fun `arbitrary capacities match a FIFO through wrap overflow clear and short reads`() {
         for (capacity in intArrayOf(1, 3, 7, 100)) {
             val ring = AudioBuffer(bufferSize = capacity)
+            assertEquals(capacity, ring.capacity)
             val expected = ArrayDeque<Short>()
             val random = Random(capacity)
             repeat(5000) {
@@ -77,8 +78,8 @@ class AudioDrainTest {
     @Test
     fun `reusable APU drains match allocating drains and preserve unused storage`() {
         for (region in Region.entries) {
-            val allocating = AudioWorkload.create(region, 1.0f)
-            val reusable = AudioWorkload.create(region, 1.0f)
+            val allocating = AudioTestFixture.create(region, 1.0f)
+            val reusable = AudioTestFixture.create(region, 1.0f)
             val output = ShortArray(113) { -123 }
             repeat(20) {
                 repeat(30000) { allocating.tick(); reusable.tick() }
