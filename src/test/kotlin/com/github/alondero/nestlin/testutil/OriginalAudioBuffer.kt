@@ -1,15 +1,14 @@
-package com.github.alondero.nestlin.apu
+package com.github.alondero.nestlin.testutil
 
 import java.util.concurrent.locks.ReentrantLock
 
-class AudioBuffer(val sampleRate: Int = 44100, bufferSize: Int = 4096) {
+// Frozen baseline ring for same-process timings; retain its original locking and modulo loop.
+internal class OriginalAudioBuffer(val sampleRate: Int = 44100, bufferSize: Int = 4096) {
     private val buffer = ShortArray(bufferSize)
     private var writePos = 0
     private var readPos = 0
     private var available = 0
     private val lock = ReentrantLock()
-
-    val capacity: Int get() = buffer.size
 
     fun write(sample: Short) {
         lock.lock()
@@ -29,19 +28,14 @@ class AudioBuffer(val sampleRate: Int = 44100, bufferSize: Int = 4096) {
         }
     }
 
-    /** Drain into caller-owned storage, returning the valid prefix length under one lock. */
-    fun read(output: ShortArray, length: Int = output.size): Int {
-        require(length >= 0)
+    fun read(output: ShortArray, length: Int): Int {
         lock.lock()
         try {
-            val toRead = minOf(length, output.size, available)
-            if (toRead == 0) return 0
-            val first = minOf(toRead, buffer.size - readPos)
-            buffer.copyInto(output, 0, readPos, readPos + first)
-            if (first < toRead) buffer.copyInto(output, first, 0, toRead - first)
-            // Subtract instead of masking: configured capacities need not be powers of two.
-            // This form also avoids overflowing readPos + toRead for very large arrays.
-            readPos = if (toRead >= buffer.size - readPos) toRead - (buffer.size - readPos) else readPos + toRead
+            val toRead = minOf(length, available)
+            for (i in 0 until toRead) {
+                output[i] = buffer[readPos]
+                readPos = (readPos + 1) % buffer.size
+            }
             available -= toRead
             return toRead
         } finally {

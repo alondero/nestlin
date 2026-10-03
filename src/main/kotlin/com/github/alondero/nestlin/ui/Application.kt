@@ -4,6 +4,7 @@ import com.github.alondero.nestlin.EmulatorConfig
 import com.github.alondero.nestlin.Nestlin
 import com.github.alondero.nestlin.Controller
 import com.github.alondero.nestlin.SaveState
+import com.github.alondero.nestlin.apu.PcmEncoder
 import com.github.alondero.nestlin.apu.AudioResampler
 import com.github.alondero.nestlin.file.load
 import com.github.alondero.nestlin.input.GamepadInput
@@ -2561,17 +2562,18 @@ class NestlinApplication : FrameListener, Application() {
         val maxSamplesPerWrite = buffer.size / bytesPerSample
         val resampler = AudioResampler(nestlin.getAudioSampleRateHz(), format.sampleRate.toDouble())
         val outputSamples = ShortArray(maxSamplesPerWrite)
+        val inputSamples = ShortArray(nestlin.getAudioBufferCapacity())
         var exitReason = "stopped"
 
-        // Debug: track underrun events
-        var totalUnderrunEvents = 0
+        // Empty/idle polls describe the pipeline, not actual audio-device underruns.
+        var totalIdlePolls = 0
         var totalSilentReads = 0
 
         while (running && audioEnabled) {
             try {
-                val inputSamples = nestlin.getAudioSamples()
-                if (inputSamples.isNotEmpty()) {
-                    resampler.push(inputSamples)
+                val inputCount = nestlin.getAudioSamples(inputSamples)
+                if (inputCount > 0) {
+                    resampler.push(inputSamples, inputCount)
                 } else {
                     totalSilentReads++
                 }
@@ -2580,41 +2582,13 @@ class NestlinApplication : FrameListener, Application() {
                 var wrote = false
                 while (produced > 0) {
                     wrote = true
-                    when {
-                        format.sampleSizeInBits == 16 -> {
-                            // Convert shorts to bytes
-                            if (format.isBigEndian) {
-                                // Big-endian: MSB first
-                                for (i in 0 until produced) {
-                                    val sample = outputSamples[i].toInt()
-                                    buffer[i * 2] = (sample shr 8).toByte()
-                                    buffer[i * 2 + 1] = (sample and 0xFF).toByte()
-                                }
-                            } else {
-                                // Little-endian: LSB first
-                                for (i in 0 until produced) {
-                                    val sample = outputSamples[i].toInt()
-                                    buffer[i * 2] = (sample and 0xFF).toByte()
-                                    buffer[i * 2 + 1] = (sample shr 8).toByte()
-                                }
-                            }
-                            audioLine?.write(buffer, 0, produced * 2)
-                        }
-                        format.sampleSizeInBits == 8 -> {
-                            // Convert shorts to 8-bit unsigned
-                            for (i in 0 until produced) {
-                                // Scale from -32768..32767 to 0..255
-                                val scaledValue = ((outputSamples[i].toInt() + 32768) shr 8).toByte()
-                                buffer[i] = scaledValue
-                            }
-                            audioLine?.write(buffer, 0, produced)
-                        }
-                    }
+                    val bytes = PcmEncoder.encode(outputSamples, produced, buffer, format.sampleSizeInBits, format.isBigEndian)
+                    audioLine?.write(buffer, 0, bytes)
                     produced = resampler.resample(outputSamples, maxSamplesPerWrite)
                 }
 
                 if (!wrote) {
-                    totalUnderrunEvents++
+                    totalIdlePolls++
                     Thread.sleep(1)  // Avoid busy-waiting
                 }
             } catch (e: Exception) {
@@ -2627,7 +2601,7 @@ class NestlinApplication : FrameListener, Application() {
         }
 
         println("[AUDIO] Audio thread terminated (${exitReason})")
-        println("[AUDIO] Debug: silent reads=${totalSilentReads}, underrun events=${totalUnderrunEvents}")
+        println("[AUDIO] Debug: silent reads=${totalSilentReads}, idle polls=${totalIdlePolls}")
     }
 
     override fun frameUpdated(frame: Frame) {

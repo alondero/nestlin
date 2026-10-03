@@ -35,9 +35,11 @@ PowerShell users can run `tools/install-hooks.ps1`. The hook only blocks a commi
 | --- | --- | --- |
 | `./gradlew build` | Compile and run the hermetic suite, documentation lint and isolated allocation checks. | No Mesen2 or external ROM. |
 | `./gradlew test` | Fast JUnit lane; excludes `mesen`, `externalRom`, `nativeRa`, and `performance` tags. | No. |
-| `./gradlew testPerformance` | Run warmed full-core and sprite-scratch allocation budgets in a separate JVM; CI runs this lane with strict task warnings. Also required by `check`/`build`. | No. |
+| `./gradlew testPerformance` | Run warmed full-core, sprite-scratch and audio-drain allocation budgets in a separate JVM; CI runs this lane with strict task warnings. Also required by `check`/`build`. | No. |
 | `./gradlew coreBench [-Pframes=600] [-Pwarmup=300]` | Report full-core frame latency, allocated bytes and state/frame/audio hashes, plus PPU-only sprite latency/allocation. | No; uses the bundled fixture. |
 | `./gradlew opcodeBench [-Psamples=600] [-Pwarmup=300]` | Compare map/indexed opcode lookup, measure nestest CPU time/allocation, and print state/bus/frame/audio hashes. | No; uses the bundled ROM and trace. |
+| `./gradlew audioBench` | Measure ring write/drain CPU and elapsed time, drain allocation, benchmark-only mixer candidates and PCM/state fingerprints. | No. |
+| `./gradlew audioDeviceBench [-PaudioSeconds=30] [-PaudioStallMs=0]` | Play a paced full-core fixture through Java Sound and count device underflow events. A 300 ms stall calibrates event reporting. | A working audio output; this plays sound. |
 | `./gradlew testMesenComparison` | Run Mesen2-tagged structured comparisons. | Mesen2 and configured ROMs where a test requires them. |
 | `./gradlew testNativeRa` | Run the native RA contract tests. | Local C-built native library. |
 | `./gradlew docsLint` | Validate documentation links and structure. | Python 3. |
@@ -84,6 +86,8 @@ latency; wall-clock results remain a manual measurement. The benchmark prints
 median/p95/p99/maximum frame times, bytes per frame when supported, and SHA-256
 fingerprints. It uses Gradle's normal success/failure exit status and does not
 enforce a latency threshold.
+For audio measurements and the distinction between empty polls and actual device
+underflow, see [the audio pipeline measurements](PERFORMANCE.md#audio-pipeline-issue-324).
 
 For CPU dispatch work, `opcodeBench` uses the bundled nestest instruction mix,
 including unofficial operations. It compares lookup implementations in the same
@@ -97,9 +101,6 @@ totals. `SpriteScratchAllocationTest` checks NTSC/PAL and 8x8/8x16 sprites again
 a 1 KiB/frame PPU budget after warm-up. `PpuSpriteScratchTest` separately pins
 serialized state, bus reads, A12 edges, per-dot status and RGB output against the
 original implementation, and checks mid-scanline save/load into reused buffers.
-Run `coreBench` in a separate invocation from test lanes: the existing benchmark
-task does not declare the native-resource copy dependency needed when `test` and
-`coreBench` share a task graph ([issue #330](https://github.com/alondero/nestlin/issues/330)).
 
 ## Documentation workflow
 

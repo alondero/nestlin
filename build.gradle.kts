@@ -568,7 +568,7 @@ tasks.test {
 
 val testPerformance = tasks.register<Test>("testPerformance") {
     group = "verification"
-    description = "Checks rendering allocation budgets in an isolated JVM"
+    description = "Checks rendering, sprite-scratch and audio-drain allocation budgets in an isolated JVM"
     dependsOn(copyNativeRa, writeNativeRaManifest)
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
@@ -685,12 +685,34 @@ tasks.register<JavaExec>("diverge") {
 tasks.register<JavaExec>("coreBench") {
     group = "verification"
     description = "Measures full-core frame latency, allocation and deterministic state/frame/audio hashes"
-    dependsOn("testClasses")
+    dependsOn("testClasses", copyNativeRa, writeNativeRaManifest)
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("com.github.alondero.nestlin.perf.CoreBenchmark")
     jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
     args((project.findProperty("frames") ?: "600").toString(),
          (project.findProperty("warmup") ?: "300").toString())
+}
+
+// Reproducible audio measurements; see docs/PERFORMANCE.md for timing limitations.
+tasks.register<JavaExec>("audioBench") {
+    group = "verification"
+    description = "Measures audio producer/drain CPU time, allocation and PCM/state fingerprints"
+    dependsOn("testClasses", copyNativeRa, writeNativeRaManifest)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.perf.AudioBenchmark")
+    jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
+}
+
+// Opt-in real playback; a forced stall verifies the device's STOP-event reporting.
+tasks.register<JavaExec>("audioDeviceBench") {
+    group = "verification"
+    description = "Measures actual Java Sound underflow events during paced full-core playback"
+    dependsOn("testClasses", copyNativeRa, writeNativeRaManifest)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.perf.AudioDeviceBenchmark")
+    jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
+    args((project.findProperty("audioSeconds") ?: "30").toString(),
+         (project.findProperty("audioStallMs") ?: "0").toString())
 }
 
 // Mixed-opcode dispatch timing/allocation and per-cycle correctness fingerprints (issue #325).

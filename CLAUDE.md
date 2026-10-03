@@ -13,7 +13,7 @@ Personal learning project. 6502 CPU + 2C02 PPU + 2A03 APU. JavaFX 21 UI, Mesen2 
 # Run the unit-test suite (CPU, PPU, APU, mapper, region tests)
 ./gradlew test
 
-# Run the isolated PPU allocation guard (also required by check/build)
+# Run the isolated rendering/audio-drain allocation guards (also required by check/build)
 ./gradlew testPerformance
 
 # Run the reproducible headless core benchmark and accuracy fingerprints

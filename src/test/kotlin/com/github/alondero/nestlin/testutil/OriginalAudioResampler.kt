@@ -1,8 +1,9 @@
-package com.github.alondero.nestlin.apu
+package com.github.alondero.nestlin.testutil
 
 import kotlin.math.roundToInt
 
-class AudioResampler(
+// Frozen pre-#324 implementation: differential oracle for overflow/negative-position behavior.
+internal class OriginalAudioResampler(
     inputRate: Double,
     outputRate: Double,
     bufferCapacity: Int = 16384
@@ -14,20 +15,17 @@ class AudioResampler(
     private var size = 0
     private var position = 0.0
 
-    /** Append only the valid prefix of reusable consumer storage. */
-    fun push(samples: ShortArray, count: Int = samples.size) {
-        require(count in 0..samples.size)
-        for (i in 0 until count) {
-            val sample = samples[i]
+    fun push(samples: ShortArray) {
+        for (sample in samples) {
             if (size < buffer.size) {
                 buffer[tail] = sample
-                tail = if (tail + 1 == buffer.size) 0 else tail + 1
+                tail = ((tail + 1) % buffer.size + buffer.size) % buffer.size
                 size++
             } else {
                 // Drop oldest sample to avoid unbounded growth.
                 buffer[tail] = sample
-                tail = if (tail + 1 == buffer.size) 0 else tail + 1
-                head = if (head + 1 == buffer.size) 0 else head + 1
+                tail = ((tail + 1) % buffer.size + buffer.size) % buffer.size
+                head = ((head + 1) % buffer.size + buffer.size) % buffer.size
                 // Decrement position to account for dropped sample.
                 // Position can go negative when position < 1, which is OK -
                 // the next resample() call will properly discard samples based on floor(position).

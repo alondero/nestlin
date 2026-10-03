@@ -93,7 +93,7 @@ class Apu(private val dmaPort: DmaPort) {
     fun frameCounterStep(): Int = frameCounter.step
     fun frameCounterMaxCycles(): Int = frameCounter.maxCycles()
     fun audioBufferAvailableSamples(): Int = audioBuffer.availableSamples()
-    fun audioBufferCapacity(): Int = 8192
+    fun audioBufferCapacity(): Int = audioBuffer.capacity
     fun cycleAccumulatorValue(): Double = cycleAccumulator
 
     // Expose channel outputs for benchmarking
@@ -224,15 +224,23 @@ class Apu(private val dmaPort: DmaPort) {
         if (!outputMuted) audioBuffer.write(sample)
     }
 
+    /** The consumer owns [output]; only its returned prefix contains freshly drained PCM. */
+    fun getAudioSamples(output: ShortArray): Int = audioBuffer.read(output)
+
+    /** Allocating convenience API for existing callers; playback uses the reusable overload. */
     fun getAudioSamples(): ShortArray {
         val available = audioBuffer.availableSamples()
         if (available == 0) {
-            return ShortArray(0)
+            return EMPTY_AUDIO
         }
 
         val output = ShortArray(available)
         audioBuffer.read(output, available)
         return output
+    }
+
+    private companion object {
+        val EMPTY_AUDIO = ShortArray(0)
     }
 
     // Integrate with Memory for register writes/reads
