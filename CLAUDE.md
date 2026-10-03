@@ -178,7 +178,7 @@ testroms/                    # nestest.nes is the only ROM in git
 ## Current Status (2026-09)
 
 **Working:**
-- CPU: all 151 opcodes including unofficial; `GoldenLogTest` is the regression bar.
+- CPU: 151 official opcodes plus unofficial implementations. `GoldenLogTest` currently covers an official-opcode prefix only; see the [CPU oracle coverage gap](docs/TESTING_STRATEGY.md#cpu-oracle-coverage) and use focused opcode/bus-cycle tests for unofficial behavior.
 - PPU: full background + sprite rendering, sprite-0 hit, 8x16 sprites, A12 edge to mapper.
 - APU: 5 channels (Pulse×2, Triangle, Noise, DMC), PAL/NTSC tables, mixer.
 - Mappers: see `MAPPER_SUPPORT.md` for the canonical routed-ID list, per-mapper evidence, and known limits. Mapper 5 remains a stub.

@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin.cpu
 
 import com.github.alondero.nestlin.*
-import com.github.alondero.nestlin.cpu.opcode.OpcodesRefactor
+import com.github.alondero.nestlin.cpu.opcode.Opcodes
 import com.github.alondero.nestlin.cpu.opcode.Kil
 import com.github.alondero.nestlin.gamepak.GamePak
 import com.github.alondero.nestlin.log.Logger
@@ -60,7 +60,7 @@ class Cpu(
     private val _processorStatus = ProcessorStatus()
     private var _idle = false
     private var logger: Logger? = null
-    private val opcodes = OpcodesRefactor
+    private val opcodes = Opcodes
     // A single reusable micro-operation object keeps the hot instruction path
     // allocation-free. Its primitive latches are part of the CPU save state.
     private val instructionState = MicrocodedInstruction(this)

@@ -568,7 +568,7 @@ tasks.test {
 
 val testPerformance = tasks.register<Test>("testPerformance") {
     group = "verification"
-    description = "Checks rendering and audio-drain allocation budgets in an isolated JVM"
+    description = "Checks rendering, sprite-scratch and audio-drain allocation budgets in an isolated JVM"
     dependsOn(copyNativeRa, writeNativeRaManifest)
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
@@ -713,6 +713,19 @@ tasks.register<JavaExec>("audioDeviceBench") {
     jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
     args((project.findProperty("audioSeconds") ?: "30").toString(),
          (project.findProperty("audioStallMs") ?: "0").toString())
+}
+
+// Mixed-opcode dispatch timing/allocation and per-cycle correctness fingerprints (issue #325).
+tasks.register<JavaExec>("opcodeBench") {
+    group = "verification"
+    description = "Compares map/indexed opcode lookup and measures nestest CPU execution with correctness hashes"
+    dependsOn("testClasses")
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.github.alondero.nestlin.perf.OpcodeBenchmark")
+    // Match coreBench's constrained JVM settings for comparable local runs.
+    jvmArgs("-Xmx256m", "-XX:ActiveProcessorCount=2")
+    args((project.findProperty("samples") ?: "600").toString(),
+         (project.findProperty("warmup") ?: "300").toString())
 }
 
 // RA performance benchmark (issue #273 AC: "A repeatable benchmark

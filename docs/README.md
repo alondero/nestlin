@@ -11,7 +11,7 @@ Nestlin is a learning-focused NES emulator. This directory separates the informa
 
 ## Develop here
 
-- [Performance audit](PERFORMANCE.md) — measured rendering/audio optimisations, accuracy checks, benchmark commands and follow-up opportunities.
+- [Performance audit](PERFORMANCE.md) — measured rendering, audio and CPU dispatch optimisations, accuracy checks, benchmark commands and follow-up opportunities.
 - [Development guide](DEVELOPMENT.md) — architecture tour, prerequisites, build commands, test lanes, and debugging workflow.
 - [Architecture](ARCHITECTURE.md) — subsystem boundaries and the code paths that own emulator state.
 - [Testing strategy](TESTING_STRATEGY.md) — the state-diff test pyramid and regression-test rules.

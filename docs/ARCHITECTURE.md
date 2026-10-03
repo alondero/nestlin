@@ -45,6 +45,7 @@ ROM path
 - Cheat substitution wraps real CPU-bus reads after RAM/mapper dispatch and before the data-bus latch and observer update. Comparisons use the original byte; RAM mirrors share a substitution. Inspection peeks bypass cheats. `Nestlin.setCheats` changes configuration while emulation is stopped and clears rewind history; game loads/unload clear codes, and reset preserves them. See [the cheat guide](CHEATS.md) for formats and lifetime.
 - `InterruptController` is the seam between PPU/APU/mapper interrupt producers and the CPU consumer. Preserve NMI latency, NMI-over-IRQ ordering, and I-flag gating when changing it.
 - A mapper clocks IRQ logic either from PPU A12 edges or CPU cycles, according to the board. Do not add both clocks without a hardware reason and a regression test.
+- PPU sprite scratch storage has three independent sets of eight reusable slots: evaluation snapshots, fetched sprites for the next row, and active sprites for the current row. Evaluation copies all OAM fields; later OAM writes cannot change selected sprites. Active/next arrays swap only at a scanline boundary. Counts determine which slots are live, including after save-state loading; serialization retains the existing count-prefixed fields and order. Storage reuse must preserve every real and dummy bus fetch at its original dot.
 
 ## Test seams
 

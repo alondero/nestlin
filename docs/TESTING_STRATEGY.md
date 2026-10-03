@@ -230,7 +230,7 @@ When adding a regression test for a new bug, pick the cheapest level that catche
 
 | Symptom | Test recipe |
 |---|---|
-| CPU opcode bug | Extend `GoldenLogTest` golden file, or add a focused unit test with a tiny PRG fixture. |
+| CPU opcode bug | Add a focused unit test with a tiny PRG fixture. `GoldenLogTest` currently covers an official-opcode prefix only; see the CPU oracle coverage gap below. |
 | Mapper bank switching wrong | State diff: read `nesChrRom` (Mesen2) and Nestlin's current bank window at the same frame, byte-compare. |
 | MMC3 IRQ count wrong | Hook test: count A12 edges via `nesPpuMemory` read callback over N frames. Compare. |
 | Sprite-0 hit timing off | Hook test: trap CPU read of `$2002` and record cycle counts. Diff sequences. |
@@ -247,11 +247,32 @@ When adding a regression test for a new bug, pick the cheapest level that catche
 - **Cycle-perfect CPU/PPU lockstep across emulators.** Mesen2 and Nestlin will diverge mid-frame on edge cases that don't matter for game correctness. We compare at *defined synchronisation points* (frame boundary, event-callback fires, specific PCs), not continuously.
 - **Mesen2 savestate import into Nestlin.** Mesen2's binary savestate format is internal. We use *synthesised* state fixtures instead — a documented JSON/binary format both emulators understand.
 - **APU audio comparison.** Out of scope here. The producer-starvation work in `memory/nestlin-audio-producer-starvation-2026-05-19.md` covers audio correctness from a different angle.
-- **Replacing `GoldenLogTest`.** It's already the right shape. Expand it to cover unofficial opcodes more thoroughly; don't rewrite it.
+- **Replacing the bundled CPU oracle.** Retain `nestest.log`, require complete execution/comparison, and make truncation fail. The current `GoldenLogTest` passes on an official-opcode prefix; see the coverage gap below.
 
 ---
 
 ## 8. Known gaps and future work
+
+### CPU oracle coverage
+
+Measured during PR #329 review on 2026-10-03: `GoldenLogTest` emits and compares
+5,003 of the 8,991 bundled oracle rows (55.6%). `Logger.opcodeLog` is independent
+of `cpu.opcode.Opcodes` and lacks the first unofficial opcode's formatter
+(`$04`, reference row 5,004). Logging throws `UnhandledOpcodeException`; the test
+catches it and `LogComparison.size = currLog.size` silently accepts the shorter
+trace. The remaining 3,988 rows (44.4%), including all unofficial-opcode cases,
+have no end-to-end CPU-state assertion against this oracle. Component tests and
+performance fingerprints do not replace that missing oracle comparison.
+
+[Issue #334](https://github.com/alondero/nestlin/issues/334) requires complete
+oracle execution/comparison and regression coverage rejecting empty/truncated
+logs. [Issue #333](https://github.com/alondero/nestlin/issues/333) tracks the
+separate incorrect `$C3` KIL mapping (the oracle specifies DCP indirect-X).
+Until these are fixed, opcode changes need focused behavior/bus-cycle tests and
+coordinated updates to `Opcodes`, `Logger.opcodeLog`, and `OpcodeCycleTableTest`.
+The independent dispatcher and formatter definitions can silently disagree.
+
+### Other investigation backlog
 
 The questions below are a research backlog, not requirements for every change and not evidence that the current test lanes are invalid. Resolved questions remain here only to preserve the reasoning behind the policy.
 

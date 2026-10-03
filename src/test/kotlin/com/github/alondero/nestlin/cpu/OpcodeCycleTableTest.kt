@@ -1,7 +1,7 @@
 package com.github.alondero.nestlin.cpu
 
 import com.github.alondero.nestlin.Memory
-import com.github.alondero.nestlin.cpu.opcode.OpcodesRefactor
+import com.github.alondero.nestlin.cpu.opcode.Opcodes
 import com.github.alondero.nestlin.toSignedByte
 import com.github.alondero.nestlin.toSignedShort
 import com.natpryce.hamkrest.assertion.assertThat
@@ -531,7 +531,7 @@ class OpcodeCycleTableTest {
             // ===== Sanity: every row's opcode must actually be mapped =======
             // This catches typos in the table — if a row's byte isn't in the
             // dispatch table, fail the table build loudly.
-            val mappedBytes = OpcodesRefactor.map.keys.toSet()
+            val mappedBytes = Opcodes.map.keys.toSet()
             val unmapped = rows.map { it.byte }.distinct().filter { it !in mappedBytes }
             require(unmapped.isEmpty()) {
                 "OpcodeCycleTableTest references unmapped bytes: " +
