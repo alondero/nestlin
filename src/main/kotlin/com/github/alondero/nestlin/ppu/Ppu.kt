@@ -92,17 +92,44 @@ class Ppu(var memory: Memory) {
     private var patternLatchHigh: Byte = 0
     private var paletteLatch: Int = 0
 
-    // Active sprites for current scanline (max 8) — consumed by fetchData() during 2-257.
-    private val activeSpriteBuffer = mutableListOf<ActiveSprite>()
+    // Three independent sets of eight reusable slots: evaluation-time OAM snapshots,
+    // sprites being fetched, and sprites being rendered. Counts alone determine which
+    // slots are live; unused slots may contain stale data and must never be consulted.
+    // The active/next arrays swap at endLine, so fetching never mutates the current row.
+    private class SpriteSlot {
+        var index: Int = 0
+        var y: Int = 0
+        var tileIndex: Byte = 0
+        var attributes: Byte = 0
+        var x: Int = 0
+        var tileY: Int = 0
+        var tileDataLow: Byte = 0
+        var tileDataHigh: Byte = 0
+        var shiftLow: Int = 0
+        var shiftHigh: Int = 0
+        var xCounter: Int = 0
+        var isActive: Boolean = false
 
-    // Secondary OAM: up to 8 sprites picked during evaluation (cycle 65) for the next scanline.
-    // The tile-row offset is pre-computed with vertical-flip applied.
-    private data class SecondaryOamEntry(val sprite: SpriteData, val tileY: Int)
-    private val secondaryOam = mutableListOf<SecondaryOamEntry>()
+        val paletteIndex: Int get() = attributes.toUnsignedInt() and 0x03
+        val priority: Int get() = (attributes.toUnsignedInt() shr 5) and 0x01
+        val horizontalFlip: Boolean get() = attributes.toUnsignedInt() and 0x40 != 0
+        val verticalFlip: Boolean get() = attributes.toUnsignedInt() and 0x80 != 0
 
-    // Sprites being assembled during the cycles 257-320 fetch phase, ready to render on the
-    // next scanline. Swapped into activeSpriteBuffer in endLine() before the next scanline begins.
-    private val nextScanlineSprites = mutableListOf<ActiveSprite>()
+        fun copyOamFrom(other: SpriteSlot) {
+            index = other.index
+            y = other.y
+            tileIndex = other.tileIndex
+            attributes = other.attributes
+            x = other.x
+        }
+    }
+
+    private var activeSpriteBuffer = Array(8) { SpriteSlot() }
+    private var activeSpriteCount = 0
+    private val secondaryOam = Array(8) { SpriteSlot() }
+    private var secondaryOamCount = 0
+    private var nextScanlineSprites = Array(8) { SpriteSlot() }
+    private var nextScanlineSpriteCount = 0
 
     // Latches for the currently-fetching sprite slot. The pattern address is computed once at
     // accessType=2 and reused at accessType=3 to avoid recomputing 8x16 arithmetic.
@@ -330,10 +357,12 @@ class Ppu(var memory: Memory) {
     private fun endLine() {
         // Sprite tile data assembled during cycles 257-320 becomes the active set for the
         // upcoming scanline. The secondary-OAM scratch buffer is also cleared for the next eval.
-        activeSpriteBuffer.clear()
-        activeSpriteBuffer.addAll(nextScanlineSprites)
-        nextScanlineSprites.clear()
-        secondaryOam.clear()
+        val previous = activeSpriteBuffer
+        activeSpriteBuffer = nextScanlineSprites
+        nextScanlineSprites = previous
+        activeSpriteCount = nextScanlineSpriteCount
+        nextScanlineSpriteCount = 0
+        secondaryOamCount = 0
 
         when (scanline) {
             region.totalScanlines - 1 -> endFrame()
@@ -396,7 +425,7 @@ class Ppu(var memory: Memory) {
      * the eval pass.
      */
     private fun evaluateSpritesForTargetScanline(target: Int) {
-        secondaryOam.clear()
+        secondaryOamCount = 0
         val oam = memory.ppuAddressedMemory.objectAttributeMemory
         val spriteSize = memory.ppuAddressedMemory.controller.spriteSize()
         val spriteHeight = if (spriteSize == Control.SpriteSize.X_8_16) 16 else 8
@@ -406,12 +435,12 @@ class Ppu(var memory: Memory) {
 
         for (n in 0 until 64) {
             val i = (startIndex + n) and 0x3F
-            // Most sprites miss this scanline. Read Y before creating the immutable
-            // snapshot, so only the eight selected sprites allocate SpriteData.
+            // Most sprites miss this scanline. Only selected sprites copy a complete
+            // OAM snapshot into a reusable slot; later OAM writes cannot change it.
             val y = oam[i * 4].toUnsignedInt()
             // NES Y semantics: sprite at Y appears at scanlines Y+1 through Y+spriteHeight
             if (target > y && target <= y + spriteHeight) {
-                if (secondaryOam.size >= 8) {
+                if (secondaryOamCount >= secondaryOam.size) {
                     // A 9th in-range sprite sets PPUSTATUS bit 5 (sprite overflow),
                     // cleared at pre-render dot 1 alongside the other status flags.
                     // The hardware's cycle-by-cycle diagonal-OAM scan can produce
@@ -422,10 +451,14 @@ class Ppu(var memory: Memory) {
                         memory.ppuAddressedMemory.status.register.setBit(5)
                     break
                 }
-                val s = oam.getSprite(i)
+                val s = secondaryOam[secondaryOamCount++]
+                s.index = i
+                s.y = y
+                s.tileIndex = oam[i * 4 + 1]
+                s.attributes = oam[i * 4 + 2]
+                s.x = oam[i * 4 + 3].toUnsignedInt()
                 val tileYOffset = target - y - 1
-                val tileY = if (s.verticalFlip) (spriteHeight - 1) - tileYOffset else tileYOffset
-                secondaryOam.add(SecondaryOamEntry(s, tileY))
+                s.tileY = if (s.verticalFlip) (spriteHeight - 1) - tileYOffset else tileYOffset
             }
         }
     }
@@ -448,7 +481,7 @@ class Ppu(var memory: Memory) {
         val accessType = (cycle - 256) % 4
 
         val mem = memory.ppuAddressedMemory.ppuInternalMemory
-        val entry = secondaryOam.getOrNull(slotIndex)
+        val entry = if (slotIndex < secondaryOamCount) secondaryOam[slotIndex] else null
 
         when (accessType) {
             0, 1 -> {
@@ -462,7 +495,7 @@ class Ppu(var memory: Memory) {
             3 -> {
                 spriteTileHighLatch = mem[spritePatternAddrLatch + 8]
                 if (entry != null) {
-                    nextScanlineSprites.add(buildActiveSprite(entry, spriteTileLowLatch, spriteTileHighLatch))
+                    buildActiveSprite(entry, spriteTileLowLatch, spriteTileHighLatch)
                 }
             }
         }
@@ -474,12 +507,12 @@ class Ppu(var memory: Memory) {
      * tile $FF from the default sprite pattern table — the canonical dummy fetch that still
      * drives A12 for hardware-accurate bus behaviour.
      */
-    private fun resolveSpritePatternAddress(entry: SecondaryOamEntry?): Int {
+    private fun resolveSpritePatternAddress(entry: SpriteSlot?): Int {
         val controller = memory.ppuAddressedMemory.controller
         val spritePatternBase = controller.spritePatternTableAddress()
         if (entry == null) return spritePatternBase + (0xFF * 16)
 
-        val tileIndex = entry.sprite.tileIndex.toUnsignedInt()
+        val tileIndex = entry.tileIndex.toUnsignedInt()
         return if (controller.spriteSize() == Control.SpriteSize.X_8_16) {
             val base = (tileIndex and 0x01) * 0x1000
             val tileNumber = (tileIndex and 0xFE) + if (entry.tileY >= 8) 1 else 0
@@ -489,22 +522,21 @@ class Ppu(var memory: Memory) {
         }
     }
 
-    private fun buildActiveSprite(entry: SecondaryOamEntry, low: Byte, high: Byte): ActiveSprite {
+    private fun buildActiveSprite(entry: SpriteSlot, low: Byte, high: Byte) {
+        val active = nextScanlineSprites[nextScanlineSpriteCount++]
+        active.copyOamFrom(entry)
+        active.tileDataLow = low
+        active.tileDataHigh = high
         // +1 so the counter reaches zero on the cycle whose frame column equals OAM X.
-        val active = ActiveSprite(
-            data = entry.sprite,
-            tileDataLow = low,
-            tileDataHigh = high,
-            xCounter = entry.sprite.x + 1
-        )
-        if (entry.sprite.horizontalFlip) {
+        active.xCounter = entry.x + 1
+        active.isActive = false
+        if (entry.horizontalFlip) {
             active.shiftLow = reverseBits(low.toUnsignedInt() and 0xFF)
             active.shiftHigh = reverseBits(high.toUnsignedInt() and 0xFF)
         } else {
             active.shiftLow = low.toUnsignedInt()
             active.shiftHigh = high.toUnsignedInt()
         }
-        return active
     }
 
     /**
@@ -659,7 +691,8 @@ class Ppu(var memory: Memory) {
         // Update sprite X counters and shift only active sprites
         // On NES hardware, each sprite has an X position counter that counts down each cycle.
         // When counter reaches 0, the sprite becomes "active" and its shift registers output pixels.
-        activeSpriteBuffer.forEach { sprite ->
+        for (i in 0 until activeSpriteCount) {
+            val sprite = activeSpriteBuffer[i]
             if (sprite.xCounter > 0) {
                 // Counter not yet zero, decrement it
                 sprite.xCounter--
@@ -700,7 +733,8 @@ class Ppu(var memory: Memory) {
         // disabled, no sprite pixels and no sprite-0 hit.
         val showSprites = memory.ppuAddressedMemory.mask.showSprites()
         val showSpritesLeft = memory.ppuAddressedMemory.mask.spritesInLeftmost8px()
-        if (showSprites) for (sprite in activeSpriteBuffer) {
+        if (showSprites) for (i in 0 until activeSpriteCount) {
+            val sprite = activeSpriteBuffer[i]
             // Skip if clipping leftmost 8px
             val pixelX = cycle - 1
             if (pixelX < 8 && !showSpritesLeft) continue
@@ -719,7 +753,7 @@ class Ppu(var memory: Memory) {
             if (spritePixel == 0) continue
 
             // Sprite 0 Hit detection
-            if (sprite.data.index == 0 && usedBackground && pixelX < 255) {
+            if (sprite.index == 0 && usedBackground && pixelX < 255) {
                 val mask = memory.ppuAddressedMemory.mask
                 var canHit = true
                 if (pixelX < 8) {
@@ -734,10 +768,10 @@ class Ppu(var memory: Memory) {
             }
 
             // First non-transparent sprite in OAM order always wins the sprite-sprite priority contest
-            if (sprite.data.priority == 0 || !usedBackground) {
+            if (sprite.priority == 0 || !usedBackground) {
                 // In front of background OR background is transparent
                 finalPixel = spritePixel
-                finalPalette = sprite.data.paletteIndex
+                finalPalette = sprite.paletteIndex
             }
 
             // Even if hidden by background, this sprite blocks lower-indexed sprites
@@ -824,9 +858,10 @@ class Ppu(var memory: Memory) {
         out.writeByte(spriteTileHighLatch.toInt())
         out.writeInt(spritePatternAddrLatch)
 
-        writeActiveSpriteList(out, activeSpriteBuffer)
-        writeActiveSpriteList(out, nextScanlineSprites)
-        writeSecondaryOamList(out, secondaryOam)
+        // Keep the original list wire format: count followed by live slots only.
+        writeActiveSprites(out, activeSpriteBuffer, activeSpriteCount)
+        writeActiveSprites(out, nextScanlineSprites, nextScanlineSpriteCount)
+        writeSecondaryOam(out)
     }
 
     fun loadState(input: DataInput, version: Int = SaveState.VERSION) {
@@ -852,18 +887,21 @@ class Ppu(var memory: Memory) {
         spriteTileHighLatch = input.readByte()
         spritePatternAddrLatch = input.readInt()
 
-        activeSpriteBuffer.clear()
-        activeSpriteBuffer.addAll(readActiveSpriteList(input))
-        nextScanlineSprites.clear()
-        nextScanlineSprites.addAll(readActiveSpriteList(input))
-        secondaryOam.clear()
-        secondaryOam.addAll(readSecondaryOamList(input))
+        activeSpriteCount = readActiveSprites(input, activeSpriteBuffer)
+        nextScanlineSpriteCount = readActiveSprites(input, nextScanlineSprites)
+        secondaryOamCount = readSpriteCount(input)
+        for (i in 0 until secondaryOamCount) {
+            val entry = secondaryOam[i]
+            readSpriteData(input, entry)
+            entry.tileY = input.readInt()
+        }
     }
 
-    private fun writeActiveSpriteList(out: DataOutput, list: List<ActiveSprite>) {
-        out.writeInt(list.size)
-        for (s in list) {
-            writeSpriteData(out, s.data)
+    private fun writeActiveSprites(out: DataOutput, slots: Array<SpriteSlot>, count: Int) {
+        out.writeInt(count)
+        for (i in 0 until count) {
+            val s = slots[i]
+            writeSpriteData(out, s)
             out.writeByte(s.tileDataLow.toInt())
             out.writeByte(s.tileDataHigh.toInt())
             out.writeInt(s.shiftLow)
@@ -873,41 +911,39 @@ class Ppu(var memory: Memory) {
         }
     }
 
-    private fun readActiveSpriteList(input: DataInput): List<ActiveSprite> {
-        val n = input.readInt()
-        return List(n) {
-            val data = readSpriteData(input)
-            val tileLow = input.readByte()
-            val tileHigh = input.readByte()
-            ActiveSprite(
-                data = data,
-                tileDataLow = tileLow,
-                tileDataHigh = tileHigh,
-                shiftLow = input.readInt(),
-                shiftHigh = input.readInt(),
-                xCounter = input.readInt(),
-                isActive = input.readBoolean()
-            )
+    private fun readActiveSprites(input: DataInput, slots: Array<SpriteSlot>): Int {
+        val count = readSpriteCount(input)
+        for (i in 0 until count) {
+            val s = slots[i]
+            readSpriteData(input, s)
+            s.tileDataLow = input.readByte()
+            s.tileDataHigh = input.readByte()
+            s.shiftLow = input.readInt()
+            s.shiftHigh = input.readInt()
+            s.xCounter = input.readInt()
+            s.isActive = input.readBoolean()
         }
+        return count
     }
 
-    private fun writeSecondaryOamList(out: DataOutput, list: List<SecondaryOamEntry>) {
-        out.writeInt(list.size)
-        for (e in list) {
-            writeSpriteData(out, e.sprite)
+    private fun writeSecondaryOam(out: DataOutput) {
+        out.writeInt(secondaryOamCount)
+        for (i in 0 until secondaryOamCount) {
+            val e = secondaryOam[i]
+            writeSpriteData(out, e)
             out.writeInt(e.tileY)
         }
     }
 
-    private fun readSecondaryOamList(input: DataInput): List<SecondaryOamEntry> {
-        val n = input.readInt()
-        return List(n) {
-            val data = readSpriteData(input)
-            SecondaryOamEntry(data, input.readInt())
+    private fun readSpriteCount(input: DataInput): Int {
+        val count = input.readInt()
+        if (count !in 0..8) {
+            throw SaveState.IncompatibleSaveStateException("Invalid PPU sprite count $count (expected 0..8)")
         }
+        return count
     }
 
-    private fun writeSpriteData(out: DataOutput, s: SpriteData) {
+    private fun writeSpriteData(out: DataOutput, s: SpriteSlot) {
         out.writeInt(s.index)
         out.writeInt(s.y)
         out.writeByte(s.tileIndex.toInt())
@@ -915,13 +951,12 @@ class Ppu(var memory: Memory) {
         out.writeInt(s.x)
     }
 
-    private fun readSpriteData(input: DataInput): SpriteData {
-        val index = input.readInt()
-        val y = input.readInt()
-        val tileIndex = input.readByte()
-        val attributes = input.readByte()
-        val x = input.readInt()
-        return SpriteData(index, y, tileIndex, attributes, x)
+    private fun readSpriteData(input: DataInput, s: SpriteSlot) {
+        s.index = input.readInt()
+        s.y = input.readInt()
+        s.tileIndex = input.readByte()
+        s.attributes = input.readByte()
+        s.x = input.readInt()
     }
 }
 
@@ -988,16 +1023,3 @@ data class SpriteData(
     val horizontalFlip: Boolean get() = (attributes.toUnsignedInt() shr 6) and 0x01 != 0
     val verticalFlip: Boolean get() = (attributes.toUnsignedInt() shr 7) and 0x01 != 0
 }
-
-/**
- * Sprite with fetched tile data, ready to render on current scanline.
- */
-class ActiveSprite(
-    val data: SpriteData,
-    val tileDataLow: Byte,    // Pattern table low byte (bit 0 plane)
-    val tileDataHigh: Byte,   // Pattern table high byte (bit 1 plane)
-    var shiftLow: Int = 0,    // 8-bit shift register, bits 7-0 = pixels 7-0
-    var shiftHigh: Int = 0,   // 8-bit shift register
-    var xCounter: Int = 0,    // Counts down from sprite X position to 0
-    var isActive: Boolean = false  // True when xCounter reaches 0 (sprite is rendering)
-)

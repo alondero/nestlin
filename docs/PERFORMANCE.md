@@ -9,17 +9,19 @@ Audit date: 2026-10-02. Performance measurements compare the PR code tree at
 documentation/build guards and add nametable mirror coverage; they do not change
 the measured emulator hot path.
 
-The first three opportunities below were implemented in this session. They remove
+The original audit implemented the first three opportunities below. They remove
 temporary allocations while retaining the same emulated cycles, bus accesses,
-mapper callbacks, sprite selection and save-state format. The remaining entries
-are candidates requiring measurement in their own production paths.
+mapper callbacks, sprite selection and save-state format. The issue #323 follow-up
+below implements the fourth opportunity, and issue #325 implements the ninth.
+The remaining entries are candidates requiring measurement in their own
+production paths.
 
 | Rank | Opportunity and evidence | Accuracy constraints | Status |
 | --- | --- | --- | --- |
 | 1 | Give PPU CHR/nametable callbacks primitive method signatures. Generic Kotlin function callbacks boxed addresses on each read; allocation stacks point to `PpuInternalMemory.get` during background and sprite fetches. | Preserve callback ordering, CHR read updates to the CPU data bus, nullable nametable fall-through, and A12 detection. | Implemented: primitive functional interfaces in `PpuInternalMemory`, wired by `Memory`. |
 | 2 | Remove temporary nametable address pairs and boxed offsets. The previous mapping helper returned a `Pair<ByteArray, Int>`; allocation samples showed boxed offsets even where the JVM eliminated the pair itself. | Resolve current mirroring on every access, retain all five modes, the full `$3000-$3EFF` mirror range, and mapper overrides. | Implemented: select the backing array directly and use the low ten address bits as its offset. |
 | 3 | Check sprite Y before constructing a complete sprite record. `getSprite` ran for up to 64 candidates on every rendering scanline. | Retain rotated OAMADDR order, the eight-sprite limit, ninth-sprite overflow, height/flips, and immutable evaluation-time snapshots. | Implemented: construct `SpriteData` only after selecting a sprite. |
-| 4 | Reuse selected-sprite scratch slots and remove per-pixel list iterators and scanline `addAll` copies. Allocation samples still include `ActiveSprite`, `SecondaryOamEntry`, list iterators and backing arrays. | Preserve shift-register updates, fetch order/dummy reads, A12 edges, sprite-zero hits, and mid-scanline saves. | [Issue #323](https://github.com/alondero/nestlin/issues/323). |
+| 4 | Reuse selected-sprite scratch slots and remove per-pixel list iterators and scanline `addAll` copies. Baseline allocation samples included `ActiveSprite`, `SecondaryOamEntry`, list iterators and backing arrays. | Preserve shift-register updates, fetch order/dummy reads, A12 edges, sprite-zero hits, and mid-scanline saves. | Implemented in the [issue #323 follow-up](#sprite-scratch-follow-up-issue-323): bounded evaluation/active/next slots, array swaps and indexed loops. |
 | 5 | Use primitive loops or a measured packed-pixel path for UI RGB conversion. `NestlinApplication.frameUpdated` uses nested `withIndex().forEach` on primitive pixel rows. | Preserve exact RGB output, screenshots and buffer ownership. Measure JavaFX allocations first: the headless benchmark excludes this path. | [Issue #321](https://github.com/alondero/nestlin/issues/321). |
 | 6 | Remove redundant rewind serialization copies and reuse scratch streams. `Nestlin` produces a copied blob, then `RewindStateMachine` copies it through another stream. Rewind adds about 75 KB/frame in this fixture. | Retain an immutable snapshot every frame, save-file compatibility, failure handling, and the paired RetroAchievements progress trailer. | [Issue #322](https://github.com/alondero/nestlin/issues/322). |
 | 7 | Drain audio into consumer-owned reusable arrays under one lock, with bulk ring copies. `getAudioSamples` allocates arrays and queries availability under a separate lock; buffer reads wrap one sample at a time. Resampler wrap arithmetic is another candidate in this path. | Preserve all PCM samples, configured capacities, drop-oldest overflow, resampler phase, concurrent access and endian conversion. | [Issue #324](https://github.com/alondero/nestlin/issues/324), related to the audible-dropout investigation in [#31](https://github.com/alondero/nestlin/issues/31). |
@@ -337,6 +339,88 @@ Mesen2 and commercial-ROM comparisons were not run; equivalence here is against
 the original implementation using bundled fixtures. This passing suite does not
 establish correctness of the unofficial portion omitted by `GoldenLogTest`.
 PR review exposed the mapping and oracle-coverage bugs tracked above.
+
+## Sprite scratch follow-up (issue #323)
+
+Measured on 2026-10-03 against the list-based implementation at
+`4b426fa56213aeec178affb62a096904a5068056`. The PPU now owns three arrays of eight
+reusable primitive-field slots. Evaluation copies Y/tile/attributes/X/index and
+resolves the flipped row into secondary slots. Fetching copies that snapshot into
+the next array and initializes both pattern bytes, shifts, X counter and active
+flag. At each scanline boundary the active/next arrays swap and counts reset.
+Per-pixel sprite loops use primitive indices. The existing count-prefixed save
+layout and version remain unchanged; loading fills existing slots and rejects
+counts outside 0..8.
+
+JDK 21.0.10 on Windows, 256 MB benchmark heap, two JVM-visible processors, 300
+warm-up and 600 measured frames per scenario. Three baseline JVM runs followed
+by three candidate JVM runs used the same extended `coreBench` harness. The table
+reports the median of each run's statistic. Benchmark sections ran without a
+concurrent compilation or test lane from this worktree. Other host activity was
+not controlled, and individual latency runs varied substantially.
+
+| Scenario | Median ms, before / after | p95 ms, before / after | p99 ms, before / after | Bytes/frame, before / after |
+| --- | --- | --- | --- | --- |
+| NTSC, rendering + rewind | 2.946 / 2.726 | 4.098 / 3.964 | 4.592 / 4.382 | 126,153 / 74,761 |
+| NTSC, rendering | 3.375 / 2.791 | 4.651 / 3.967 | 5.222 / 4.340 | 51,422 / 126 |
+| PAL, rendering + rewind | 3.489 / 3.391 | 4.700 / 4.441 | 5.201 / 5.150 | 126,857 / 74,665 |
+| NTSC, forced blank | 1.897 / 2.076 | 2.512 / 2.582 | 2.941 / 2.998 | 4,264 / 72 |
+| NTSC, PPU-only sprites | 2.692 / 2.431 | 3.847 / 3.162 | 4.739 / 3.636 | 51,369 / 73 |
+| PAL, PPU-only sprites | 2.373 / 2.094 | 3.384 / 3.057 | 3.744 / 3.259 | 52,146 / 72 |
+
+The PPU-only cases step the sparse fixture's PPU directly: 512 selected 8x8
+sprites/frame, with CPU/APU/rewind stepping excluded. Remaining selected-sprite
+scratch allocation is zero per frame: all 24 slots and their arrays are created
+once. The measured total PPU allocation, including frame-completion housekeeping
+and measurement overhead, was 50–73 bytes/frame across candidate runs, down from
+roughly 51–52 KB. Full-core NTSC rendering without rewind fell to 126 bytes/frame.
+Even forced blank loses the previous empty-list `addAll` array at every scanline,
+so its allocation changes too. Allocation is the stable benefit. Rendering
+latency medians and tails improved in this sample, while forced-blank latency
+increased; these few noisy runs do not establish a universal latency improvement
+or cover JavaFX and real-game instruction mixes.
+
+All twelve full-core scenario pairs matched the state/frame/audio fingerprints
+in the [original rendering audit](#accuracy-checks-and-reproduction).
+`PpuSpriteScratchTest` additionally compares the original
+implementation's serialized PPU bytes, every timed pattern/nametable read,
+filtered A12 edges, per-dot status and two complete RGB frames for ten scenarios.
+Those hashes were captured before changing production code. Cases cover empty,
+single, eight and overflowing selections, rotated OAMADDR wrapping through sprite
+zero, 8x8/8x16 tables and rows, both flips, priority/overlap, left clipping and
+independent layer masks. Primary OAM is overwritten after evaluation on every
+line, exercising snapshot lifetime. Replay tests restore at evaluation, low/high
+fetch latches, the last slot, a scanline boundary, and active-pixel/fetch overlap
+into previously populated buffers, then compare state/bus/edges and fully redrawn
+RGB output. Six malformed-count cases check bounded loading. The existing fetch
+cadence and dummy addresses are preserved, including their current timing quirks.
+
+`SpriteScratchAllocationTest` failed against the original implementation at
+51,368/52,168 PPU bytes/frame for NTSC/PAL 8x8 sprites and 98,472/99,272 for 8x16.
+All four cases pass the new 1 KiB/frame budget. The full fast suite ran 1,949 tests
+with zero failures and two existing skips; all six isolated allocation tests
+passed with `--warning-mode=fail`. The focused PPU/save-state selection also
+passed (163 tests). Mesen2/external-ROM comparisons were not run; the equivalence
+oracle for this storage change is the original implementation.
+
+To reproduce with the same harness, create a baseline from this change and restore
+only its production PPU file. Run benchmarks separately from test tasks because
+of the existing [native-resource dependency issue #330](https://github.com/alondero/nestlin/issues/330).
+
+```powershell
+git worktree add --detach ..\nestlin-sprite-baseline HEAD
+git -C ..\nestlin-sprite-baseline restore --source=4b426fa56213aeec178affb62a096904a5068056 -- src/main/kotlin/com/github/alondero/nestlin/ppu/Ppu.kt
+Push-Location ..\nestlin-sprite-baseline
+./gradlew.bat coreBench -Pframes=600 -Pwarmup=300 --no-daemon
+Pop-Location
+./gradlew.bat coreBench -Pframes=600 -Pwarmup=300 --no-daemon
+./gradlew.bat test testPerformance --warning-mode=fail
+```
+
+Repeat each benchmark in three fresh JVMs for the table's sample size. This
+session used an isolated Gradle user home and a 2 GiB in-process compiler heap
+after the default compiler exhausted its heap; those settings do not change the
+benchmark JVM's pinned 256 MB heap and processor count.
 
 Suggested next session: implement #322 first, remove redundant rewind copies with
 explicit snapshot ownership, and compare `coreBench` state/frame/audio hashes and
