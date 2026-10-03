@@ -38,6 +38,8 @@ ROM path
 ## State and threading rules
 
 - CPU, PPU, APU, mapper, controller, and session state must have explicit save/load ownership. `SaveState` orchestrates serialization; callers should not reach into a subsystem's private fields.
+- Host playback owns reusable input/output arrays. `Apu.getAudioSamples(output)` returns the valid prefix drained under one ring lock; unused storage is untouched. The ring preserves arbitrary capacities and drops the oldest sample on overflow. `AudioResampler.push(samples, count)` consumes only that prefix; its interpolation phase and overflow behavior remain unchanged.
+- Base APU mixing uses shared exact Double tables for all 31 pulse sums and all 16 * 16 * 128 triangle/noise/DMC combinations. Expansion gain, analog filter history, clipping and sample accumulation remain in the APU. Tables and host buffers are playback infrastructure outside saved machine state.
 - The emulation thread is the owner of live machine mutation. UI actions that save or load state must use the pause/coordination path in `Application.kt`.
 - `peek` is side-effect-free and is used by inspection tools. `poke` is a real write with intentionally blacklisted dangerous operations such as OAM DMA and controller strobe.
 - Cheat substitution wraps real CPU-bus reads after RAM/mapper dispatch and before the data-bus latch and observer update. Comparisons use the original byte; RAM mirrors share a substitution. Inspection peeks bypass cheats. `Nestlin.setCheats` changes configuration while emulation is stopped and clears rewind history; game loads/unload clear codes, and reset preserves them. See [the cheat guide](CHEATS.md) for formats and lifetime.

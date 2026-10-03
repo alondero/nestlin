@@ -27,14 +27,19 @@ class AudioBuffer(val sampleRate: Int = 44100, bufferSize: Int = 4096) {
         }
     }
 
-    fun read(output: ShortArray, length: Int): Int {
+    /** Drain into caller-owned storage, returning the valid prefix length under one lock. */
+    fun read(output: ShortArray, length: Int = output.size): Int {
+        require(length >= 0)
         lock.lock()
         try {
-            val toRead = minOf(length, available)
-            for (i in 0 until toRead) {
-                output[i] = buffer[readPos]
-                readPos = (readPos + 1) % buffer.size
-            }
+            val toRead = minOf(length, output.size, available)
+            if (toRead == 0) return 0
+            val first = minOf(toRead, buffer.size - readPos)
+            buffer.copyInto(output, 0, readPos, readPos + first)
+            if (first < toRead) buffer.copyInto(output, first, 0, toRead - first)
+            // Subtract instead of masking: configured capacities need not be powers of two.
+            // This form also avoids overflowing readPos + toRead for very large arrays.
+            readPos = if (toRead >= buffer.size - readPos) toRead - (buffer.size - readPos) else readPos + toRead
             available -= toRead
             return toRead
         } finally {

@@ -216,6 +216,8 @@ class Nestlin {
     }
 
     fun getAudioSamples(): ShortArray = apu.getAudioSamples()
+    fun getAudioSamples(output: ShortArray): Int = apu.getAudioSamples(output)
+    fun getAudioBufferCapacity(): Int = apu.audioBufferCapacity()
     fun getAudioSampleRateHz(): Double = apu.outputSampleRateHz()
 
     fun ppuMask(): Int = memory.ppuAddressedMemory.mask.register.toUnsignedInt()

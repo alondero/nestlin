@@ -169,31 +169,10 @@ class Apu(private val dmaPort: DmaPort) {
         val noiseOut = noise.output()
         val dmcOut = dmc.output()
 
-        // NES audio mixing formula (accurate to hardware)
-        // Uses two separate mixing equations for pulse and triangle/noise/dmc channels
-        val pulseSum = pulse1Out + pulse2Out
-
-        // Pulse output scaling (0-30 from two 0-15 channels)
-        // Formula: 95.88 / ((8128.0 / pulseSum) + 100.0)
-        val pulseScaled = if (pulseSum > 0) {
-            95.88 / ((8128.0 / pulseSum) + 100.0)
-        } else {
-            0.0
-        }
-
-        // Triangle + Noise + DMC scaling
-        // Formula: 159.79 / ((1.0 / tndSum) + 100.0)
-        // where tndSum = triangleOut/8227 + noiseOut/12241 + dmcOut/22638
-        val tndScaled = if (triangleOut > 0 || noiseOut > 0 || dmcOut > 0) {
-            val tndSum = (triangleOut / 8227.0) + (noiseOut / 12241.0) + (dmcOut / 22638.0)
-            if (tndSum > 0.0) {
-                159.79 / ((1.0 / tndSum) + 100.0)
-            } else {
-                0.0
-            }
-        } else {
-            0.0
-        }
+        // Exact tables retain both DAC expressions and their Double evaluation order.
+        // TND uses every (triangle, noise, dmc) combination, rather than an approximate index.
+        val pulseScaled = MixerTables.pulse(pulse1Out + pulse2Out)
+        val tndScaled = MixerTables.tnd(triangleOut, noiseOut, dmcOut)
 
         // Combine both components and normalize to 16-bit range
         // The output is approximately in range [0, 1.0] so scale to 16-bit signed max
@@ -224,15 +203,23 @@ class Apu(private val dmaPort: DmaPort) {
         if (!outputMuted) audioBuffer.write(sample)
     }
 
+    /** The consumer owns [output]; only its returned prefix contains freshly drained PCM. */
+    fun getAudioSamples(output: ShortArray): Int = audioBuffer.read(output)
+
+    /** Allocating convenience API for existing callers; playback uses the reusable overload. */
     fun getAudioSamples(): ShortArray {
         val available = audioBuffer.availableSamples()
         if (available == 0) {
-            return ShortArray(0)
+            return EMPTY_AUDIO
         }
 
         val output = ShortArray(available)
         audioBuffer.read(output, available)
         return output
+    }
+
+    private companion object {
+        val EMPTY_AUDIO = ShortArray(0)
     }
 
     // Integrate with Memory for register writes/reads

@@ -1,8 +1,40 @@
 package com.github.alondero.nestlin.apu
 
+import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
 import kotlin.math.roundToInt
+import kotlin.random.Random
 
-class AudioResampler(
+class ResamplerEquivalenceTest {
+    @Test
+    fun `partial pushes preserve interpolation and negative positions after overflow`() {
+        for (capacity in intArrayOf(1, 3, 7, 17)) for (rate in doubleArrayOf(22050.0, 44100.0, 48000.0, 96000.0)) {
+            val actual = AudioResampler(44100.0, rate, capacity)
+            val original = OriginalAudioResampler(44100.0, rate, capacity)
+            val random = Random(capacity)
+            repeat(2000) {
+                if (random.nextInt(50) == 0) {
+                    actual.clear()
+                    original.clear()
+                }
+                val count = random.nextInt(capacity * 3 + 1)
+                val input = ShortArray(count + 11) { random.nextInt().toShort() }
+                actual.push(input, count)
+                original.push(input.copyOf(count))
+                val limit = random.nextInt(80)
+                val expected = ShortArray(80) { -321 }
+                val output = expected.copyOf()
+                assertEquals(original.resample(expected, limit), actual.resample(output, limit),
+                    "capacity=$capacity rate=$rate iteration=$it")
+                assertArrayEquals(expected, output)
+            }
+        }
+    }
+}
+
+// Frozen pre-#324 implementation: differential oracle for overflow/negative-position behavior.
+private class OriginalAudioResampler(
     inputRate: Double,
     outputRate: Double,
     bufferCapacity: Int = 16384
@@ -14,20 +46,17 @@ class AudioResampler(
     private var size = 0
     private var position = 0.0
 
-    /** Append only the valid prefix of reusable consumer storage. */
-    fun push(samples: ShortArray, count: Int = samples.size) {
-        require(count in 0..samples.size)
-        for (i in 0 until count) {
-            val sample = samples[i]
+    fun push(samples: ShortArray) {
+        for (sample in samples) {
             if (size < buffer.size) {
                 buffer[tail] = sample
-                tail = if (tail + 1 == buffer.size) 0 else tail + 1
+                tail = ((tail + 1) % buffer.size + buffer.size) % buffer.size
                 size++
             } else {
                 // Drop oldest sample to avoid unbounded growth.
                 buffer[tail] = sample
-                tail = if (tail + 1 == buffer.size) 0 else tail + 1
-                head = if (head + 1 == buffer.size) 0 else head + 1
+                tail = ((tail + 1) % buffer.size + buffer.size) % buffer.size
+                head = ((head + 1) % buffer.size + buffer.size) % buffer.size
                 // Decrement position to account for dropped sample.
                 // Position can go negative when position < 1, which is OK -
                 // the next resample() call will properly discard samples based on floor(position).
