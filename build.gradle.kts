@@ -777,6 +777,9 @@ tasks.register<JavaExec>("raBench") {
 tasks.register<JavaExec>("nraSmoke") {
     group = "verification"
     description = "Runs the native RetroAchievements smoke runner (optional -Prom=)"
+    // Same native inputs as testNativeRa: the runner loads the library from the
+    // resources tree, so copyNativeRa must have run first (Gradle rejects the implicit use).
+    dependsOn("buildNative", "copyNativeRa", "writeNativeRaManifest")
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("com.github.alondero.nestlin.cli.NativeRaSmokeKt")
 

@@ -198,6 +198,14 @@ Sign-in settles as `SignedIn`, `Rejected(reason)` (server refused the
 credentials — saved token cleared, the server's reason shown in the
 dialog), or `Offline(cause)` (transport/server failure — saved token kept).
 
+**Known limit: 4 KiB per request.** The queue's POST body buffer is
+`RA_FACADE_HTTP_BODY_MAX` (4096 bytes). A request whose POST body is
+4096 bytes or longer is completed immediately as a client error, without
+reaching the network. The façade does not log this, so a dropped request
+shows up only as that client error. Current sign-in and game-load calls
+fit well under the limit; a larger request type (for example, batched
+unlock or rich-presence submissions) would need the buffer raised first.
+
 The façade lock (`facade->lock`) guards the HTTP queue, event queue and
 login outcome, because the bridge thread and the emulation thread both
 call in. It is never held while calling into rcheevos, which re-enters
