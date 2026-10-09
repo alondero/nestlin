@@ -148,29 +148,68 @@ The build script exits with code 2 when no compiler is found; Gradle
 treats this as "build skipped" (a warning, not a failure) and the JNA
 service falls back to NoOp.
 
-## Softcore / no-network mode
+## Softcore mode
 
 Issue #267 requires the client to **force softcore mode immediately after
 client creation**. The façade does this by calling
-`rc_client_set_hardcore_enabled(client, 0)` in `ra_facade_create`. The
-`ra_facade_get_game_info` result carries the effective hardcore flag
-(the Kotlin-side exposes it indirectly via `isSignedIn()`, which always
-returns `false` until #268 lands login).
+`rc_client_set_hardcore_enabled(client, 0)` in `ra_facade_create`.
 
-Login is also intentionally not implemented in this slice. The façade's
-`server_call` callback is a no-network shim that immediately responds
-with `RC_API_SERVER_RESPONSE_CLIENT_ERROR`. As a consequence:
+## HTTP bridge and sign-in
 
-  - `prepareGame` returns `false` for every ROM (the request never
-    completes).
-  - `isSignedIn()` always returns `false`.
-  - `serializeProgress()` returns `null` (no progress to serialize).
-  - `evaluateFrame()` is safe to call (the runtime advances against the
-    memory reader, but no achievement can ever trigger because no set
-    is loaded).
+rcheevos never does network I/O itself: it hands every request to the
+façade's `server_call` shim. The path of one request:
 
-When #268 ships login, the server-call shim gets replaced with a real
-HTTP transport. The Kotlin-side contract doesn't change.
+```
+rcheevos ──server_call──► façade queue (owned copy, request_id)
+                              │  ra_facade_dequeue_http_request   (bridge poll thread)
+                              ▼
+                        RaHttpBridge ──► JavaHttpClientTransport ──► retroachievements.org
+                              │  response bytes parked, delivered on the poll thread
+                              ▼
+          ra_facade_complete_http_request(request_id, status, bytes)
+                              │  runs rcheevos's callback synchronously
+                              ▼
+          login settles → ra_facade_take_login_result → RaSignInManager state
+```
+
+Contracts that each broke sign-in when violated (see the regression tests):
+
+  - **Copy the request.** rcheevos builds each `rc_api_request_t` on its
+    stack, with the URL/POST strings in the struct's inline buffer, and
+    destroys it as soon as `server_call` returns. The queue stores
+    `strdup`ed copies.
+  - **Complete every request exactly once.** rcheevos frees its per-call
+    state — and clears "login in progress" — inside the callback.
+    Staleness (logout, game unload) is rcheevos's job, so the façade never
+    drops a response; a request whose transport throws is completed as a
+    client error; `ra_facade_destroy` completes anything still pending.
+  - **Bodies are bytes.** `body_length` is a byte count and badge images
+    are binary, so `RaHttpResponse.body` is a `ByteArray` end to end.
+  - **Don't infer the method from the URL.** Every API call goes to
+    `dorequest.php` with the method (`r=login2`, …) in the POST body. The
+    sign-in manager reads the settled outcome from
+    `ra_facade_take_login_result` after each delivered response.
+  - **Deliver on the poll loop, not via `submit`.** The bridge's
+    single-thread executor is occupied by the poll loop for its lifetime.
+  - **Stop the bridge before destroying the handle.** `RaSignInManager.from`
+    hooks `NativeRetroAchievementsService.shutdown` to guarantee it.
+
+Sign-in settles as `SignedIn`, `Rejected(reason)` (server refused the
+credentials — saved token cleared, the server's reason shown in the
+dialog), or `Offline(cause)` (transport/server failure — saved token kept).
+
+**Known limit: 4 KiB per request.** The queue's POST body buffer is
+`RA_FACADE_HTTP_BODY_MAX` (4096 bytes). A request whose POST body is
+4096 bytes or longer is completed immediately as a client error, without
+reaching the network. The façade does not log this, so a dropped request
+shows up only as that client error. Current sign-in and game-load calls
+fit well under the limit; a larger request type (for example, batched
+unlock or rich-presence submissions) would need the buffer raised first.
+
+The façade lock (`facade->lock`) guards the HTTP queue, event queue and
+login outcome, because the bridge thread and the emulation thread both
+call in. It is never held while calling into rcheevos, which re-enters
+the façade from inside its calls.
 
 ## Memory discipline
 
@@ -214,10 +253,12 @@ The native contract tests cover:
   - Version strings are non-empty.
   - JNA `Structure` subclasses can be instantiated (proves field layout).
 
-These tests deliberately **do not** make network calls. The no-network
-shim in the façade means the tests are fully hermetic — they construct
-the client, exercise every public method, and verify the documented
-"softcore/no-network" behaviour.
+These tests deliberately **do not** make network calls: they play the
+bridge's part themselves, or swap in `FakeRaHttpTransport`.
+`RaFacadeHttpRoundTripTest` pins the queue contracts above against the
+real library; `RaSignInEndToEndTest` runs the whole sign-in stack with
+only the network faked. `nra-smoke` step 6 performs the same offline
+login round trip on every release platform.
 
 ## Why a custom C façade instead of JNA-direct
 

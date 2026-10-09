@@ -121,20 +121,30 @@ internal interface RaFacadeBindings : Library {
     fun ra_facade_get_user_info(handle: Pointer, out: RaUserInfo): Int
 
     /**
-     * Pop the next pending HTTP request into [out]. Returns 1 when a
-     * request was written, 0 when the queue is empty. Strings are written
-     * into the struct's fixed-size arrays; the JNA side MUST copy what it
-     * intends to retain past the call.
+     * Consume the outcome of the most recently settled login: one of
+     * [RaLoginOutcome]. On FAILED, [outResult] receives the rcheevos RC_*
+     * code ([RcResult]) and [outMessage] the server's user-facing reason.
+     * Each settlement is reported once; afterwards this returns NONE.
+     */
+    fun ra_facade_take_login_result(handle: Pointer, outResult: IntByReference, outMessage: ByteArray, messageCapacity: Int): Int
+
+    /**
+     * Hand the oldest not-yet-dispatched HTTP request to the caller.
+     * Returns 1 when a request was written, 0 when there is nothing new.
+     * Each request is handed out exactly once and MUST later be completed
+     * via [ra_facade_complete_http_request] with its request id. Strings
+     * are written into the struct's fixed-size arrays; the JNA side MUST
+     * copy what it intends to retain past the call.
      */
     fun ra_facade_dequeue_http_request(handle: Pointer, out: RaHttpRequestSlot): Int
 
     /**
-     * Deliver an HTTP response back to rcheevos. The generation matches
-     * the one rcheevos returned via [ra_facade_dequeue_http_request];
-     * mismatches are silently dropped (the user logged out before the
-     * response arrived). Returns 1 if delivered, 0 if dropped.
+     * Deliver the HTTP response for [requestId] back to rcheevos. [body]
+     * is the raw response bytes and [bodyLength] their count. Runs the
+     * rcheevos callback on the calling thread. Returns 1 if delivered,
+     * 0 if no pending request has that id.
      */
-    fun ra_facade_complete_http_request(handle: Pointer, generation: Int, status: Int, body: String?, bodyLength: Int): Int
+    fun ra_facade_complete_http_request(handle: Pointer, requestId: Int, status: Int, body: ByteArray?, bodyLength: Int): Int
 
     /** Begin loading a new game from raw ROM bytes. Returns a [RaStatus] code. */
     fun ra_facade_prepare_game(handle: Pointer, romBytes: ByteArray, romLen: Int, displayName: String?): Int
@@ -678,14 +688,14 @@ internal class RaUserInfo : Structure() {
  * strings it needs, then reuses the struct for the next poll.
  */
 internal class RaHttpRequestSlot : Structure() {
-    @JvmField var generation: Int = 0
+    @JvmField var requestId: Int = 0
     @JvmField var url: ByteArray = ByteArray(RA_FACADE_HTTP_URL_MAX)
     @JvmField var postData: ByteArray = ByteArray(RA_FACADE_HTTP_BODY_MAX)
     @JvmField var contentType: ByteArray = ByteArray(RA_FACADE_HTTP_CONTENT_TYPE_MAX)
     @JvmField var hasPostData: Byte = 0
     @JvmField var reserved: ByteArray = ByteArray(3)
     override fun getFieldOrder(): List<String> = listOf(
-        "generation", "url", "postData", "contentType", "hasPostData", "reserved",
+        "requestId", "url", "postData", "contentType", "hasPostData", "reserved",
     )
 
     companion object {
@@ -711,6 +721,22 @@ internal object RaStatus {
     const val ERR_NOT_SIGNED_IN = -6
     const val ERR_INTERNAL = -7
     const val ERR_DESTROYED = -8
+}
+
+/** Mirrors `ra_login_outcome_t` in ra_facade.h. */
+internal object RaLoginOutcome {
+    const val NONE = 0
+    const val SUCCEEDED = 1
+    const val FAILED = 2
+}
+
+/** The rcheevos `RC_*` result codes (rc_error.h) a login can settle with. */
+internal object RcResult {
+    const val ABORTED = -31
+    const val NO_RESPONSE = -32
+    const val ACCESS_DENIED = -33
+    const val INVALID_CREDENTIALS = -34
+    const val EXPIRED_TOKEN = -35
 }
 
 internal object RaLoadState {

@@ -171,6 +171,17 @@ class RaAchievementsControllerTest {
     }
 
     @Test
+    fun `Rejected sign-in is mapped to SignedOut, not to a signed-in view`() {
+        val c = controller(
+            serviceWith(null),
+            signIn = RaSignInState.Rejected("Invalid User/Password combination. Please try again"),
+            rom = null,
+        )
+        val viewModel = captureSingle(c)
+        assertTrue(viewModel is RaAchievementsWindowViewModel.SignedOut, "got $viewModel")
+    }
+
+    @Test
     fun `Authenticating is mapped to SignedOut placeholder`() {
         // During the brief Authenticating window we don't have a known
         // user yet — show the SignedOut placeholder so the user sees a

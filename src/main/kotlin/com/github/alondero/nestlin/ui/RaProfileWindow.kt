@@ -166,6 +166,7 @@ class RaProfileWindow(
                 is RaSignInState.Offline -> renderPlaceholder("Offline — ${Redactor.redactMessage(state.cause)}")
                 is RaSignInState.Authenticating -> renderPlaceholder("Signing in…")
                 is RaSignInState.SignedOut -> renderPlaceholder("Signed out — sign in to view your profile.")
+                is RaSignInState.Rejected -> renderPlaceholder("Signed out — sign in to view your profile.")
                 is RaSignInState.Unavailable -> renderPlaceholder("RetroAchievements integration is not available.")
             }
         }

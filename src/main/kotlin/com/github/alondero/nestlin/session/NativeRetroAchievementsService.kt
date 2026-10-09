@@ -36,10 +36,11 @@ import com.sun.jna.Pointer
  *
  * ## Threading
  *
- * Single-threaded. The emulation thread calls every method. The
- * underlying rcheevos client has its own internal thread pool for HTTP
- * work, but those threads never call back into JVM code in this slice
- * (the network is stubbed off in the C side per issue #267's contract).
+ * The emulation thread calls every method on this class. The HTTP bridge
+ * owned by [RaSignInManager] calls into the same façade handle from its own
+ * poll thread (dequeue/complete); the façade serialises its shared state
+ * internally, and [beforeShutdown] guarantees the bridge stops before
+ * [shutdown] destroys the handle.
  */
 internal class NativeRetroAchievementsService private constructor(
     private val bindings: RaFacadeBindings,
@@ -55,6 +56,20 @@ internal class NativeRetroAchievementsService private constructor(
      */
     internal fun bridgeBindings(): RaFacadeBindings = bindings
     internal fun bridgeHandle(): Pointer = handle
+
+    /** Run by [shutdown] before the handle is destroyed, in registration order. */
+    private val beforeShutdownHooks: MutableList<() -> Unit> = java.util.concurrent.CopyOnWriteArrayList()
+
+    /**
+     * Register [hook] to run at the start of [shutdown], while the native
+     * handle is still valid. [RaSignInManager] uses this to stop its HTTP
+     * bridge — which polls this handle from another thread — before the
+     * handle is freed, independent of the order the application tears
+     * things down in.
+     */
+    internal fun beforeShutdown(hook: () -> Unit) {
+        beforeShutdownHooks += hook
+    }
 
     // The native library version is captured at construction so the UI's
     // availability indicator doesn't have to re-call into the C side on
@@ -432,7 +447,22 @@ internal class NativeRetroAchievementsService private constructor(
         } catch (e: UnsatisfiedLinkError) { /* see above */ }
     }
 
+    /** Set by the first [shutdown]; the handle is freed exactly once. */
+    private val isShutDown = java.util.concurrent.atomic.AtomicBoolean(false)
+
     override fun shutdown() {
+        if (!isShutDown.compareAndSet(false, true)) return
+        // Stop anything else polling this handle (the sign-in manager's HTTP
+        // bridge) first; the façade's destroy then settles whatever requests
+        // were still pending. Each hook runs once.
+        for (hook in beforeShutdownHooks) {
+            try {
+                hook()
+            } catch (e: Exception) {
+                System.err.println("[RA] Shutdown hook threw: ${e.javaClass.simpleName}")
+            }
+        }
+        beforeShutdownHooks.clear()
         // Issue #270: drop the listener + tracker references BEFORE the
         // native handle goes away. A listener that fires after shutdown
         // would see a freed pointer; clearing here makes the post-shutdown

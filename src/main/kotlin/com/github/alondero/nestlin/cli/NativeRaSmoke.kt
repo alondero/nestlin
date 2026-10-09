@@ -2,10 +2,13 @@ package com.github.alondero.nestlin.cli
 
 import com.github.alondero.nestlin.session.RaEvent
 import com.github.alondero.nestlin.session.RaFacadeBindings
+import com.github.alondero.nestlin.session.RaHttpRequestSlot
+import com.github.alondero.nestlin.session.RaLoginOutcome
 import com.github.alondero.nestlin.session.RaManifest
 import com.github.alondero.nestlin.session.RaStatus
 import com.github.alondero.nestlin.util.Redactor
 import com.sun.jna.Pointer
+import com.sun.jna.ptr.IntByReference
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -102,9 +105,9 @@ object NativeRaSmoke {
         results += runStep(3, "version") {
             val rcheevos = lib.ra_facade_rcheevos_version()
             val facade = lib.ra_facade_version()
-            val ok = rcheevos == "12.4.0" && facade == "1.0.0"
+            val ok = rcheevos == "12.4.0" && facade == "1.1.0"
             StepResult(0, "version", if (ok) Verdict.PASS else Verdict.FAIL,
-                "rcheevos='$rcheevos' facade='$facade' (expected 12.4.0 / 1.0.0)")
+                "rcheevos='$rcheevos' facade='$facade' (expected 12.4.0 / 1.1.0)")
         }
 
         // Step 4: client lifetime. Create a handle, destroy it once,
@@ -132,7 +135,6 @@ object NativeRaSmoke {
         val lifetimeOk = destroyRc == RaStatus.OK
         results += StepResult(4, "client-lifetime", if (lifetimeOk) Verdict.PASS else Verdict.FAIL,
             "create=non-null destroy=$destroyRc (RA_OK expected on a bare client)")
-        val h: Pointer = handle
 
         results += runStep(5, "nes-hashing") {
             val fixture: ByteArray = try {
@@ -173,11 +175,33 @@ object NativeRaSmoke {
                 return@runStep StepResult(0, "mock-login", Verdict.FAIL,
                     "ra_facade_create returned null")
             }
-            val signedIn = lib.ra_facade_is_signed_in(hStep6) != 0
-            val ok = !signedIn
-            StepResult(0, "mock-login", if (ok) Verdict.PASS else Verdict.FAIL,
-                if (ok) "isSignedIn=false after create (forced softcore honored)"
-                else "isSignedIn=true after create (softcore should be forced off)")
+            try {
+                if (lib.ra_facade_is_signed_in(hStep6) != 0) {
+                    return@runStep StepResult(0, "mock-login", Verdict.FAIL,
+                        "isSignedIn=true after create (softcore should be forced off)")
+                }
+                // Full offline login round trip through the HTTP queue: the
+                // request rcheevos builds must reach us intact, and a canned
+                // login2 response must sign the user in. No network.
+                lib.ra_facade_begin_login_with_password(hStep6, "smoke", "smoke-password")
+                val slot = RaHttpRequestSlot().also { it.write() }
+                val dequeued = lib.ra_facade_dequeue_http_request(hStep6, slot)
+                slot.read()
+                val body = cString(slot.postData)
+                if (dequeued == 0 || !body.startsWith("r=login2&u=smoke&")) {
+                    return@runStep StepResult(0, "mock-login", Verdict.FAIL,
+                        "login request missing or malformed (dequeued=$dequeued, method ok=${body.startsWith("r=login2")})")
+                }
+                val response = """{"Success":true,"User":"smoke","Token":"0123456789abcdef"}""".toByteArray(Charsets.UTF_8)
+                lib.ra_facade_complete_http_request(hStep6, slot.requestId, 200, response, response.size)
+                val outcome = lib.ra_facade_take_login_result(hStep6, IntByReference(0), ByteArray(256), 256)
+                val signedIn = lib.ra_facade_is_signed_in(hStep6) != 0
+                val ok = outcome == RaLoginOutcome.SUCCEEDED && signedIn
+                StepResult(0, "mock-login", if (ok) Verdict.PASS else Verdict.FAIL,
+                    "offline login round trip: outcome=$outcome signedIn=$signedIn")
+            } finally {
+                lib.ra_facade_destroy(hStep6)
+            }
         }
 
         results += runStep(7, "memory-events") {
@@ -191,12 +215,21 @@ object NativeRaSmoke {
             // call in a length-checked memmove). The callback path
             // is covered by the JUnit MemoryPeekRaReaderTest using a
             // MockCallback, not the live library.
-            val ev = RaEvent()
-            val polled = lib.ra_facade_poll_event(h, ev)
-            val ok = polled == 0
-            StepResult(0, "memory-events", if (ok) Verdict.PASS else Verdict.FAIL,
-                "eventsPolled=$polled (expected 0 on no-game path; " +
-                    "callback registration covered by JUnit MemoryPeekRaReaderTest)")
+            //
+            // Own handle: step 4 destroyed its handle, and destroy frees it.
+            val hStep7 = lib.ra_facade_create(null, null)
+                ?: return@runStep StepResult(0, "memory-events", Verdict.FAIL,
+                    "ra_facade_create returned null")
+            try {
+                val ev = RaEvent()
+                val polled = lib.ra_facade_poll_event(hStep7, ev)
+                val ok = polled == 0
+                StepResult(0, "memory-events", if (ok) Verdict.PASS else Verdict.FAIL,
+                    "eventsPolled=$polled (expected 0 on no-game path; " +
+                        "callback registration covered by JUnit MemoryPeekRaReaderTest)")
+            } finally {
+                lib.ra_facade_destroy(hStep7)
+            }
         }
 
         results += runStep(8, "progress-serialization") {
@@ -206,42 +239,51 @@ object NativeRaSmoke {
                 return@runStep StepResult(0, "progress-serialization", Verdict.FAIL,
                     "ra_facade_create returned null")
             }
-            val size = lib.ra_facade_progress_size(hStep8)
-            val buf = ByteArray(64)
-            val written = lib.ra_facade_serialize_progress(hStep8, buf, buf.size)
-            val ok = size == 0 && written == 0
-            StepResult(0, "progress-serialization", if (ok) Verdict.PASS else Verdict.FAIL,
-                "progress_size=$size serialize_wrote=$written (expected 0/0 on the no-game path)")
+            try {
+                val size = lib.ra_facade_progress_size(hStep8)
+                val buf = ByteArray(64)
+                val written = lib.ra_facade_serialize_progress(hStep8, buf, buf.size)
+                val ok = size == 0 && written == 0
+                StepResult(0, "progress-serialization", if (ok) Verdict.PASS else Verdict.FAIL,
+                    "progress_size=$size serialize_wrote=$written (expected 0/0 on the no-game path)")
+            } finally {
+                lib.ra_facade_destroy(hStep8)
+            }
         }
 
         results += runStep(9, "callback-teardown") {
-            // Drain any pending events on the (live, single) handle.
+            // Drain any pending events on a fresh handle, then destroy it.
             // The event queue is per-handle and starts empty for a
-            // freshly-created client. We do NOT call destroy here —
-            // see step 4's note about rcheevos's pthread_mutex_destroy
-            // asserting on a second destroy of the same handle. The
-            // handle is left alive until JVM exit; the temp-file
-            // cleanup runs via the deleteOnExit hook in the loader.
+            // freshly-created client. Destroy runs exactly once per handle
+            // (see step 4's note about rcheevos's pthread_mutex_destroy
+            // asserting on a second destroy of the same handle).
             //
             // The "callback" half of this step is covered by step 7
             // (set_memory_reader + no spurious poll_event calls). The
             // "teardown" half is covered by JUnit RaFacadeBindingsTest
             // using JNA MockCallback rather than the live library.
-            val ev = RaEvent()
+            val hStep9 = lib.ra_facade_create(null, null)
+                ?: return@runStep StepResult(0, "callback-teardown", Verdict.FAIL,
+                    "ra_facade_create returned null")
             var drainedEvents = 0
-            while (lib.ra_facade_poll_event(h, ev) != 0) drainedEvents++
-            // Also verify the handle is still alive by calling a
-            // cheap, side-effect-free method. If destroy had been
-            // skipped or the handle was invalidated, this would crash.
+            val destroyRc: Int
+            try {
+                val ev = RaEvent()
+                while (lib.ra_facade_poll_event(hStep9, ev) != 0) drainedEvents++
+            } finally {
+                destroyRc = lib.ra_facade_destroy(hStep9)
+            }
+            // The handle is gone now, so check the library without one: the
+            // version call is side-effect-free and must still succeed.
             val version = try {
                 lib.ra_facade_rcheevos_version()
             } catch (t: Throwable) {
                 null
             }
-            val ok = version != null
+            val ok = version != null && destroyRc == RaStatus.OK
             StepResult(0, "callback-teardown", if (ok) Verdict.PASS else Verdict.FAIL,
-                "drainedEvents=$drainedEvents rcheevos_version=" +
-                    "${version ?: "(call failed)"} (handle still alive after step 8)")
+                "drainedEvents=$drainedEvents destroy=$destroyRc rcheevos_version=" +
+                    "${version ?: "(call failed)"}")
         }
 
         // Print + summarise.
@@ -325,3 +367,8 @@ fun main(args: Array<String>) {
     kotlin.system.exitProcess(NativeRaSmokeCli.main(args.toList()))
 }
 
+/** A NUL-terminated C string from a fixed-size struct array. */
+private fun cString(bytes: ByteArray): String {
+    val end = bytes.indexOf(0)
+    return String(if (end >= 0) bytes.copyOf(end) else bytes, Charsets.UTF_8)
+}

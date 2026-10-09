@@ -152,6 +152,11 @@ tasks.register("buildNative") {
     val rchDir = file("${project.projectDir}/native/rcheevos")
     val facadeDir = file("${project.projectDir}/native/ra_facade")
 
+    // Without declared inputs Gradle treats this task as up-to-date whenever
+    // its output dir is unchanged, so façade edits were silently not rebuilt.
+    inputs.files(rchDir)
+    inputs.files(facadeDir)
+    inputs.files("tools/build-native-ra.ps1", "tools/build-native-ra.sh")
     outputs.dir(nativeRaHostDir)
 
     doLast {
@@ -212,6 +217,9 @@ val copyNativeRa = tasks.register("copyNativeRa") {
     description = "Copies the built native RA library into the resources tree"
     dependsOn("buildNative", "fetchNativeRa")
     val resDir = layout.buildDirectory.dir("resources/main/native-ra")
+    // Declared so a rebuilt library is re-copied; with outputs only, Gradle
+    // kept a stale copy whose hash no longer matched the manifest.
+    inputs.files(nativeRaHostDir)
     outputs.dir(resDir)
     doLast {
         val src = nativeRaHostDir.get().asFile
@@ -364,6 +372,8 @@ val writeNativeRaManifest = tasks.register("writeNativeRaManifest") {
     // fails with MANIFEST_MISSING.
     dependsOn("buildNative", "fetchNativeRa")
     val manifestOut = layout.buildDirectory.file("resources/main/native-ra/MANIFEST.json")
+    // Re-merge whenever a fragment (and so a library hash) changes.
+    inputs.files(layout.buildDirectory.dir("native-ra"))
     outputs.file(manifestOut)
     doLast {
         val fragments = mutableListOf<java.io.File>()
@@ -420,7 +430,7 @@ fun mergeFragments(fragments: List<java.io.File>): String {
     val merged: MutableMap<String, Any?> = LinkedHashMap()
     merged["schemaVersion"] = 1
     merged["rcheevosVersion"] = "12.4.0"
-    merged["facadeVersion"] = "1.0.0"
+    merged["facadeVersion"] = "1.1.0"
     merged["platforms"] = mutableListOf<Map<String, Any?>>()
     @Suppress("UNCHECKED_CAST")
     val mergedPlatforms = merged["platforms"] as MutableList<Map<String, Any?>>
@@ -585,7 +595,10 @@ tasks.named("check") { dependsOn(testPerformance) }
 tasks.register<Test>("testNativeRa") {
     group = "verification"
     description = "Runs native RetroAchievements contract tests (loads rcheevos_facade via JNA)"
-    dependsOn("buildNative", "writeNativeRaManifest")
+    // copyNativeRa too: the loader extracts the library from the resources
+    // tree and checks it against MANIFEST.json, so a stale copy next to a
+    // fresh manifest fails the integrity check and every test sees NoOp.
+    dependsOn("buildNative", "copyNativeRa", "writeNativeRaManifest")
     useJUnitPlatform {
         includeTags("nativeRa")
     }
@@ -764,6 +777,9 @@ tasks.register<JavaExec>("raBench") {
 tasks.register<JavaExec>("nraSmoke") {
     group = "verification"
     description = "Runs the native RetroAchievements smoke runner (optional -Prom=)"
+    // Same native inputs as testNativeRa: the runner loads the library from the
+    // resources tree, so copyNativeRa must have run first (Gradle rejects the implicit use).
+    dependsOn("buildNative", "copyNativeRa", "writeNativeRaManifest")
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("com.github.alondero.nestlin.cli.NativeRaSmokeKt")
 

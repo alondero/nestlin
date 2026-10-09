@@ -94,20 +94,19 @@ class RaImageCache(
         // future settles, on the completing thread, by which time the
         // outer computeIfAbsent has returned and the map is safe to
         // mutate again.
-        // Use the same generation=0 for all image fetches — the cache's
-        // generation-guard story lives at the consumer level, not here.
+        // Image fetches go straight to the transport, not through the
+        // façade's queue, so they carry a fixed placeholder request id.
         // We pass `null` postData so the transport issues a GET.
         val request = RaHttpRequest(
             url = url,
             postData = null,
             contentType = null,
-            generation = IMAGE_GENERATION,
+            requestId = IMAGE_REQUEST_ID,
         )
         transport.send(request) { response ->
             try {
                 if (response.status in 200..299) {
-                    val body = response.body
-                    val bytes = body?.toByteArray(Charsets.ISO_8859_1)
+                    val bytes = response.body
                     if (bytes == null || bytes.isEmpty()) {
                         future.complete(null)
                     } else if (bytes.size > maxBytes) {
@@ -158,11 +157,10 @@ class RaImageCache(
         const val DEFAULT_MAX_BYTES: Int = 4 * 1024 * 1024
 
         /**
-         * Generation value used for image fetches. Distinct from the sign-in
-         * / ROM-load generations so a stale image response can never be
-         * confused with a stale login response. The cache doesn't enforce a
-         * generation guard internally — the consumer does that.
+         * Request id used for image fetches. Images bypass the façade's HTTP
+         * queue, whose ids are always positive, so -1 can never collide.
+         * Staleness across ROM loads is the consumer's job (see [invalidate]).
          */
-        const val IMAGE_GENERATION: Int = -1
+        const val IMAGE_REQUEST_ID: Int = -1
     }
 }
