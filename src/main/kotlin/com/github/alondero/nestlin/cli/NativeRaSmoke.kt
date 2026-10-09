@@ -2,10 +2,13 @@ package com.github.alondero.nestlin.cli
 
 import com.github.alondero.nestlin.session.RaEvent
 import com.github.alondero.nestlin.session.RaFacadeBindings
+import com.github.alondero.nestlin.session.RaHttpRequestSlot
+import com.github.alondero.nestlin.session.RaLoginOutcome
 import com.github.alondero.nestlin.session.RaManifest
 import com.github.alondero.nestlin.session.RaStatus
 import com.github.alondero.nestlin.util.Redactor
 import com.sun.jna.Pointer
+import com.sun.jna.ptr.IntByReference
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -102,9 +105,9 @@ object NativeRaSmoke {
         results += runStep(3, "version") {
             val rcheevos = lib.ra_facade_rcheevos_version()
             val facade = lib.ra_facade_version()
-            val ok = rcheevos == "12.4.0" && facade == "1.0.0"
+            val ok = rcheevos == "12.4.0" && facade == "1.1.0"
             StepResult(0, "version", if (ok) Verdict.PASS else Verdict.FAIL,
-                "rcheevos='$rcheevos' facade='$facade' (expected 12.4.0 / 1.0.0)")
+                "rcheevos='$rcheevos' facade='$facade' (expected 12.4.0 / 1.1.0)")
         }
 
         // Step 4: client lifetime. Create a handle, destroy it once,
@@ -173,11 +176,33 @@ object NativeRaSmoke {
                 return@runStep StepResult(0, "mock-login", Verdict.FAIL,
                     "ra_facade_create returned null")
             }
-            val signedIn = lib.ra_facade_is_signed_in(hStep6) != 0
-            val ok = !signedIn
-            StepResult(0, "mock-login", if (ok) Verdict.PASS else Verdict.FAIL,
-                if (ok) "isSignedIn=false after create (forced softcore honored)"
-                else "isSignedIn=true after create (softcore should be forced off)")
+            try {
+                if (lib.ra_facade_is_signed_in(hStep6) != 0) {
+                    return@runStep StepResult(0, "mock-login", Verdict.FAIL,
+                        "isSignedIn=true after create (softcore should be forced off)")
+                }
+                // Full offline login round trip through the HTTP queue: the
+                // request rcheevos builds must reach us intact, and a canned
+                // login2 response must sign the user in. No network.
+                lib.ra_facade_begin_login_with_password(hStep6, "smoke", "smoke-password")
+                val slot = RaHttpRequestSlot().also { it.write() }
+                val dequeued = lib.ra_facade_dequeue_http_request(hStep6, slot)
+                slot.read()
+                val body = cString(slot.postData)
+                if (dequeued == 0 || !body.startsWith("r=login2&u=smoke&")) {
+                    return@runStep StepResult(0, "mock-login", Verdict.FAIL,
+                        "login request missing or malformed (dequeued=$dequeued, method ok=${body.startsWith("r=login2")})")
+                }
+                val response = """{"Success":true,"User":"smoke","Token":"0123456789abcdef"}""".toByteArray(Charsets.UTF_8)
+                lib.ra_facade_complete_http_request(hStep6, slot.requestId, 200, response, response.size)
+                val outcome = lib.ra_facade_take_login_result(hStep6, IntByReference(0), ByteArray(256), 256)
+                val signedIn = lib.ra_facade_is_signed_in(hStep6) != 0
+                val ok = outcome == RaLoginOutcome.SUCCEEDED && signedIn
+                StepResult(0, "mock-login", if (ok) Verdict.PASS else Verdict.FAIL,
+                    "offline login round trip: outcome=$outcome signedIn=$signedIn")
+            } finally {
+                lib.ra_facade_destroy(hStep6)
+            }
         }
 
         results += runStep(7, "memory-events") {
@@ -325,3 +350,8 @@ fun main(args: Array<String>) {
     kotlin.system.exitProcess(NativeRaSmokeCli.main(args.toList()))
 }
 
+/** A NUL-terminated C string from a fixed-size struct array. */
+private fun cString(bytes: ByteArray): String {
+    val end = bytes.indexOf(0)
+    return String(if (end >= 0) bytes.copyOf(end) else bytes, Charsets.UTF_8)
+}

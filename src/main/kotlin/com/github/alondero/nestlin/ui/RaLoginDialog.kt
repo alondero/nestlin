@@ -153,6 +153,13 @@ class RaLoginDialog(
                 passwordField.isDisable = false
                 usernameField.isDisable = false
             }
+            is RaSignInState.Rejected -> {
+                statusLabel.text = "Sign-in rejected: ${Redactor.redactMessage(state.reason)}"
+                signInButton.isDisable = false
+                passwordField.isDisable = false
+                usernameField.isDisable = false
+                passwordField.text = ""
+            }
             is RaSignInState.Offline -> {
                 statusLabel.text = "Sign-in failed: ${Redactor.redactMessage(state.cause)}. Try again."
                 signInButton.isDisable = false

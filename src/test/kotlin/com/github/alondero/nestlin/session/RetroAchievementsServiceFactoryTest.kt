@@ -101,7 +101,7 @@ class RetroAchievementsServiceFactoryTest {
     // ---------------------------------------------------------------------
 
     @Test
-    @EnabledIf("nativeLibraryIsPresent")
+    @EnabledIf(NATIVE_GATE)
     fun `native service reports hard core as forced off`() {
         val svc = RetroAchievementsServiceFactory.create()
         assertTrue(svc is NativeRetroAchievementsService,
@@ -117,7 +117,7 @@ class RetroAchievementsServiceFactoryTest {
     }
 
     @Test
-    @EnabledIf("nativeLibraryIsPresent")
+    @EnabledIf(NATIVE_GATE)
     fun `native prepareGame with unsigned-in user returns false`() {
         val svc = RetroAchievementsServiceFactory.create() as NativeRetroAchievementsService
         val info = GameSessionInfo(
@@ -136,7 +136,7 @@ class RetroAchievementsServiceFactoryTest {
     }
 
     @Test
-    @EnabledIf("nativeLibraryIsPresent")
+    @EnabledIf(NATIVE_GATE)
     fun `native evaluateFrame before prepareGame is a safe no-op`() {
         val svc = RetroAchievementsServiceFactory.create() as NativeRetroAchievementsService
         // The C side guards every do_frame call with a null-client check
@@ -150,7 +150,7 @@ class RetroAchievementsServiceFactoryTest {
     }
 
     @Test
-    @EnabledIf("nativeLibraryIsPresent")
+    @EnabledIf(NATIVE_GATE)
     fun `native serializeProgress before prepareGame returns null`() {
         val svc = RetroAchievementsServiceFactory.create() as NativeRetroAchievementsService
         assertEquals(null, svc.serializeProgress(),
@@ -158,7 +158,7 @@ class RetroAchievementsServiceFactoryTest {
     }
 
     @Test
-    @EnabledIf("nativeLibraryIsPresent")
+    @EnabledIf(NATIVE_GATE)
     fun `native shutdown is idempotent and never throws`() {
         val svc = RetroAchievementsServiceFactory.create() as NativeRetroAchievementsService
         // Idempotency is the contract; the second call must not crash on
@@ -170,7 +170,7 @@ class RetroAchievementsServiceFactoryTest {
     }
 
     @Test
-    @EnabledIf("nativeLibraryIsPresent")
+    @EnabledIf(NATIVE_GATE)
     fun `native unloadGame before prepareGame is a safe no-op`() {
         val svc = RetroAchievementsServiceFactory.create() as NativeRetroAchievementsService
         // The C side's unload_game guards against the no-game case.
@@ -179,7 +179,7 @@ class RetroAchievementsServiceFactoryTest {
     }
 
     @Test
-    @EnabledIf("nativeLibraryIsPresent")
+    @EnabledIf(NATIVE_GATE)
     fun `native version strings are non-empty`() {
         val svc = RetroAchievementsServiceFactory.create() as NativeRetroAchievementsService
         assertTrue(svc.rcheevosVersion.isNotBlank(),
@@ -195,16 +195,18 @@ class RetroAchievementsServiceFactoryTest {
     // doesn't work; we use a top-level function below.
     // ---------------------------------------------------------------------
 
-    companion object {
-        // No-op; just to keep the IDE happy with the @Test reference to
-        // nativeLibraryIsPresent as a string.
-        @Suppress("unused")
-        private const val GATE_NAME = "nativeLibraryIsPresent"
-    }
 }
 
 /**
- * Top-level gate referenced by `@EnabledIf("nativeLibraryIsPresent")` on
+ * JUnit resolves a bare `@EnabledIf` method name only inside the test class;
+ * a top-level Kotlin function lives in the file facade class, so it must be
+ * named fully qualified (`Class#method`) or the condition fails to evaluate.
+ */
+private const val NATIVE_GATE =
+    "com.github.alondero.nestlin.session.RetroAchievementsServiceFactoryTestKt#nativeLibraryIsPresent"
+
+/**
+ * Top-level gate referenced by `@EnabledIf(NATIVE_GATE)` on
  * the real-library contract tests. The Gradle `:testNativeRa` task sets
  * `-Dnestlin.test.nativeRa=true` to enable them; the default `./gradlew
  * test` does not set the property, so the tests skip.

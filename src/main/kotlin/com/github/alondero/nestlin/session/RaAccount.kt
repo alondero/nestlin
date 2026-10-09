@@ -45,7 +45,9 @@ data class RaAccount(
  *                                       │                     │
  *                                       └────── logout() ◄─────┤
  *                                                              │
- *                                                              └──► Offline(cause)
+ *                                                              ├──► Offline(cause)
+ *                                                              │
+ *                                                              └──► Rejected(reason)
  * ```
  *
  * - [Unavailable]: the native façade library is missing or corrupt. The
@@ -62,6 +64,9 @@ data class RaAccount(
  * - [Offline]: the network or transport is unreachable. The credentials
  *   (if previously saved) are preserved so a reconnect can restore the
  *   session; the menu shows a "retry" affordance.
+ * - [Rejected]: the server refused the credentials (wrong password, expired
+ *   or revoked token). Saved credentials are cleared; [Rejected.reason] is
+ *   the server's user-facing explanation. The login action is enabled.
  */
 sealed class RaSignInState {
     object Unavailable : RaSignInState()
@@ -69,4 +74,5 @@ sealed class RaSignInState {
     object Authenticating : RaSignInState()
     data class SignedIn(val account: RaAccount) : RaSignInState()
     data class Offline(val cause: String) : RaSignInState()
+    data class Rejected(val reason: String) : RaSignInState()
 }

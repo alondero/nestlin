@@ -168,6 +168,9 @@ class RaAchievementsController(
             //    CAN run; the user just isn't authenticated).
             state is RaSignInState.SignedOut -> RaAchievementsWindowViewModel.SignedOut(generation = gen)
 
+            //    A rejected sign-in leaves the user signed out too.
+            state is RaSignInState.Rejected -> RaAchievementsWindowViewModel.SignedOut(generation = gen)
+
             // 3. Auth in flight — show signed-out placeholder for the brief
             //    moment, not the spinner (the spinner is reserved for
             //    snapshot refreshes that have a known previous list).

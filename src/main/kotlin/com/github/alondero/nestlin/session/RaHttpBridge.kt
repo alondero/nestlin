@@ -2,6 +2,7 @@ package com.github.alondero.nestlin.session
 
 import com.sun.jna.Pointer
 import com.github.alondero.nestlin.util.Redactor
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -9,60 +10,64 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * HTTP bridge between the rcheevos façade and Java's HTTP client (issue #268).
  *
- * The C façade's `server_call_shim` enqueues an [RaHttpRequest] (URL +
- * method + optional POST body) onto a small ring buffer; rcheevos then
- * waits for a response delivered via `ra_facade_complete_http_request`.
- * This bridge is the middleman: it polls the queue from a background
- * thread, hands each request to an [RaHttpTransport], and posts the
- * response (or failure) back to the façade.
+ * The C façade's `server_call_shim` copies each request rcheevos wants to
+ * send onto a small queue; rcheevos then waits for a response delivered via
+ * `ra_facade_complete_http_request`. This bridge is the middleman: it polls
+ * the queue from a background thread, hands each request to an
+ * [RaHttpTransport], and posts the response (or failure) back to the façade.
+ *
+ * ## Exactly-once completion
+ *
+ * rcheevos releases a request's bookkeeping — and settles a login — only
+ * when its response is delivered. So every request the bridge dequeues is
+ * completed exactly once:
+ *
+ * - the façade hands each request out once, identified by a request id;
+ * - a transport that throws instead of calling back is treated as a
+ *   client error ([JavaHttpClientTransport.RC_API_SERVER_RESPONSE_CLIENT_ERROR]);
+ * - a transport that calls back twice has its second callback dropped
+ *   (the id is no longer in [inFlight]).
+ *
+ * Staleness (the user logged out, the game was unloaded) is rcheevos's job:
+ * it tracks its own async operations and ignores a response whose
+ * operation was abandoned. The bridge always delivers.
  *
  * ## Lifecycle
  *
  * - [start] spawns a single-thread executor and a polling loop.
- * - [stop] shuts the executor down, cancels in-flight HTTP requests, and
- *   abandons any queued C-side requests without delivering responses.
- *   After stop the bridge is unusable; the application owns the lifecycle.
- *
- * ## Generation guards
- *
- * Every request carries the C-side generation it was enqueued under. If
- * the user logs out before a response arrives, the façade's generation
- * advances and `ra_facade_complete_http_request` silently drops the
- * late response. The bridge doesn't need to do anything special —
- * generation enforcement is enforced by the C side.
+ * - [stop] shuts the executor down. Responses that arrive afterwards are
+ *   dropped, never delivered — the façade may be about to be destroyed, and
+ *   `ra_facade_destroy` settles any still-pending request itself. After stop
+ *   the bridge is unusable; the owner must stop it BEFORE destroying the
+ *   façade handle.
  *
  * ## Threading
  *
  * - The polling loop runs on a dedicated single-thread executor
  *   (`pollExecutor`) so the native polling doesn't share a thread with
  *   the HTTP client's worker pool.
- * - HTTP responses arrive on the [RaHttpTransport]'s executor; the bridge
- *   immediately re-posts to the poll executor before calling the C side,
- *   so all JNA calls are serialised on the same thread.
- *
- * ## Exact-once callbacks
- *
- * Each pending HTTP request is tracked in [inFlight] keyed by the
- * generation+url hash; the transport MUST invoke the callback exactly once.
- * The bridge asserts on this in debug builds (the in-flight map entry is
- * removed under the bridge's monitor before the C side is called). If a
- * transport ever violates the contract the bridge surfaces a single
- * "[RA] Stale HTTP completion" diagnostic and drops the second call.
+ * - HTTP responses arrive on the [RaHttpTransport]'s executor and are
+ *   parked in [responses]; the poll loop delivers them, so all JNA calls are
+ *   serialised on the poll thread. (They must not be `submit`ted to
+ *   `pollExecutor`: its single thread is occupied by the poll loop for the
+ *   bridge's whole lifetime, so a submitted task would never run.)
  */
 class RaHttpBridge internal constructor(
     private val bindings: RaFacadeBindings,
     private val handle: Pointer,
     private val transport: RaHttpTransport,
 ) {
-    /** Track in-flight requests so we can detect duplicate callbacks and recover the URL. */
+    /** Requests handed to the transport and not yet completed, by request id. */
     private val inFlight: MutableMap<Int, RaHttpRequest> = mutableMapOf()
     private val monitor: Any = Any()
 
+    /** Responses waiting for the poll thread to deliver them to the façade. */
+    private val responses: ConcurrentLinkedQueue<Pair<Int, RaHttpResponse>> = ConcurrentLinkedQueue()
+
     /**
-     * Optional observer fired after every response is delivered back to rcheevos.
-     * The sign-in manager hooks in here so it can poll for [RaAccount] state
-     * after a login HTTP round-trip settles. Off the calling thread of the
-     * transport's executor — invoked synchronously on the poll thread.
+     * Optional observer fired after every response is delivered back to
+     * rcheevos. The sign-in manager hooks in here to check whether the
+     * delivery settled a login. Invoked synchronously on the poll thread.
      */
     @Volatile var responseListener: ((RaHttpRequest, RaHttpResponse) -> Unit)? = null
 
@@ -70,6 +75,9 @@ class RaHttpBridge internal constructor(
     private val pollExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "ra-http-bridge-poll").apply { isDaemon = true }
     }
+
+    /** True between [start] and [stop]. */
+    val isRunning: Boolean get() = running.get()
 
     /**
      * Start the polling loop. Idempotent — a second call while running
@@ -81,8 +89,9 @@ class RaHttpBridge internal constructor(
     }
 
     /**
-     * Shut the bridge down. Cancels pending HTTP work, drains the C-side
-     * queue without delivering responses, and stops the executor. Idempotent.
+     * Shut the bridge down and wait (briefly) for an in-progress delivery to
+     * finish, so no JNA call is still running when the caller destroys the
+     * façade. Idempotent.
      */
     fun stop() {
         if (!running.compareAndSet(true, false)) return
@@ -102,95 +111,90 @@ class RaHttpBridge internal constructor(
     private fun pollLoop() {
         while (running.get()) {
             try {
-                drainOne()
+                deliverPendingResponses()
+                while (running.get() && drainOne()) {
+                    // keep draining — a game load can queue several requests
+                }
+                // A synchronous transport has already answered.
+                deliverPendingResponses()
             } catch (e: UnsatisfiedLinkError) {
                 // Library unloaded mid-poll — exit the loop quietly.
                 return
             } catch (e: Exception) {
-                // Defensive — a misbehaving transport or a JNA mapping
-                // error must not kill the executor. Log once and back off.
+                // Defensive — a JNA mapping error must not kill the
+                // executor. Log once and back off.
                 System.err.println("[RA] HTTP bridge poll error: ${e.javaClass.simpleName}: ${Redactor.redactMessage(e.message)}")
-                Thread.sleep(POLL_BACKOFF_MS)
+                if (!sleep(POLL_BACKOFF_MS)) return
             }
-            // Cooperative sleep so a transport that completes synchronously
-            // doesn't burn CPU. The sleep is interruptible — stop() can
-            // wake the loop immediately.
-            try {
-                Thread.sleep(POLL_INTERVAL_MS)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                return
-            }
+            // Cooperative sleep so an empty queue doesn't burn CPU. The
+            // sleep is interruptible — stop() can wake the loop immediately.
+            if (!sleep(POLL_INTERVAL_MS)) return
         }
     }
 
-    private fun drainOne() {
+    /** Returns false when interrupted (the bridge is being stopped). */
+    private fun sleep(millis: Long): Boolean = try {
+        Thread.sleep(millis)
+        true
+    } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        false
+    }
+
+    /** Dispatch the next queued request, if any. Returns true if one was dispatched. */
+    private fun drainOne(): Boolean {
         val slot = RaHttpRequestSlot()
         slot.write()
-        val has = try {
-            bindings.ra_facade_dequeue_http_request(handle, slot)
-        } catch (e: UnsatisfiedLinkError) {
-            throw e
-        }
+        val has = bindings.ra_facade_dequeue_http_request(handle, slot)
         slot.read()
-        if (has == 0) return  // queue is empty
-
-        val url = bytesToString(slot.url)
-        val postData = if (slot.hasPostData.toInt() != 0) bytesToString(slot.postData) else null
-        val contentType = bytesToString(slot.contentType).takeIf { it.isNotEmpty() }
-        val generation = slot.generation
+        if (has == 0) return false
 
         val request = RaHttpRequest(
-            url = url,
-            postData = postData,
-            contentType = contentType,
-            generation = generation,
+            url = bytesToString(slot.url),
+            postData = if (slot.hasPostData.toInt() != 0) bytesToString(slot.postData) else null,
+            contentType = bytesToString(slot.contentType).takeIf { it.isNotEmpty() },
+            requestId = slot.requestId,
         )
+        synchronized(monitor) { inFlight[request.requestId] = request }
 
-        val requestKey = generation xor url.hashCode()
-        synchronized(monitor) {
-            // Defensive: a duplicate generation+url (the transport raced a
-            // previous request) is silently dropped. The C side will see
-            // the response land on the stale slot and discard it via the
-            // generation check inside http_queue_complete.
-            if (inFlight.containsKey(requestKey)) {
-                System.err.println("[RA] HTTP bridge duplicate request dropped (gen=$generation)")
-                return
-            }
-            inFlight[requestKey] = request
+        try {
+            transport.send(request) { response -> onTransportResponse(request.requestId, response) }
+        } catch (e: Exception) {
+            // The transport never called back, so rcheevos would wait on
+            // this request forever. Fail it instead.
+            System.err.println("[RA] HTTP transport rejected a request: ${e.javaClass.simpleName}: ${Redactor.redactMessage(e.message)}")
+            deliverResponse(
+                request.requestId,
+                RaHttpResponse(status = JavaHttpClientTransport.RC_API_SERVER_RESPONSE_CLIENT_ERROR, body = null),
+            )
         }
+        return true
+    }
 
-        transport.send(request) { response ->
-            pollExecutor.submit {
-                deliverResponse(generation, response, requestKey)
-            }
+    /** Transport callback — any thread. Park it for the poll thread's JNA call. */
+    private fun onTransportResponse(requestId: Int, response: RaHttpResponse) {
+        // After stop() nothing delivers it; the façade's destroy settles the request.
+        if (running.get()) responses.add(requestId to response)
+    }
+
+    private fun deliverPendingResponses() {
+        while (running.get()) {
+            val (requestId, response) = responses.poll() ?: return
+            deliverResponse(requestId, response)
         }
     }
 
-    private fun deliverResponse(generation: Int, response: RaHttpResponse, requestKey: Int) {
-        val request: RaHttpRequest = synchronized(monitor) {
-            val removed = inFlight.remove(requestKey)
-            if (removed == null) {
-                // Transport invoked the callback twice — drop silently to
-                // satisfy the exact-once contract.
-                return
-            }
-            removed
-        }
+    private fun deliverResponse(requestId: Int, response: RaHttpResponse) {
+        // Removing under the monitor makes a second callback for the same
+        // request a no-op — the exactly-once contract.
+        val request = synchronized(monitor) { inFlight.remove(requestId) } ?: return
+        val body = response.body
         try {
-            bindings.ra_facade_complete_http_request(
-                handle,
-                generation,
-                response.status,
-                response.body,
-                response.bodyLength,
-            )
+            bindings.ra_facade_complete_http_request(handle, requestId, response.status, body, body?.size ?: 0)
         } catch (e: UnsatisfiedLinkError) {
             // Library went away mid-completion — nothing to do.
             return
         }
-        // Fire the post-completion hook with the request we retained so the
-        // sign-in manager can distinguish login URLs from per-game loads.
         responseListener?.invoke(request, response)
     }
 

@@ -1645,7 +1645,8 @@ class NestlinApplication : FrameListener, Application() {
                 profile.isDisable = true
                 signOut.isDisable = true
             }
-            is com.github.alondero.nestlin.session.RaSignInState.SignedOut -> {
+            is com.github.alondero.nestlin.session.RaSignInState.SignedOut,
+            is com.github.alondero.nestlin.session.RaSignInState.Rejected -> {
                 signIn.text = "Sign In..."
                 signIn.isDisable = false
                 profile.isDisable = true
@@ -2474,9 +2475,10 @@ class NestlinApplication : FrameListener, Application() {
         // Clean up gamepad
         gamepadInput.shutdown()
 
-        // Tear down the RA sign-in manager before the service handle is
-        // destroyed — the manager's HTTP bridge binds to the same native
-        // handle and would race the shutdown otherwise. Idempotent.
+        // The sign-in manager's HTTP bridge was already stopped by
+        // sessionCoordinator.shutdown() above: RaSignInManager.from hooks the
+        // native service's shutdown so the bridge stops before the handle it
+        // polls is destroyed. This is the idempotent UI-side cleanup.
         raSignInListenerToken?.let { token ->
             raSignInManagerRef?.removeListener(token)
         }

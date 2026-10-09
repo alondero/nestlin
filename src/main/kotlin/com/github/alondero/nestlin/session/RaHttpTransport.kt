@@ -44,8 +44,8 @@ data class RaHttpRequest(
     val postData: String?,
     /** Content-Type for the POST body. Ignored for GET. */
     val contentType: String?,
-    /** The C-side generation that owns this request (used for the stale-response guard). */
-    val generation: Int,
+    /** The façade's id for this request; the bridge echoes it on completion. */
+    val requestId: Int,
 )
 
 /**
@@ -57,15 +57,21 @@ data class RaHttpRequest(
  *   - any non-2xx HTTP code verbatim (e.g. 401, 500) — rcheevos interprets
  *     these as server-side responses, not transport failures
  *
- * [body] is the response payload or null on empty/error. [bodyLength] is
- * the byte count; the bridge always passes a copy so the C side can
- * safely retain it past the call.
+ * [body] is the raw response payload, exactly as received (null on
+ * empty/error). It stays as bytes end to end: rcheevos parses JSON by byte
+ * length, and badge/avatar images are binary — decoding to a String and
+ * back corrupts both.
  */
-data class RaHttpResponse(
+class RaHttpResponse(
     val status: Int,
-    val body: String?,
-    val bodyLength: Int,
-)
+    val body: ByteArray?,
+) {
+    companion object {
+        /** A response whose body is [body] encoded as UTF-8. */
+        fun text(status: Int, body: String?): RaHttpResponse =
+            RaHttpResponse(status, body?.toByteArray(Charsets.UTF_8))
+    }
+}
 
 /**
  * Production HTTP transport using Java 11+ [java.net.http.HttpClient].
@@ -92,7 +98,29 @@ class JavaHttpClientTransport(
         .build()
 
     override fun send(request: RaHttpRequest, callback: (RaHttpResponse) -> Unit) {
-        val javaReq = if (request.postData.isNullOrEmpty()) {
+        val javaReq = try {
+            buildRequest(request)
+        } catch (e: IllegalArgumentException) {
+            // Malformed URL — fail this request rather than throwing, so the
+            // caller still gets its exactly-once callback.
+            callback(RaHttpResponse(status = RC_API_SERVER_RESPONSE_CLIENT_ERROR, body = null))
+            return
+        }
+
+        client.sendAsync(javaReq, java.net.http.HttpResponse.BodyHandlers.ofByteArray())
+            .whenComplete { resp, ex ->
+                if (ex != null) {
+                    // Transport failure — treat as retryable. The bridge
+                    // surfaces this to rcheevos, which will likely retry.
+                    callback(RaHttpResponse(status = RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR, body = null))
+                } else {
+                    callback(RaHttpResponse(status = resp.statusCode(), body = resp.body()))
+                }
+            }
+    }
+
+    private fun buildRequest(request: RaHttpRequest): java.net.http.HttpRequest =
+        if (request.postData.isNullOrEmpty()) {
             java.net.http.HttpRequest.newBuilder()
                 .uri(java.net.URI.create(request.url))
                 .timeout(java.time.Duration.ofMillis(requestTimeoutMillis.toLong()))
@@ -108,27 +136,6 @@ class JavaHttpClientTransport(
                 .POST(java.net.http.HttpRequest.BodyPublishers.ofString(request.postData))
                 .build()
         }
-
-        client.sendAsync(javaReq, java.net.http.HttpResponse.BodyHandlers.ofString())
-            .whenComplete { resp, ex ->
-                if (ex != null) {
-                    // Transport failure — treat as retryable. The bridge
-                    // surfaces this to rcheevos, which will likely retry.
-                    callback(RaHttpResponse(
-                        status = RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR,
-                        body = null,
-                        bodyLength = 0,
-                    ))
-                } else {
-                    val body = resp.body() ?: ""
-                    callback(RaHttpResponse(
-                        status = resp.statusCode(),
-                        body = body,
-                        bodyLength = body.length,
-                    ))
-                }
-            }
-    }
 
     companion object {
         /** Default User-Agent. Includes the `rcheevos/` clause for server-side analytics. */

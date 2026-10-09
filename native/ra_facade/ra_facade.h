@@ -284,9 +284,12 @@ RA_FACADE_EXPORT void* ra_facade_create(const char* server_url,
 
 /*
  * Tear down the client. Frees every owned buffer, the rc_client_t*, the
- * queued events, and the user-supplied memory-reader closure. Safe to call
- * with NULL (no-op). After this returns, the handle is invalid and MUST
- * NOT be passed to any other ra_facade_* call.
+ * queued events, and the user-supplied memory-reader closure. Any HTTP
+ * request still pending is first completed with
+ * RC_API_SERVER_RESPONSE_CLIENT_ERROR so rcheevos can release it — stop
+ * the HTTP bridge before calling this. Safe to call with NULL, and with an
+ * already-destroyed handle (both no-ops). After this returns, the handle
+ * is invalid and MUST NOT be passed to any other ra_facade_* call.
  */
 RA_FACADE_EXPORT int32_t ra_facade_destroy(void* handle);
 
@@ -308,9 +311,11 @@ RA_FACADE_EXPORT int32_t ra_facade_is_signed_in(void* handle);
  * never persisted in façade-internal state and is dropped after the request
  * is enqueued.
  *
- * Single-flight: a second call before the first callback fires returns
- * RA_ERR_LIBRARY_STATE; the caller must wait for the previous attempt to
- * settle (success, failure, or explicit logout).
+ * Single-flight: a second call before the first attempt settles returns
+ * RA_ERR_LIBRARY_STATE. An attempt settles when its server response is
+ * delivered (or immediately, when rcheevos rejects it up front) — a logout
+ * does not settle it early; the pending attempt then settles as RC_ABORTED.
+ * Read the outcome with ra_facade_take_login_result.
  */
 RA_FACADE_EXPORT int32_t ra_facade_begin_login_with_password(void* handle,
                                                              const char* username,
@@ -331,6 +336,32 @@ RA_FACADE_EXPORT int32_t ra_facade_begin_login_with_token(void* handle,
  */
 RA_FACADE_EXPORT void ra_facade_logout(void* handle);
 
+/* Outcome codes returned by ra_facade_take_login_result. */
+typedef enum ra_login_outcome_e {
+    RA_LOGIN_OUTCOME_NONE      = 0, /* nothing settled since the last take */
+    RA_LOGIN_OUTCOME_SUCCEEDED = 1, /* user info is populated */
+    RA_LOGIN_OUTCOME_FAILED    = 2  /* see out_result / out_message */
+} ra_login_outcome_t;
+
+/*
+ * Consume the outcome of the most recently settled login. Returns one of
+ * RA_LOGIN_OUTCOME_*; after a non-NONE return the stored outcome resets to
+ * NONE, so each settlement is reported exactly once.
+ *
+ * On FAILED, `out_result` receives rcheevos's RC_* code (e.g.
+ * RC_INVALID_CREDENTIALS, RC_EXPIRED_TOKEN, RC_NO_RESPONSE, RC_ABORTED) and
+ * `out_message` the server's user-facing reason, NUL-terminated and
+ * truncated to `message_capacity`. Either pointer may be NULL.
+ *
+ * A login settles synchronously inside ra_facade_begin_login_* when rcheevos
+ * rejects it up front, otherwise inside ra_facade_complete_http_request — so
+ * callers check after both.
+ */
+RA_FACADE_EXPORT int32_t ra_facade_take_login_result(void* handle,
+                                                      int32_t* out_result,
+                                                      char* out_message,
+                                                      int32_t message_capacity);
+
 /*
  * Snapshot the signed-in user's profile into `out`. Strings are written into
  * fixed-size NUL-terminated buffers owned by `out`. Returns RA_OK on success,
@@ -344,20 +375,25 @@ RA_FACADE_EXPORT int32_t ra_facade_get_user_info(void* handle,
 /*                                                                            */
 /* rcheevos builds an HTTP request (URL + method + optional POST body) and    */
 /* hands it to the server-call callback. Until #268 the façade returned a     */
-/* stub CLIENT_ERROR; the HTTP bridge replaces that stub by enqueuing the     */
-/* request, then waiting for the Kotlin side to POST the response back via    */
-/* ra_facade_complete_http_request. The Kotlin side drives the queue from a   */
-/* background thread (see src/.../session/RaHttpBridge.kt).                   */
+/* stub CLIENT_ERROR; the HTTP bridge replaces that stub by enqueuing a copy  */
+/* of the request, then waiting for the Kotlin side to POST the response back */
+/* via ra_facade_complete_http_request. The Kotlin side drives the queue from */
+/* a background thread (see src/.../session/RaHttpBridge.kt).                 */
+/*                                                                            */
+/* Contract: every request handed out by dequeue MUST be completed exactly    */
+/* once (with a negative status on transport failure). rcheevos frees its     */
+/* per-call state and settles logins inside the completion; a request that is */
+/* never completed leaves its operation hung. ra_facade_destroy completes any */
+/* still-pending request with RC_API_SERVER_RESPONSE_CLIENT_ERROR.            */
 /* -------------------------------------------------------------------------- */
 
 /*
  * One queued HTTP request. Strings are NUL-terminated; the JVM side MUST copy
- * any field it intends to retain past the call. The generation field matches
- * the facade's current generation when the request was enqueued; the JVM
- * side uses it to drop stale responses after logout / a newer login.
+ * any field it intends to retain past the call. `request_id` identifies the
+ * request; pass it back to ra_facade_complete_http_request.
  */
 typedef struct ra_http_request_s {
-    uint32_t generation;          /* matches facade->generation at enqueue time */
+    uint32_t request_id;          /* unique per request, never 0 */
     char     url[RA_FACADE_HTTP_URL_MAX];
     char     post_data[RA_FACADE_HTTP_BODY_MAX];
     char     content_type[RA_FACADE_HTTP_CONTENT_TYPE_MAX];
@@ -366,26 +402,28 @@ typedef struct ra_http_request_s {
 } ra_http_request_t;
 
 /*
- * Pop the next pending HTTP request into `out`. Returns 1 if a request was
- * written, 0 if the queue is empty. The request is left on the queue until
- * the matching ra_facade_complete_http_request call delivers the response.
+ * Hand the oldest not-yet-dispatched HTTP request to the caller. Returns 1 if
+ * a request was written to `out`, 0 if there is nothing new. Each request is
+ * handed out exactly once; it stays pending (rcheevos keeps waiting) until
+ * ra_facade_complete_http_request is called with its request_id.
  */
 RA_FACADE_EXPORT int32_t ra_facade_dequeue_http_request(void* handle,
                                                         ra_http_request_t* out);
 
 /*
- * Deliver the HTTP response back to rcheevos. `status` is the HTTP status
- * code (e.g. 200, 401, 500); pass a negative rc_api value (e.g.
- * RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR) for transport failures
- * that rcheevos should treat as retryable. `body` may be NULL with
- * body_length=0 for empty/error responses.
+ * Deliver the HTTP response for `request_id` back to rcheevos. `status` is the
+ * HTTP status code (e.g. 200, 401, 500); pass a negative rc_api value (e.g.
+ * RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR) for transport failures.
+ * `body` is the raw response bytes (need not be NUL-terminated) and
+ * `body_length` their count in BYTES; NULL/0 for an empty response.
  *
- * The generation in the original request and the facade's current generation
- * are compared — a stale response (from before logout / a newer login) is
- * dropped silently. Returns 1 if delivered, 0 if dropped.
+ * Runs rcheevos's callback synchronously on the calling thread, which may
+ * raise events, settle a login, or enqueue a follow-up request. Staleness
+ * (logout, game unload) is handled by rcheevos itself. Returns 1 if
+ * delivered, 0 if no pending request has that id.
  */
 RA_FACADE_EXPORT int32_t ra_facade_complete_http_request(void* handle,
-                                                          uint32_t generation,
+                                                          uint32_t request_id,
                                                           int32_t status,
                                                           const char* body,
                                                           int32_t body_length);

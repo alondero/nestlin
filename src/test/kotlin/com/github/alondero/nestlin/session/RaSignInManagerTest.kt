@@ -1,5 +1,6 @@
 package com.github.alondero.nestlin.session
 
+import com.github.alondero.nestlin.testutil.failTest
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.IntByReference
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -162,6 +163,98 @@ class RaSignInManagerTest {
         }
     }
 
+    /**
+     * Regression for "sign-in stays on Signing in… forever". rcheevos sends
+     * every API call to `/dorequest.php` with the method (`r=login2`) in the
+     * POST body; the manager used to wait for a `login2.php` URL that never
+     * arrives, so a successful round-trip never left Authenticating.
+     */
+    @Test
+    fun `password login reaches SignedIn once the login response is delivered`() {
+        val f = fixture()
+        f.bindings.scriptLoginRoundTrip(username = "Alice", token = "ALICETOKEN1234567890ABCDEFGHIJ12")
+        f.manager.signInWithPassword("alice", "secret123")
+        try {
+            val state = awaitState(f.manager) { it is RaSignInState.SignedIn }
+            assertEquals("Alice", (state as RaSignInState.SignedIn).account.username)
+            assertEquals(RaCredentials("Alice", "ALICETOKEN1234567890ABCDEFGHIJ12"), f.store.load())
+        } finally {
+            f.manager.shutdown()
+        }
+    }
+
+    @Test
+    fun `rejected credentials surface the server reason and clear saved credentials`() {
+        val f = fixture(saved = RaCredentials("alice", "OLDTOKEN"))
+        f.bindings.scriptLoginRoundTrip(username = "alice", token = "unused")
+        f.transport.enqueueResponse(401, """{"Success":false,"Error":"Invalid User/Password combination. Please try again","Code":"invalid_credentials"}""")
+        f.manager.signInWithPassword("alice", "wrong")
+        try {
+            val state = awaitState(f.manager) { it !is RaSignInState.Authenticating }
+            assertTrue(state is RaSignInState.Rejected, "expected Rejected, got $state")
+            assertEquals(
+                "Invalid User/Password combination. Please try again",
+                (state as RaSignInState.Rejected).reason,
+            )
+            assertNull(f.store.load(), "a rejected login must not leave stale credentials behind")
+        } finally {
+            f.manager.shutdown()
+        }
+    }
+
+    @Test
+    fun `network failure while restoring a saved token goes Offline and keeps the credentials`() {
+        val saved = RaCredentials("alice", "ALICETOKEN1234567890ABCDEFGHIJ12")
+        val f = fixture(saved = saved)
+        f.bindings.scriptLoginRoundTrip(username = "alice", token = saved.token)
+        f.transport.enqueueTransportFailure()
+        f.manager.start()
+        try {
+            val state = awaitState(f.manager) { it !is RaSignInState.Authenticating }
+            assertTrue(state is RaSignInState.Offline, "expected Offline, got $state")
+            assertEquals(saved, f.store.load())
+        } finally {
+            f.manager.shutdown()
+        }
+    }
+
+    @Test
+    fun `a login the facade settles up front never waits on the network`() {
+        val f = fixture()
+        f.bindings.settleLoginUpFront = RcResult.INVALID_CREDENTIALS to "username is required"
+        f.manager.signInWithPassword("alice", "pw")
+        try {
+            val state = awaitState(f.manager) { it !is RaSignInState.Authenticating }
+            assertEquals(RaSignInState.Rejected("username is required"), state)
+            assertTrue(f.transport.sent.isEmpty())
+        } finally {
+            f.manager.shutdown()
+        }
+    }
+
+    /**
+     * rcheevos only releases a request's bookkeeping (and a login's
+     * single-flight guard) when its response is delivered, so signing out
+     * must not strand requests by stopping the bridge.
+     */
+    @Test
+    fun `signing out keeps delivering responses for requests already issued`() {
+        val f = fixture()
+        f.bindings.scriptLoginRoundTrip(username = "alice", token = "ALICETOKEN1234567890ABCDEFGHIJ12")
+        f.manager.signInWithPassword("alice", "pw")
+        try {
+            awaitState(f.manager) { it is RaSignInState.SignedIn }
+            f.manager.signOut()
+            f.bindings.enqueueRequest("https://retroachievements.org/dorequest.php", "r=ping")
+
+            val deadline = System.currentTimeMillis() + 3_000
+            while (f.bindings.completeCalls.size < 2 && System.currentTimeMillis() < deadline) Thread.sleep(10)
+            assertEquals(2, f.bindings.completeCalls.size, "the post-sign-out request was never completed")
+        } finally {
+            f.manager.shutdown()
+        }
+    }
+
     @Test
     fun `addListener then removeListener works in any order`() {
         val f = fixture()
@@ -177,6 +270,21 @@ class RaSignInManagerTest {
      */
     private fun bingsCalledLogin(bindings: FakeRaFacadeBindings): Boolean =
         bindings.beginPasswordCalls.isNotEmpty() || bindings.beginTokenCalls.isNotEmpty()
+
+    /** Poll [manager] until [predicate] holds; the HTTP bridge settles on its own thread. */
+    private fun awaitState(
+        manager: RaSignInManager,
+        timeoutMs: Long = 3_000,
+        predicate: (RaSignInState) -> Boolean,
+    ): RaSignInState {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val s = manager.state
+            if (predicate(s)) return s
+            Thread.sleep(10)
+        }
+        failTest("timed out waiting for sign-in state; last state was ${manager.state}")
+    }
 }
 
 /**
@@ -193,8 +301,74 @@ internal class FakeRaFacadeBindings : RaFacadeBindings {
     val logoutCalls: Int = 0
     var isSignedInReturn: Int = 0
     val dequeueCalls: Int = 0
-    val completeCalls: MutableList<Triple<Int, Int, String?>> = mutableListOf()
+
+    /** One response the bridge delivered back to the "façade". */
+    class Completion(val requestId: Int, val status: Int, val body: ByteArray?, val bodyLength: Int)
+
+    /** Every completion the bridge delivered, in order. */
+    val completeCalls: MutableList<Completion> = java.util.concurrent.CopyOnWriteArrayList()
     var pendingUserInfo: String? = null
+
+    /**
+     * Server reason reported for a login the server rejects (4xx). Mirrors
+     * what rcheevos copies out of the `Error` field of the login2 response.
+     */
+    var rejectionMessage: String = "Invalid User/Password combination. Please try again"
+
+    /**
+     * When set, begin-login settles synchronously with this (rc result,
+     * message) and issues no HTTP — rcheevos's "rejected up front" path.
+     */
+    var settleLoginUpFront: Pair<Int, String>? = null
+
+    private class Request(val id: Int, val url: String, val body: String?, val isLogin: Boolean)
+
+    private val lock = Any()
+    private val queued: ArrayDeque<Request> = ArrayDeque()
+    private val dispatched: MutableMap<Int, Request> = mutableMapOf()
+    private var nextRequestId = 1
+    private var scriptedLogin: Pair<String, String>? = null
+    @Volatile private var signedInUser: Pair<String, String>? = null
+    private var loginOutcome = RaLoginOutcome.NONE
+    private var loginResult = 0
+    private var loginMessage = ""
+
+    /**
+     * A begin-login call enqueues one HTTP request shaped exactly like
+     * rcheevos's (`POST /dorequest.php`, `r=login2` in the body). A 2xx
+     * completion signs this user in; a negative status settles as
+     * RC_NO_RESPONSE; any other status as RC_INVALID_CREDENTIALS.
+     */
+    fun scriptLoginRoundTrip(username: String, token: String) {
+        scriptedLogin = username to token
+    }
+
+    /** Simulate rcheevos issuing a non-login request (e.g. a game load). */
+    fun enqueueRequest(url: String, body: String? = null) {
+        synchronized(lock) { queued.addLast(Request(nextRequestId++, url, body, isLogin = false)) }
+    }
+
+    private fun beginLogin(username: String): Int {
+        settleLoginUpFront?.let { (result, message) ->
+            settleLogin(RaLoginOutcome.FAILED, result, message)
+            return RaStatus.OK
+        }
+        if (scriptedLogin == null) return RaStatus.OK
+        synchronized(lock) {
+            queued.addLast(
+                Request(nextRequestId++, "https://retroachievements.org/dorequest.php", "r=login2&u=$username&p=***", isLogin = true),
+            )
+        }
+        return RaStatus.OK
+    }
+
+    private fun settleLogin(outcome: Int, result: Int, message: String) {
+        synchronized(lock) {
+            loginOutcome = outcome
+            loginResult = result
+            loginMessage = message
+        }
+    }
 
     override fun ra_facade_poll_event(handle: Pointer, out: RaEvent): Int = 0
     override fun ra_facade_clear_events(handle: Pointer) {}
@@ -203,17 +377,55 @@ internal class FakeRaFacadeBindings : RaFacadeBindings {
     override fun ra_facade_is_signed_in(handle: Pointer): Int = isSignedInReturn
     override fun ra_facade_begin_login_with_password(handle: Pointer, username: String, password: String): Int {
         beginPasswordCalls += username to password
-        return 0
+        return beginLogin(username)
     }
     override fun ra_facade_begin_login_with_token(handle: Pointer, username: String, token: String): Int {
         beginTokenCalls += username to token
-        return 0
+        return beginLogin(username)
     }
-    override fun ra_facade_logout(handle: Pointer) {}
-    override fun ra_facade_get_user_info(handle: Pointer, out: RaUserInfo): Int = 0
-    override fun ra_facade_dequeue_http_request(handle: Pointer, out: RaHttpRequestSlot): Int = 0
-    override fun ra_facade_complete_http_request(handle: Pointer, generation: Int, status: Int, body: String?, bodyLength: Int): Int {
-        completeCalls += Triple(generation, status, body)
+    override fun ra_facade_logout(handle: Pointer) {
+        signedInUser = null
+    }
+    override fun ra_facade_take_login_result(handle: Pointer, outResult: IntByReference, outMessage: ByteArray, messageCapacity: Int): Int =
+        synchronized(lock) {
+            val outcome = loginOutcome
+            outResult.value = loginResult
+            fixed(loginMessage, messageCapacity).copyInto(outMessage)
+            loginOutcome = RaLoginOutcome.NONE
+            outcome
+        }
+    override fun ra_facade_get_user_info(handle: Pointer, out: RaUserInfo): Int {
+        val user = signedInUser ?: return RaStatus.ERR_NOT_SIGNED_IN
+        out.username = fixed(user.first, RaUserInfo.RA_FACADE_USERNAME_MAX)
+        out.displayName = fixed(user.first, RaUserInfo.RA_FACADE_DISPLAY_NAME_MAX)
+        out.token = fixed(user.second, RaUserInfo.RA_FACADE_TOKEN_MAX)
+        out.write()
+        return RaStatus.OK
+    }
+    override fun ra_facade_dequeue_http_request(handle: Pointer, out: RaHttpRequestSlot): Int {
+        val request = synchronized(lock) {
+            queued.removeFirstOrNull()?.also { dispatched[it.id] = it }
+        } ?: return 0
+        out.requestId = request.id
+        out.url = fixed(request.url, RaHttpRequestSlot.RA_FACADE_HTTP_URL_MAX)
+        out.postData = fixed(request.body ?: "", RaHttpRequestSlot.RA_FACADE_HTTP_BODY_MAX)
+        out.hasPostData = if (request.body != null) 1 else 0
+        out.write()
+        return 1
+    }
+    override fun ra_facade_complete_http_request(handle: Pointer, requestId: Int, status: Int, body: ByteArray?, bodyLength: Int): Int {
+        val request = synchronized(lock) { dispatched.remove(requestId) } ?: return 0
+        completeCalls += Completion(requestId, status, body?.copyOf(), bodyLength)
+        if (request.isLogin) {
+            when {
+                status in 200..299 -> {
+                    signedInUser = scriptedLogin
+                    settleLogin(RaLoginOutcome.SUCCEEDED, 0, "")
+                }
+                status < 0 -> settleLogin(RaLoginOutcome.FAILED, RcResult.NO_RESPONSE, "No response from server")
+                else -> settleLogin(RaLoginOutcome.FAILED, RcResult.INVALID_CREDENTIALS, rejectionMessage)
+            }
+        }
         return 1
     }
     override fun ra_facade_prepare_game(handle: Pointer, romBytes: ByteArray, romLen: Int, displayName: String?): Int = 0
@@ -228,7 +440,7 @@ internal class FakeRaFacadeBindings : RaFacadeBindings {
     override fun ra_facade_serialize_progress(handle: Pointer, out: ByteArray, outCapacity: Int): Int = 0
     override fun ra_facade_restore_progress(handle: Pointer, data: ByteArray?, dataLen: Int): Int = 0
     override fun ra_facade_rcheevos_version(): String = "12.4.0-test"
-    override fun ra_facade_version(): String = "1.0.0-test"
+    override fun ra_facade_version(): String = "1.1.0-test"
     override fun ra_facade_hash_nes_rom(romBytes: ByteArray, romLen: Int, outHash: ByteArray): Int = 0
     override fun ra_facade_get_user_game_summary(handle: Pointer, out: RaUserGameSummary): Int = 0
     override fun ra_facade_get_game_summary(handle: Pointer, out: RaGameSummarySlot): Int = 0
@@ -243,6 +455,10 @@ internal class FakeRaFacadeBindings : RaFacadeBindings {
     override fun ra_facade_get_achievement_bucket(handle: Pointer, bucketIndex: Int, out: RaAchievementBucketSlot): Int = 0
     override fun ra_facade_get_achievement_at(handle: Pointer, bucketIndex: Int, achievementIndex: Int, out: RaAchievementSlot): Int = 0
     override fun ra_facade_destroy_achievement_list(handle: Pointer) {}
+
+    /** NUL-padded fixed-size buffer, as the C side writes into the struct arrays. */
+    private fun fixed(text: String, size: Int): ByteArray =
+        text.toByteArray(Charsets.UTF_8).copyOf(size)
 }
 
 /** In-memory [Preferences] is in InMemoryPreferences.kt — shared with RaCredentialsStoreTest. */

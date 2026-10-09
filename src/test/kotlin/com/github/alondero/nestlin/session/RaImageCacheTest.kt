@@ -56,7 +56,7 @@ class RaImageCacheTest {
             javax.imageio.ImageIO.write(img, "PNG", baos)
             baos.toByteArray()
         }
-        transport.enqueueResponse(200, String(onePixelPng, Charsets.ISO_8859_1))
+        transport.enqueueResponse(RaHttpResponse(status = 200, body = onePixelPng))
         val cache = RaImageCache(transport)
         val future = cache.fetch("https://retroachievements.org/Images/000001.png")
         val image = future.get(1, TimeUnit.SECONDS)
@@ -99,7 +99,7 @@ class RaImageCacheTest {
         // must result in exactly one network request — the second
         // caller gets the same in-flight future the first one did.
         val transport = CountingFakeTransport(
-            RaHttpResponse(status = 200, body = "{}", bodyLength = 2),
+            RaHttpResponse.text(status = 200, body = "{}"),
         )
         val cache = RaImageCache(transport)
         val f1 = cache.fetch("https://example.com/a.png")
@@ -119,7 +119,7 @@ class RaImageCacheTest {
         // the previous game's badge so a slow completion from ROM A
         // doesn't overwrite ROM B's placard.
         val transport = CountingFakeTransport(
-            RaHttpResponse(status = 200, body = "{}", bodyLength = 2),
+            RaHttpResponse.text(status = 200, body = "{}"),
         )
         val cache = RaImageCache(transport)
         cache.fetch("https://example.com/a.png").get(1, TimeUnit.SECONDS)
@@ -188,7 +188,7 @@ class RaImageCacheTest {
             sendCalls++
             Thread {
                 latch.await(2, TimeUnit.SECONDS)
-                callback(RaHttpResponse(status = 200, body = "{}", bodyLength = 2))
+                callback(RaHttpResponse.text(status = 200, body = "{}"))
             }.start()
         }
     }
