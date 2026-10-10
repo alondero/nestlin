@@ -142,6 +142,8 @@ Why Konsist and not Detekt or ktlint: the project pins Kotlin 1.9.22; the latest
 
 To add a new AST rule, see the "Static analysis — Konsist" bullet in `CLAUDE.md`. To add a new source-text lint, copy an existing `*LintTest.kt`, define a `RAW_*_PATTERNS` regex, an `EXCLUDED` set of files that legitimately mention the pattern (the builder, the lint itself, doc comments), and a `BASELINE` set of grandfathered offenders that must only shrink.
 
+**Scope invariant:** start Konsist rules from `KonsistArchitectureTest.productionFiles()` rather than a bare `Konsist.scopeFromProduction()`. Konsist resolves the production source root by finding a `src/main/kotlin` directory anywhere under the project tree, so with the git worktrees this project parks under `.claude/worktrees/`, the unfiltered scope also returns every worktree's copy of the sources and reports violations against other branches' stale files — `./gradlew test` failed with 448 phantom violations on any machine that had a worktree checked out, while CI (no worktrees) stayed green. `productionFiles()` filters by absolute path and asserts the result is non-empty, so the rules can never pass vacuously by inspecting zero files.
+
 ## Coding and commit standards
 
 Use Kotlin idioms already present in the codebase and keep changes focused. Conventional Commits are required by the repository hooks, for example:
