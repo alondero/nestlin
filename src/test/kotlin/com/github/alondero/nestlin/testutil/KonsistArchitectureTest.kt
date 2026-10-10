@@ -1,9 +1,12 @@
 package com.github.alondero.nestlin.testutil
 
 import com.lemonappdev.konsist.api.Konsist
+import com.lemonappdev.konsist.api.declaration.KoFileDeclaration
 import com.lemonappdev.konsist.api.verify.assertFalse
 import com.lemonappdev.konsist.api.verify.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Path
+import java.nio.file.Paths
 
 /**
  * Kotlin AST-based architectural linter built on Konsist (issue #314).
@@ -41,9 +44,12 @@ import org.junit.jupiter.api.Test
  * independent. The leaf-package rule below deliberately uses those instead of
  * the path string.
  *
- * Adding a new rule: copy one of the existing `@Test fun`s, pick the Konsist
- * scope you need (`Konsist.scopeFromProject()`, `scopeFromProduction()`, or
- * `scopeFromTest()`), filter the declaration kind you care about, and assert.
+ * Adding a new rule: copy one of the existing `@Test fun`s, start from
+ * `productionFiles()` — or `scopeFromTest()` / `scopeFromProject()` if you
+ * genuinely need those scopes — filter the declaration kind you care about,
+ * and assert. Prefer `productionFiles()` over a bare `scopeFromProduction()`:
+ * the unfiltered production scope also lints sibling git worktrees parked
+ * under `.claude/worktrees/`, which see their KDoc for the full story.
  * Run `./gradlew test --tests *KonsistArchitectureTest` to iterate quickly.
  */
 class KonsistArchitectureTest {
@@ -55,8 +61,8 @@ class KonsistArchitectureTest {
      * CLAUDE.md "Conventions" / "Enum access").
      *
      * Konsist's AST does not see synthesized properties like `.values()`, so the
-     * match is on the file text — but the scope (`Konsist.scopeFromProject()`)
-     * is Konsist's, and the comment-stripping lives here, not in a separate
+     * match is on the file text — but the file list is scoped by
+     * [productionFiles], and the comment-stripping lives here, not in a separate
      * regex walker. The Konsist-specific win is that the file list is the
      * compiler's view of the project, not whatever a `Files.walk` happens to
      * enumerate, so generated/build/config sources stay out of the rule's way.
@@ -78,8 +84,7 @@ class KonsistArchitectureTest {
      */
     @Test
     fun `no production code calls Enum values() — use Enum entries instead`() {
-        Konsist.scopeFromProduction()
-            .files
+        productionFiles()
             .assertFalse(
                 additionalMessage = "Use EnumClass.entries instead of EnumClass.values() " +
                     "(Kotlin 1.9+ EnumEntries, zero allocation). " +
@@ -108,8 +113,8 @@ class KonsistArchitectureTest {
      */
     @Test
     fun `Mapper classes reside in the gamepak package`() {
-        Konsist.scopeFromProduction()
-            .classes()
+        productionFiles()
+            .flatMap { it.classes() }
             .filter { it.name.matches(MAPPER_CLASS_NAME_RE) }
             .assertTrue(
                 additionalMessage = "Mapper classes (Mapper0..Mapper228) must live in " +
@@ -141,8 +146,7 @@ class KonsistArchitectureTest {
 
         data class CrossImport(val fileId: String, val importedLeaves: Set<String>)
 
-        val offenders: List<CrossImport> = Konsist.scopeFromProduction()
-            .files
+        val offenders: List<CrossImport> = productionFiles()
             .filter { file -> file.packagee?.fullyQualifiedName in leafPackages }
             .mapNotNull { file ->
                 val pkg = file.packagee?.fullyQualifiedName ?: return@mapNotNull null
@@ -186,6 +190,57 @@ class KonsistArchitectureTest {
     }
 
     /**
+     * The production Kotlin files these rules should actually judge: everything
+     * under *this* project's `src/main/kotlin`, and nothing else.
+     *
+     * Why the filter is load-bearing: `Konsist.scopeFromProduction()` was
+     * observed returning Kotlin files that are emphatically not this branch's —
+     * it resolves the production source root by looking for a
+     * `src/main/kotlin` directory anywhere under the project tree rather than
+     * only at the root. This repo parks git worktrees under
+     * `.claude/worktrees/<name>/src/main/kotlin/...` (see AGENTS.md, "Worktree
+     * scope"), so with any worktree present `./gradlew test` failed with 448
+     * phantom violations raised against stale copies of other branches'
+     * sources. CI checks out no worktrees, which is why master stayed green
+     * there while going red on every developer machine.
+     *
+     * Filtering on absolute path keeps every rule honest regardless of how many
+     * worktrees happen to be checked out.
+     *
+     * Vacuous-green guard: a filter that matches nothing would let all three
+     * rules above pass while inspecting zero files. The non-empty assertion
+     * turns that into a loud failure, so the lint can never silently stop
+     * linting.
+     */
+    private fun productionFiles(): List<KoFileDeclaration> {
+        val files = Konsist.scopeFromProduction()
+            .files
+            .filter { it.residesUnder(PRODUCTION_SOURCE_ROOT) }
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+            files.isNotEmpty(),
+            "Production scope resolved to zero files under $PRODUCTION_SOURCE_ROOT — the " +
+                "Konsist rules would pass vacuously. Check that Gradle's test working " +
+                "directory is still the project root and that src/main/kotlin exists.",
+        )
+
+        return files
+    }
+
+    /**
+     * True when this file sits at or below [root].
+     *
+     * `startsWith` on a Windows [Path] compares case-insensitively, so a drive
+     * letter or directory recorded with different casing still matches. Malformed
+     * or non-absolute paths are treated as "not ours" rather than crashing the
+     * lint — a false positive bias that keeps a weird path visible as a skipped
+     * file rather than an exception.
+     */
+    private fun KoFileDeclaration.residesUnder(root: Path): Boolean =
+        runCatching { Paths.get(path).toAbsolutePath().normalize().startsWith(root) }
+            .getOrDefault(false)
+
+    /**
      * Strip KDoc / block / line comments. Mirrors the comment-stripping the
      * deleted `KotlinIdiomsLintTest` used, kept narrow on purpose: block
      * comments first, then per-line `//`. Doesn't try to be string-literal
@@ -203,6 +258,21 @@ class KonsistArchitectureTest {
     companion object {
         private val BLOCK_COMMENT_RE = Regex("""/\*[\s\S]*?\*/""")
         private val MAPPER_CLASS_NAME_RE = Regex("""^Mapper\d+$""")
+
+        /**
+         * `<project root>/src/main/kotlin`, resolved from the JVM working
+         * directory — which Gradle's `Test` task sets to the project directory.
+         * Every rule narrows Konsist's production scope to files under this
+         * prefix, so nested git-worktree copies under `.claude/worktrees/` are
+         * never linted as if they were this branch's sources.
+         *
+         * Keep in sync with the `main` source set's Kotlin directory. If that
+         * ever moves, [productionFiles] fails its non-empty guard rather than
+         * passing silently.
+         */
+        private val PRODUCTION_SOURCE_ROOT: Path =
+            Paths.get("").toAbsolutePath().normalize()
+                .resolve("src").resolve("main").resolve("kotlin").normalize()
 
         /** Internal subsystem leaves. cli/ is the CLI aggregator and is excluded. */
         private val LEAF_PACKAGES = listOf("input", "movie", "rewind")
