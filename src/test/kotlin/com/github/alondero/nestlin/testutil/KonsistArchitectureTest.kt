@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.StandardOpenOption
 
 /**
  * Kotlin AST-based architectural linter built on Konsist (issue #314).
@@ -204,25 +205,34 @@ class KonsistArchitectureTest {
      * survive the filter — so this test cannot pass merely because the filter
      * drops everything.
      *
+     * Probe ownership: the tree is planted in a uniquely named directory this
+     * test creates exclusively and removes in its `finally`. It deliberately is
+     * NOT a fixed path under `.claude/worktrees/` — that is where real git
+     * worktrees live, and a fixed name plus a recursive delete would risk
+     * destroying someone's worktree and its uncommitted changes. The location
+     * only needs to be a nested `src/main/kotlin` under the project root, which
+     * is what Konsist's scope resolution keys on; `build/` is gitignored
+     * scratch space and is never swept by the cleanup, which touches only the
+     * unique directory this test created.
+     *
      * Never write a glob like `*.kt` in this comment: Kotlin nests block
      * comments, so the `/*` inside the glob would open a nested comment and
      * swallow every declaration up to the next `*/` — which is how the first
      * draft of this test produced ~50 unrelated "Expecting member
      * declaration" errors instead of one obvious one.
-     *
-     * Cleanup runs in a `finally` and removes only this test's own probe
-     * directory, so a failure here cannot leave a stray source tree behind for
-     * the other rules to trip over.
      */
     @Test
     fun `production scope excludes a nested worktree-style source tree`() {
+        Files.createDirectories(PROBE_PARENT_DIR)
+        val probeRoot = Files.createTempDirectory(PROBE_PARENT_DIR, "probe-")
         try {
-            val probeDir = PROBE_WORKTREE_ROOT
+            val probeDir = probeRoot
                 .resolve("src").resolve("main").resolve("kotlin")
             val probeFile = probeDir.resolve(PROBE_FILE_NAME)
 
             Files.createDirectories(probeDir)
-            Files.writeString(probeFile, PROBE_SOURCE)
+            // CREATE_NEW so this can never clobber a file it did not create.
+            Files.writeString(probeFile, PROBE_SOURCE, StandardOpenOption.CREATE_NEW)
 
             // Read the planted tree back through Konsist itself so the fixture is
             // proven to be a real, parseable source tree. `scopeFromDirectory`
@@ -257,7 +267,8 @@ class KonsistArchitectureTest {
                     "is over-restrictive and these rules would pass vacuously.",
             )
         } finally {
-            PROBE_WORKTREE_ROOT.toFile().deleteRecursively()
+            // Only ever the unique directory this test created above.
+            probeRoot.toFile().deleteRecursively()
         }
     }
 
@@ -365,7 +376,6 @@ class KonsistArchitectureTest {
         // `const val` declared further down fails to compile with
         // "Variable 'X' must be initialized" — which the parser then buries
         // under a cascade of unrelated "Expecting member declaration" errors.
-        private const val PROBE_WORKTREE_NAME = "konsist-scope-probe"
         private const val PROBE_FILE_NAME = "KonsistScopeProbe.kt"
         private const val PROBE_PACKAGE = "com.github.alondero.nestlin.probe"
 
@@ -383,15 +393,19 @@ class KonsistArchitectureTest {
         ).joinToString("\n")
 
         /**
-         * A planted, worktree-shaped source tree used by
+         * Scratch parent for the planted probe tree used by
          * `production scope excludes a nested worktree-style source tree`.
          *
-         * Deliberately a sibling of the real worktrees under `.claude/worktrees/`
-         * so the probe reproduces the exact path layout that broke the lint, and
-         * deliberately removed again in that test's `finally` block.
+         * Under `build/` rather than `.claude/worktrees/` on purpose: this is
+         * gitignored scratch space, so it cannot collide with a real git
+         * worktree or with anything a developer has uncommitted there. The test
+         * still creates its probe through [Files.createTempDirectory], so the
+         * directory it later deletes recursively is always one it exclusively
+         * owns. Only the nesting — a `src/main/kotlin` below the project root —
+         * matters to what is being tested.
          */
-        private val PROBE_WORKTREE_ROOT: Path =
-            PROJECT_ROOT.resolve(".claude").resolve("worktrees").resolve(PROBE_WORKTREE_NAME)
+        private val PROBE_PARENT_DIR: Path =
+            PROJECT_ROOT.resolve("build").resolve("konsist-probe")
 
         /** Internal subsystem leaves. cli/ is the CLI aggregator and is excluded. */
         private val LEAF_PACKAGES = listOf("input", "movie", "rewind")
