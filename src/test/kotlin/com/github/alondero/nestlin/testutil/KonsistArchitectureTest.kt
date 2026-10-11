@@ -5,6 +5,7 @@ import com.lemonappdev.konsist.api.declaration.KoFileDeclaration
 import com.lemonappdev.konsist.api.verify.assertFalse
 import com.lemonappdev.konsist.api.verify.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 
@@ -190,6 +191,77 @@ class KonsistArchitectureTest {
     }
 
     /**
+     * Regression guard for the scope invariant the three rules above depend on.
+     *
+     * The non-empty assertion inside [productionFiles] is not enough on its own:
+     * a CI checkout has no sibling worktrees, so every rule would still pass if
+     * the root-only filter were deleted outright. This test plants a real,
+     * worktree-shaped `<name>/src/main/kotlin` source tree inside the project
+     * and asserts [scopeToProductionRoot] excludes it, so weakening or removing
+     * that filter fails here on any machine, CI included.
+     *
+     * It asserts the opposite direction too — real production files must
+     * survive the filter — so this test cannot pass merely because the filter
+     * drops everything.
+     *
+     * Never write a glob like `*.kt` in this comment: Kotlin nests block
+     * comments, so the `/*` inside the glob would open a nested comment and
+     * swallow every declaration up to the next `*/` — which is how the first
+     * draft of this test produced ~50 unrelated "Expecting member
+     * declaration" errors instead of one obvious one.
+     *
+     * Cleanup runs in a `finally` and removes only this test's own probe
+     * directory, so a failure here cannot leave a stray source tree behind for
+     * the other rules to trip over.
+     */
+    @Test
+    fun `production scope excludes a nested worktree-style source tree`() {
+        try {
+            val probeDir = PROBE_WORKTREE_ROOT
+                .resolve("src").resolve("main").resolve("kotlin")
+            val probeFile = probeDir.resolve(PROBE_FILE_NAME)
+
+            Files.createDirectories(probeDir)
+            Files.writeString(probeFile, PROBE_SOURCE)
+
+            // Read the planted tree back through Konsist itself so the fixture is
+            // proven to be a real, parseable source tree. `scopeFromDirectory`
+            // targets an explicit path, which matters: Konsist resolves the
+            // `scopeFromProduction()` file list once per JVM, so a file created
+            // mid-run would never appear there. It resolves the argument relative
+            // to the project root, hence the relativize.
+            val probeFiles = Konsist
+                .scopeFromDirectory(PROJECT_ROOT.relativize(probeDir).toString())
+                .files
+
+            org.junit.jupiter.api.Assertions.assertTrue(
+                probeFiles.isNotEmpty(),
+                "Konsist returned no files for the planted probe at $probeDir, so this " +
+                    "test is not exercising what it claims to.",
+            )
+
+            // The invariant under test: a second src/main/kotlin tree, shaped exactly
+            // like the worktrees that broke the lint, must be excluded.
+            org.junit.jupiter.api.Assertions.assertTrue(
+                scopeToProductionRoot(probeFiles).isEmpty(),
+                "scopeToProductionRoot() returned $probeFile from a nested " +
+                    "worktree-style source tree — the root-only scope filter has been " +
+                    "weakened or removed.",
+            )
+
+            // Guard the opposite direction, so this test cannot pass merely because
+            // the filter drops everything.
+            org.junit.jupiter.api.Assertions.assertTrue(
+                scopeToProductionRoot(Konsist.scopeFromProduction().files).isNotEmpty(),
+                "scopeToProductionRoot() dropped every real production file — the filter " +
+                    "is over-restrictive and these rules would pass vacuously.",
+            )
+        } finally {
+            PROBE_WORKTREE_ROOT.toFile().deleteRecursively()
+        }
+    }
+
+    /**
      * The production Kotlin files these rules should actually judge: everything
      * under *this* project's `src/main/kotlin`, and nothing else.
      *
@@ -213,9 +285,7 @@ class KonsistArchitectureTest {
      * linting.
      */
     private fun productionFiles(): List<KoFileDeclaration> {
-        val files = Konsist.scopeFromProduction()
-            .files
-            .filter { it.residesUnder(PRODUCTION_SOURCE_ROOT) }
+        val files = scopeToProductionRoot(Konsist.scopeFromProduction().files)
 
         org.junit.jupiter.api.Assertions.assertTrue(
             files.isNotEmpty(),
@@ -226,6 +296,17 @@ class KonsistArchitectureTest {
 
         return files
     }
+
+    /**
+     * Narrows [files] to those under this project's `src/main/kotlin`.
+     *
+     * This is the one place the scope invariant is implemented; `productionFiles()`
+     * is the only caller in production, and
+     * `production scope excludes a nested worktree-style source tree` exercises it
+     * directly with a planted second source tree.
+     */
+    private fun scopeToProductionRoot(files: List<KoFileDeclaration>): List<KoFileDeclaration> =
+        files.filter { it.residesUnder(PRODUCTION_SOURCE_ROOT) }
 
     /**
      * True when this file sits at or below [root].
@@ -260,6 +341,12 @@ class KonsistArchitectureTest {
         private val MAPPER_CLASS_NAME_RE = Regex("""^Mapper\d+$""")
 
         /**
+         * The project root, from the JVM working directory — which Gradle's
+         * `Test` task sets to the project directory.
+         */
+        private val PROJECT_ROOT: Path = Paths.get("").toAbsolutePath().normalize()
+
+        /**
          * `<project root>/src/main/kotlin`, resolved from the JVM working
          * directory — which Gradle's `Test` task sets to the project directory.
          * Every rule narrows Konsist's production scope to files under this
@@ -271,8 +358,40 @@ class KonsistArchitectureTest {
          * passing silently.
          */
         private val PRODUCTION_SOURCE_ROOT: Path =
-            Paths.get("").toAbsolutePath().normalize()
-                .resolve("src").resolve("main").resolve("kotlin").normalize()
+            PROJECT_ROOT.resolve("src").resolve("main").resolve("kotlin").normalize()
+
+        // Declaration order matters: a `val` initializer runs in source order,
+        // so anything it references must be declared above it. Referring to a
+        // `const val` declared further down fails to compile with
+        // "Variable 'X' must be initialized" — which the parser then buries
+        // under a cascade of unrelated "Expecting member declaration" errors.
+        private const val PROBE_WORKTREE_NAME = "konsist-scope-probe"
+        private const val PROBE_FILE_NAME = "KonsistScopeProbe.kt"
+        private const val PROBE_PACKAGE = "com.github.alondero.nestlin.probe"
+
+        /**
+         * Valid Kotlin that trips the `Enum.values()` rule, so if the planted
+         * file ever leaked into the production scope the enum rule would report
+         * it as a genuine violation rather than the test passing quietly.
+         */
+        private val PROBE_SOURCE: String = listOf(
+            "package $PROBE_PACKAGE",
+            "",
+            "enum class ProbeReason { A, B }",
+            "",
+            "fun probeReasons(): Array<ProbeReason> = ProbeReason.values()",
+        ).joinToString("\n")
+
+        /**
+         * A planted, worktree-shaped source tree used by
+         * `production scope excludes a nested worktree-style source tree`.
+         *
+         * Deliberately a sibling of the real worktrees under `.claude/worktrees/`
+         * so the probe reproduces the exact path layout that broke the lint, and
+         * deliberately removed again in that test's `finally` block.
+         */
+        private val PROBE_WORKTREE_ROOT: Path =
+            PROJECT_ROOT.resolve(".claude").resolve("worktrees").resolve(PROBE_WORKTREE_NAME)
 
         /** Internal subsystem leaves. cli/ is the CLI aggregator and is excluded. */
         private val LEAF_PACKAGES = listOf("input", "movie", "rewind")
