@@ -103,6 +103,10 @@ def copy_player_materials(root, destination, revision):
         target.parent.mkdir(parents=True, exist_ok=True)
         # Every listed file is required; missing legal material must fail packaging.
         shutil.copy2(source, target)
+    # Resolve offline links only after every bundled document is present.
+    for source_path, target_path in sources.items():
+        source = root / source_path
+        target = destination / target_path
         if target.suffix == ".md":
             text = rewrite_links(target.read_text(encoding="utf-8"), source, target, root, revision)
             target.write_text(text, encoding="utf-8")

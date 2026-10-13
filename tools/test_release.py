@@ -123,13 +123,16 @@ class PlayerMaterialTest(unittest.TestCase):
             for name in ("LICENSE", "MAPPER_SUPPORT.md", "native/rcheevos/LICENSE", "native/rcheevos/NOTICE", "docs/USER_GUIDE.md", "docs/TROUBLESHOOTING.md", "docs/CHEATS.md", "docs/RELEASING.md"):
                 source = root / name
                 source.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text("material", encoding="utf-8")
+                source.write_text("[cheats](CHEATS.md) [help](TROUBLESHOOTING.md)" if name == "docs/USER_GUIDE.md" else "material", encoding="utf-8")
             release.copy_player_materials(root, image, "abc123")
             self.assertTrue((image / "LICENSE").is_file())
             self.assertTrue((image / "RCHEEVOS-LICENSE").is_file())
             self.assertTrue((image / "RCHEEVOS-NOTICE").is_file())
             self.assertTrue((image / "docs/USER_GUIDE.md").is_file())
             self.assertFalse((image / "docs/RELEASING.md").exists())
+            guide = (image / "docs/USER_GUIDE.md").read_text(encoding="utf-8")
+            self.assertIn("[cheats](CHEATS.md)", guide)
+            self.assertIn("[help](TROUBLESHOOTING.md)", guide)
 
 
 if __name__ == "__main__":
