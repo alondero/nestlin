@@ -31,6 +31,9 @@ python tools/release.py native-tests
 python tools/release.py package v0.2.0 windows-x86_64
 ```
 
+The opt-in `testNativeRa` gate fails when the native library is unavailable; the default fast suite excludes these native contracts. Run `python tools/test_native_ra_gate.py` to verify this failure path with native resources removed from the test JVM's classpath, without deleting a locally built library. PR CI runs this regression. The release report gate remains an additional check for executed tests, skips and failures.
+The release maintainer owns [the missing-native regression tool](../tools/test_native_ra_gate.py). Exit 0 means the expected Gradle failure was verified; nonzero means the regression check failed or could not run.
+
 Set `JAVA_HOME` to the packaging JDK and use the platform matching the host. The script creates `build/release/assets`; an existing packaging directory is rejected, so start each attempt with Gradle clean. The release maintainer owns this tool. Exit codes: 0 success, 1 validation/build failure, 2 command-line misuse. No signing credentials are required.
 
 The script uses [jpackage app images](https://docs.oracle.com/en/java/javase/21/jpackage/packaging-overview.html) and a bundled runtime containing all JDK modules, avoiding missing reflection/JNA/audio modules. Windows ships a ZIP; Unix ships tar.gz to preserve executable permissions. Each archive includes only the player user guide, troubleshooting guide, cheat guide, mapper support, required project/native license material, and runtime legal notices. Missing required material fails packaging. On macOS these files live in `Contents/Resources`; elsewhere they are at the image root. Links to repository-only documents use the exact source commit, including in dry runs. ROMs and user configuration are excluded. Platform-specific `.jar` files require Java 21 and should not be interchanged across systems.
