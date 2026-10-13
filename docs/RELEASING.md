@@ -37,6 +37,10 @@ The script uses [jpackage app images](https://docs.oracle.com/en/java/javase/21/
 
 Stable `rcheevos_facade-<platform>.zip` assets preserve Gradle's native-download interface. The macOS library is universal even though JavaFX and the app runtime are architecture-specific. The old native workflow only points maintainers to Release, preventing competing draft writers.
 
+macOS uses the release version (for example, `0.2.0`) in `CFBundleShortVersionString`. Its internal `CFBundleVersion` adds one to the semantic major (`1.2.0` for this release), because JDK 21 jpackage enforces Apple's positive-major build-version rule. This mapping remains monotonic when releases reach `1.x`. The script sets the visible version before testing and archiving the unsigned bundle; future signing must happen after this metadata update. See [Apple's bundle version keys](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html).
+
+The Unix native build uses GNU C99 so POSIX functions used by rcheevos have their declarations on Linux. Implicit function declarations and integer-to-pointer conversions are fatal compiler errors: an undeclared `strdup` previously compiled under strict C99 and crashed the native contract gate during game identification. Changes to the build script invalidate cached objects as well as source changes.
+
 ## Validation matrix
 
 | Area | Minimum evidence |

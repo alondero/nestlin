@@ -107,12 +107,14 @@ for src in "${RCH_SOURCES[@]}"; do
     obj_name="$(echo "$src" | tr '/' '_' | sed 's/\.c$/.o/')"
     obj_path="$OUT_DIR/obj/$obj_name"
     OBJ_FILES+=("$obj_path")
-    if [ "$HOST" != "macos" ] && [ -f "$obj_path" ] && [ "$obj_path" -nt "$RCH_SRC_DIR/$src" ]; then
+    if [ "$HOST" != "macos" ] && [ -f "$obj_path" ] && [ "$obj_path" -nt "$RCH_SRC_DIR/$src" ] && [ "$obj_path" -nt "$0" ]; then
         echo "[BUILD-NATIVE-RA] cached: $src"
         continue
     fi
     echo "[BUILD-NATIVE-RA] cc: $src"
-    "$CC" "${ARCH_FLAGS[@]}" -c -std=c99 -O2 -fvisibility=hidden -fPIC -DRC_CLIENT_SUPPORTS_HASH=1 \
+    # rcheevos uses POSIX functions such as strdup. Strict C99 hides their
+    # declarations on glibc, causing implicit-int pointer truncation at runtime.
+    "$CC" "${ARCH_FLAGS[@]}" -c -std=gnu99 -Werror=implicit-function-declaration -Werror=int-conversion -O2 -fvisibility=hidden -fPIC -DRC_CLIENT_SUPPORTS_HASH=1 \
         -I"$RCH_INCLUDE_DIR" \
         -I"$RCH_SRC_DIR" \
         -I"$RCH_SRC_DIR/rcheevos" \
@@ -130,9 +132,9 @@ done
 # Compile the façade
 FAC_OBJ="$OUT_DIR/obj/ra_facade.o"
 OBJ_FILES+=("$FAC_OBJ")
-if [ "$HOST" = "macos" ] || [ ! -f "$FAC_OBJ" ] || [ "$FAC_OBJ" -lt "$FACADE_DIR/ra_facade.c" ]; then
+if [ "$HOST" = "macos" ] || [ ! -f "$FAC_OBJ" ] || [ "$FAC_OBJ" -ot "$FACADE_DIR/ra_facade.c" ] || [ "$FAC_OBJ" -ot "$0" ]; then
     echo "[BUILD-NATIVE-RA] cc: ra_facade.c"
-    "$CC" "${ARCH_FLAGS[@]}" -c -std=c99 -O2 -fvisibility=default -fPIC -DRA_FACADE_BUILDING=1 -DRC_CLIENT_SUPPORTS_HASH=1 \
+    "$CC" "${ARCH_FLAGS[@]}" -c -std=gnu99 -Werror=implicit-function-declaration -Werror=int-conversion -O2 -fvisibility=default -fPIC -DRA_FACADE_BUILDING=1 -DRC_CLIENT_SUPPORTS_HASH=1 \
         -I"$FACADE_DIR" \
         -I"$RCH_INCLUDE_DIR" \
         -I"$RCH_SRC_DIR" \

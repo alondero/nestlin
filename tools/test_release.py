@@ -64,6 +64,26 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertEqual((15, 7), release.save_versions(source))
 
 
+class MacVersionTest(unittest.TestCase):
+    def test_bundle_build_versions_are_positive_and_monotonic(self):
+        self.assertEqual("1.2.0", release.mac_bundle_version("v0.2.0"))
+        self.assertEqual("2.0.0", release.mac_bundle_version("v1.0.0"))
+
+    def test_visible_release_version_preserves_semver(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp)
+            info = image / "Contents/Info.plist"
+            info.parent.mkdir()
+            with info.open("wb") as stream:
+                release.plistlib.dump({"CFBundleVersion": "1.2.0", "CFBundleShortVersionString": "1.2.0", "CFBundleName": "Nestlin"}, stream)
+            release.set_mac_release_version(image, "v0.2.0")
+            with info.open("rb") as stream:
+                metadata = release.plistlib.load(stream)
+            self.assertEqual("0.2.0", metadata["CFBundleShortVersionString"])
+            self.assertEqual("1.2.0", metadata["CFBundleVersion"])
+            self.assertEqual("Nestlin", metadata["CFBundleName"])
+
+
 class NativeReportTest(unittest.TestCase):
     def check_report(self, cases):
         with tempfile.TemporaryDirectory() as tmp:

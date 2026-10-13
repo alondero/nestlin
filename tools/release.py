@@ -2,6 +2,7 @@
 import argparse
 import os
 import platform
+import plistlib
 from pathlib import Path
 import re
 import shutil
@@ -112,6 +113,21 @@ def copy_player_materials(root, destination, revision):
             target.write_text(text, encoding="utf-8")
 
 
+def mac_bundle_version(tag):
+    major, minor, patch = map(int, tag[1:].split("."))
+    # CFBundleVersion requires a positive major; keep the mapping monotonic.
+    return f"{major + 1}.{minor}.{patch}"
+
+
+def set_mac_release_version(image, tag):
+    info = image / "Contents/Info.plist"
+    with info.open("rb") as stream:
+        metadata = plistlib.load(stream)
+    metadata["CFBundleShortVersionString"] = tag[1:]
+    with info.open("wb") as stream:
+        plistlib.dump(metadata, stream)
+
+
 def package(tag, target):
     validate(tag)
     verify_native_tests(ROOT / "build/test-results/testNativeRa")
@@ -134,10 +150,13 @@ def package(tag, target):
     image_dir = work / "image"
     run(jdk / "bin" / f"jpackage{suffix}", "--type", "app-image", "--name", "Nestlin",
         "--input", inputs, "--main-jar", "nestlin-all.jar", "--main-class",
-        "com.github.alondero.nestlin.ui.ApplicationKt", "--app-version", tag[1:],
+        "com.github.alondero.nestlin.ui.ApplicationKt", "--app-version",
+        mac_bundle_version(tag) if system == "Darwin" else tag[1:],
         "--runtime-image", runtime, "--dest", image_dir,
         *(["--win-console"] if system == "Windows" else []))
     image = image_dir / ("Nestlin.app" if system == "Darwin" else "Nestlin")
+    if system == "Darwin":
+        set_mac_release_version(image, tag)
     launcher = image / {"Windows": "Nestlin.exe", "Linux": "bin/Nestlin",
                         "Darwin": "Contents/MacOS/Nestlin"}[system]
     # Test the actual native launcher and bundled runtime, with no host Java dependency.
