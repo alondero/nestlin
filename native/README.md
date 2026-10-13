@@ -47,10 +47,14 @@ matching pre-built binary from the most recent GitHub Release.
 Distribution flow:
 
 1. The CI workflow `.github/workflows/build.yml`
-   builds the library on each of the three supported platforms
-   (ubuntu-latest, windows-latest, macos-latest), zips each result
-   alongside its `MANIFEST.fragment.json`, and attaches the three
-   zips to a GitHub Release tagged `vX.Y.Z`.
+   builds and tests four pinned-image legs: Linux x86_64, Windows x86_64,
+   macOS Intel and macOS Apple Silicon. Each macOS library contains both
+   CPU slices, checked with `lipo` and loaded on its respective host.
+   After all legs pass, it creates a draft release tagged `vX.Y.Z` with
+   desktop bundles and three compatibility native ZIPs, each containing
+   its `MANIFEST.fragment.json`. The Intel leg emits the shared
+   `macos-universal` ZIP once. Dry runs upload workflow artifacts only.
+   See [Releasing](../docs/RELEASING.md) for the gates and publication steps.
 2. End users building from a checkout run `./gradlew uberJar`.
    `:fetchNativeRa` hits
    `https://api.github.com/repos/alondero/nestlin/releases/latest`,

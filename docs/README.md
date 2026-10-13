@@ -35,4 +35,4 @@ User-visible behavior belongs in the [user guide](USER_GUIDE.md) or [troubleshoo
 
 When a change affects behavior, update the relevant source-of-truth document in the same change. The documentation linter checks local links, required entry points, heading structure, and final newlines in CI and through the optional pre-commit hook.
 
-Release tools: [packager](../tools/release.py), [release skill](../.claude/skills/release/SKILL.md), and [v0.2.0 candidate notes](releases/v0.2.0.md).
+Release tools: [packager](../tools/release.py), [release guard tests](../tools/test_release.py), [release skill](../.claude/skills/release/SKILL.md), and [v0.2.0 candidate notes](releases/v0.2.0.md).

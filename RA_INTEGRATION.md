@@ -115,11 +115,15 @@ Gradle task `:fetchNativeRa` runs automatically before
 matching pre-built binary from the most recent GitHub Release.
 
 The CI workflow `.github/workflows/build.yml` builds
-the library on each of the three supported platforms
-(ubuntu-latest, windows-latest, macos-latest), zips each result
-alongside its `MANIFEST.fragment.json`, and attaches the three
-zips to a GitHub Release tagged `vX.Y.Z`. End users get the
-artifact whose name matches their platform:
+and tests four pinned-image legs: Linux x86_64, Windows x86_64,
+macOS Intel and macOS Apple Silicon. Both macOS jobs verify universal
+CPU slices with `lipo` and run the packaged native smoke on their host.
+Only after every leg passes does it create a draft tagged `vX.Y.Z`,
+with desktop bundles and three compatibility native ZIPs containing
+`MANIFEST.fragment.json`. The Intel leg emits the shared macOS ZIP once.
+Dry runs upload artifacts without writing a release. See
+[Releasing](docs/RELEASING.md) for validation and publication.
+End users get the native artifact whose name matches their platform:
 
   - Windows:  `rcheevos_facade-windows-x86_64.zip`
   - macOS:    `rcheevos_facade-macos-universal.zip`
