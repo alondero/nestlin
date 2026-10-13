@@ -184,8 +184,8 @@ def package(tag, target):
     copy_player_materials(ROOT, materials, revision)
     if system == "Darwin":
         library = ROOT / "build/native-ra/macos/librcheevos_facade.dylib"
-        run("lipo", "-verify_arch", "x86_64", "arm64", library)
-        run("lipo", "-archs", library)
+        run("lipo", library, "-verify_arch", "x86_64", "arm64")
+        run("lipo", library, "-archs")
     assets = work / "assets"
     assets.mkdir()
     basename = f"nestlin-{tag}-{target}"
