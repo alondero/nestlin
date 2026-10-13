@@ -105,7 +105,7 @@ class RetroAchievementsServiceFactoryTest {
     fun `native service reports hard core as forced off`() {
         val svc = RetroAchievementsServiceFactory.create()
         assertTrue(svc is NativeRetroAchievementsService,
-            "Test requires the native service — the @EnabledIf gate failed to skip it correctly")
+            "Test requires the native service — the @EnabledIf gate must require a loadable library")
         // The façade must call rc_client_set_hardcore_enabled(client, 0)
         // immediately after rc_client_create. We can't observe the native
         // flag directly (issue #267 keeps the API surface narrow), so we
@@ -209,8 +209,14 @@ private const val NATIVE_GATE =
  * Top-level gate referenced by `@EnabledIf(NATIVE_GATE)` on
  * the real-library contract tests. The Gradle `:testNativeRa` task sets
  * `-Dnestlin.test.nativeRa=true` to enable them; the default `./gradlew
- * test` does not set the property, so the tests skip.
+ * test` does not set the property, so the tests skip. Opting in requires a
+ * loadable library; missing native capability fails instead of skipping.
  */
-fun nativeLibraryIsPresent(): Boolean =
-    System.getProperty("nestlin.test.nativeRa") == "true" &&
-        com.github.alondero.nestlin.session.RetroAchievementsServiceFactory.isNativeLibraryAvailable()
+fun nativeLibraryIsPresent(): Boolean {
+    if (System.getProperty("nestlin.test.nativeRa") != "true") return false
+    check(RetroAchievementsServiceFactory.isNativeLibraryAvailable()) {
+        "Native RetroAchievements library required by testNativeRa but unavailable; " +
+            "build the native library and check the [RA] loader diagnostic above"
+    }
+    return true
+}

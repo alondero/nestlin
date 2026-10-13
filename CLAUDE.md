@@ -63,8 +63,11 @@ tools/run-diag.ps1 -TestClass Mapper10RegressionTest -Mesen
 
 # Compile + run the RetroAchievements native contract tests (issue #267).
 # Loads the rcheevos_facade shared library via JNA; requires the native
-# library to have been built (see RA_INTEGRATION.md).
+# library to have been built (see RA_INTEGRATION.md). An unavailable or
+# unloadable library fails this opt-in task instead of skipping its tests.
 ./gradlew testNativeRa
+# Regression: verify that this task fails when native resources are absent.
+python tools/test_native_ra_gate.py
 
 # Compile the vendored rcheevos v12.4.0 + the small C façade into a
 # per-platform shared library (librcheevos_facade.so / rcheevos_facade.dll

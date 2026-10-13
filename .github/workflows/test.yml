@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test release guards
+        run: python3 tools/test_release.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -20,6 +22,8 @@ jobs:
       # (issue #312) is part of this lane and guards the source-text side of the
       # native RA packaging DAG, including both test tasks.
       - run: ./gradlew test
+      - name: Reject missing native library in opt-in test lane
+        run: python3 tools/test_native_ra_gate.py
 
       # `testPerformance` is excluded from the functional lane because it needs
       # an isolated JVM. Execute it in CI and fail on implicit task-output

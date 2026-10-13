@@ -195,8 +195,9 @@ tasks.register("buildNative") {
             // No compiler on PATH — graceful skip. The JNA side will see
             // a missing native library and degrade to NoOp. CRITICAL:
             // this must NOT fail the build — a CI runner without a C
-            // compiler runs the JVM tests normally; only the native
-            // contract tests are skipped (they're @Tag("nativeRa")).
+            // compiler runs the JVM tests normally; the default suite
+            // excludes @Tag("nativeRa"). Opt-in testNativeRa fails when
+            // its library cannot load.
             logger.warn("[buildNative] No C compiler on PATH; native RA lib not built. JNA will fall back to NoOp.")
         } else if (rc != 0) {
             throw GradleException("buildNative failed (exit=$rc). See output above.")
@@ -595,6 +596,8 @@ tasks.named("check") { dependsOn(testPerformance) }
 tasks.register<Test>("testNativeRa") {
     group = "verification"
     description = "Runs native RetroAchievements contract tests (loads rcheevos_facade via JNA)"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
     // copyNativeRa too: the loader extracts the library from the resources
     // tree and checks it against MANIFEST.json, so a stale copy next to a
     // fresh manifest fails the integrity check and every test sees NoOp.

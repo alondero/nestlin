@@ -154,3 +154,5 @@ fix(ppu): preserve vblank latch during pre-render
 ```
 
 An agent may assist with analysis or edits, but the human author is responsible for reviewing every line and reporting which checks actually ran. See [CONTRIBUTING.md](../CONTRIBUTING.md) and [`.claude/agents.md`](../.claude/agents.md).
+
+Release tooling and packaging checks are maintained in [Releasing](RELEASING.md); update that guide and the release skill when changing the distribution contract.
