@@ -8,6 +8,10 @@ Nestlin is a from-scratch Nintendo Entertainment System emulator written in Kotl
 
 The compatibility source of truth is [`MAPPER_SUPPORT.md`](../MAPPER_SUPPORT.md). A mapper being listed means that its cartridge logic exists; it does not mean every game using that board is fully playable. Mapper 5 is explicitly a stub, and game-level compatibility still needs a tested ROM and a reproducible result.
 
+## Download a release
+
+Download the portable bundle matching your OS and CPU from [GitHub Releases](https://github.com/alondero/nestlin/releases). Extract the complete archive, then open `Nestlin.exe` (Windows), `Nestlin/bin/Nestlin` (Linux), or `Nestlin.app` (macOS). Java is bundled; the separate JAR requires Java 21. Supply your own ROM. See [release validation and platform caveats](RELEASING.md).
+
 ## Requirements
 
 - JDK 21. The Gradle toolchain is pinned to Java 21.

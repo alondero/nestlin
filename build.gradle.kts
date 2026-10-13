@@ -595,6 +595,8 @@ tasks.named("check") { dependsOn(testPerformance) }
 tasks.register<Test>("testNativeRa") {
     group = "verification"
     description = "Runs native RetroAchievements contract tests (loads rcheevos_facade via JNA)"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
     // copyNativeRa too: the loader extracts the library from the resources
     // tree and checks it against MANIFEST.json, so a stale copy next to a
     // fresh manifest fails the integrity check and every test sees NoOp.

@@ -34,6 +34,10 @@ For per-mapper game coverage, test evidence, edge-case notes, and known issues, 
 
 ---
 
+## Download a release
+
+Download the portable bundle matching your OS and CPU from [GitHub Releases](https://github.com/alondero/nestlin/releases). Extract the complete archive, then open `Nestlin.exe` (Windows), `Nestlin/bin/Nestlin` (Linux), or `Nestlin.app` (macOS). Java is bundled; the separate JAR requires Java 21. Supply your own ROM. See [release validation and platform caveats](docs/RELEASING.md).
+
 ## Requirements
 
 - **JDK 21** (the Gradle toolchain pin will download it automatically if missing)

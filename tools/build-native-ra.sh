@@ -96,18 +96,23 @@ case "$HOST" in
     *) echo "Unsupported host: $HOST" >&2; exit 1 ;;
 esac
 
+ARCH_FLAGS=()
+if [ "$HOST" = "macos" ]; then
+    ARCH_FLAGS=(-arch x86_64 -arch arm64)
+fi
+
 # Compile each rcheevos source (caching by mtime)
 OBJ_FILES=()
 for src in "${RCH_SOURCES[@]}"; do
     obj_name="$(echo "$src" | tr '/' '_' | sed 's/\.c$/.o/')"
     obj_path="$OUT_DIR/obj/$obj_name"
     OBJ_FILES+=("$obj_path")
-    if [ -f "$obj_path" ] && [ "$obj_path" -nt "$RCH_SRC_DIR/$src" ]; then
+    if [ "$HOST" != "macos" ] && [ -f "$obj_path" ] && [ "$obj_path" -nt "$RCH_SRC_DIR/$src" ]; then
         echo "[BUILD-NATIVE-RA] cached: $src"
         continue
     fi
     echo "[BUILD-NATIVE-RA] cc: $src"
-    "$CC" -c -std=c99 -O2 -fvisibility=hidden -fPIC -DRC_CLIENT_SUPPORTS_HASH=1 \
+    "$CC" "${ARCH_FLAGS[@]}" -c -std=c99 -O2 -fvisibility=hidden -fPIC -DRC_CLIENT_SUPPORTS_HASH=1 \
         -I"$RCH_INCLUDE_DIR" \
         -I"$RCH_SRC_DIR" \
         -I"$RCH_SRC_DIR/rcheevos" \
@@ -125,9 +130,9 @@ done
 # Compile the façade
 FAC_OBJ="$OUT_DIR/obj/ra_facade.o"
 OBJ_FILES+=("$FAC_OBJ")
-if [ ! -f "$FAC_OBJ" ] || [ "$FAC_OBJ" -lt "$FACADE_DIR/ra_facade.c" ]; then
+if [ "$HOST" = "macos" ] || [ ! -f "$FAC_OBJ" ] || [ "$FAC_OBJ" -lt "$FACADE_DIR/ra_facade.c" ]; then
     echo "[BUILD-NATIVE-RA] cc: ra_facade.c"
-    "$CC" -c -std=c99 -O2 -fvisibility=default -fPIC -DRA_FACADE_BUILDING=1 -DRC_CLIENT_SUPPORTS_HASH=1 \
+    "$CC" "${ARCH_FLAGS[@]}" -c -std=c99 -O2 -fvisibility=default -fPIC -DRA_FACADE_BUILDING=1 -DRC_CLIENT_SUPPORTS_HASH=1 \
         -I"$FACADE_DIR" \
         -I"$RCH_INCLUDE_DIR" \
         -I"$RCH_SRC_DIR" \
@@ -143,7 +148,7 @@ fi
 # Link into the shared library
 LIB_PATH="$OUT_DIR/$LIB_NAME"
 echo "[BUILD-NATIVE-RA] link: $LIB_PATH"
-"$CC" -shared $LINK_EXT -o "$LIB_PATH" "${OBJ_FILES[@]}" $LINK_LIBS
+"$CC" "${ARCH_FLAGS[@]}" -shared $LINK_EXT -o "$LIB_PATH" "${OBJ_FILES[@]}" $LINK_LIBS
 rc=$?
 if [ $rc -ne 0 ] || [ ! -f "$LIB_PATH" ]; then
     echo "[BUILD-NATIVE-RA] LINK FAILED (cc exit=$rc)" >&2

@@ -60,3 +60,5 @@ python tools/docs_lint.py
 - mapper IDs dispatched by GamePak.kt match the mapper headings in MAPPER_SUPPORT.md.
 
 The linter deliberately does not impose a universal line length, prose style, or spelling dictionary. Those checks create noisy churn in technical emulator notes and should be added only with a repository-wide migration plan.
+
+Release tooling and packaging checks are maintained in [Releasing](RELEASING.md); update that guide and the release skill when changing the distribution contract.

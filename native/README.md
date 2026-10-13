@@ -46,7 +46,7 @@ matching pre-built binary from the most recent GitHub Release.
 
 Distribution flow:
 
-1. The CI workflow `.github/workflows/release-native-libs.yml`
+1. The CI workflow `.github/workflows/build.yml`
    builds the library on each of the three supported platforms
    (ubuntu-latest, windows-latest, macos-latest), zips each result
    alongside its `MANIFEST.fragment.json`, and attaches the three
@@ -122,3 +122,5 @@ The façade code (`ra_facade.h`, `ra_facade.c`, this README) is part of
 Nestlin (see top-level LICENSE). rcheevos is MIT-licensed by
 RetroAchievements.org — see `rcheevos/LICENSE` for the full text and
 `rcheevos/NOTICE` for the attribution block.
+
+Release builds compile macOS objects for both x86_64 and arm64, matching the stable `macos-universal` manifest ID. Both architecture-specific application bundles run the native smoke before release; see [Releasing](../docs/RELEASING.md).

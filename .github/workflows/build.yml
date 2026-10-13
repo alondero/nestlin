@@ -1,53 +1,123 @@
-name: Build Release
+name: Release
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Release version (e.g., 1.0.0)'
-        required: false
-        default: 'latest'
+      tag:
+        description: 'Existing release tag (vX.Y.Z)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    # softprops/action-gh-release needs write access to create the release.
+  verify:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Validate immutable release candidate and notes
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          python3 tools/release.py validate "$RELEASE_TAG"
+          git show-ref --verify "refs/tags/$RELEASE_TAG"
+          git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew build validateTaskGraph --warning-mode=fail
+
+  package:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: windows-2022
+            platform: windows-x86_64
+          - os: macos-15-intel
+            platform: macos-x86_64
+          - os: macos-15
+            platform: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Select Windows native compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH 'C:/msys64/mingw64/bin'
+      - name: Build platform JAR and native contract tests
+        shell: bash
+        run: ./gradlew clean shadowJar testNativeRa -x fetchNativeRa --warning-mode=fail
+      - name: Package and smoke-test bundled runtime and launcher
+        run: python tools/release.py package ${{ needs.verify.outputs.tag }} ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: build/release/assets/*
+          if-no-files-found: error
+
+  release:
+    needs: [verify, package]
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
         with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build native library + manifest
-        # Build the native rcheevos façade on the host (Ubuntu) +
-        # emit MANIFEST.json. When the host lacks a C compiler this
-        # is a graceful skip and the JAR ships without the native lib.
-        run: ./gradlew buildNative writeNativeRaManifest
-
-      - name: Build uberJar
-        run: ./gradlew uberJar
-
-      - name: Smoke-test the native path
-        # The release JAR must pass its own native smoke before it
-        # ships. Exit 3 (no native lib) is OK on the CI host; a real
-        # smoke regression (exit 1) fails the build.
-        run: java -jar build/libs/nestlin-all.jar nra-smoke
-        continue-on-error: true
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
         with:
-          tag_name: v${{ inputs.version }}
-          name: Nestlin v${{ inputs.version }}
-          draft: true
-          files: build/libs/nestlin-all.jar
-          fail_on_unmatched_files: true
+          pattern: release-*
+          path: assets
+          merge-multiple: true
+      - name: Create reviewed draft with notes and checksums
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "${{ needs.verify.outputs.sha }}"
+          cd assets
+          sha256sum * > SHA256SUMS.txt
+          cd ..
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --json isDraft -q .isDraft)" = true
+            gh release edit "$RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
+            gh release upload "$RELEASE_TAG" assets/* --clobber
+          else
+            gh release create "$RELEASE_TAG" assets/* --verify-tag --draft \
+              --title "Nestlin $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
+          fi

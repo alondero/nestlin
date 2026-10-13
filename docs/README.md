@@ -34,3 +34,5 @@ Nestlin is a learning-focused NES emulator. This directory separates the informa
 User-visible behavior belongs in the [user guide](USER_GUIDE.md) or [troubleshooting guide](TROUBLESHOOTING.md). Build, test, and code-ownership rules belong in the [development guide](DEVELOPMENT.md) or [contributor guide](../CONTRIBUTING.md). Current mapper compatibility belongs in [`MAPPER_SUPPORT.md`](../MAPPER_SUPPORT.md). `CLAUDE.md` and `.claude/agents.md` are navigation and automation guidance for coding agents; they must link to, not replace, the human-facing documentation.
 
 When a change affects behavior, update the relevant source-of-truth document in the same change. The documentation linter checks local links, required entry points, heading structure, and final newlines in CI and through the optional pre-commit hook.
+
+Release tools: [packager](../tools/release.py), [release skill](../.claude/skills/release/SKILL.md), and [v0.2.0 candidate notes](releases/v0.2.0.md).

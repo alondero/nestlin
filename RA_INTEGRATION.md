@@ -114,7 +114,7 @@ Gradle task `:fetchNativeRa` runs automatically before
 `:copyNativeRa` on `./gradlew uberJar` and downloads the
 matching pre-built binary from the most recent GitHub Release.
 
-The CI workflow `.github/workflows/release-native-libs.yml` builds
+The CI workflow `.github/workflows/build.yml` builds
 the library on each of the three supported platforms
 (ubuntu-latest, windows-latest, macos-latest), zips each result
 alongside its `MANIFEST.fragment.json`, and attaches the three
